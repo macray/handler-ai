@@ -1,0 +1,36 @@
+# The documentation website: on a push to main, scripts/build-docs-site.py (README.md and
+# docs/; it stops on a broken link), deployed to GitHub Pages (Settings → Pages → Source: GitHub
+# Actions). GitHub only: Forgejo Actions reads this file too, and has no Pages.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: python3 scripts/build-docs-site.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/site
+      - uses: actions/deploy-pages@v4
+        id: deployment

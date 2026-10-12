@@ -1,0 +1,26 @@
+# Codex harness image: toolbox + codex-acp, the ACP adapter for OpenAI Codex. It starts
+# `codex app-server`; the Codex binary comes with it (its @openai/codex dependency).
+# codex-acp starts handler-codex instead (CODEX_PATH, harness.toml): that Codex with privacy config
+# overrides. `-c` beats config.toml; unset, analytics are on and metrics go to OpenAI (statsig).
+#
+# Not pinned: every rebuild (`handler image rebuild codex`, or the web UI) installs the latest release.
+# What was installed is recorded in /usr/share/handler/version (contract B.6); the build fails if
+# the versions cannot be read, so a package layout change is noticed.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE}
+
+RUN npm install -g --no-fund --no-audit @agentclientprotocol/codex-acp \
+    && npm cache clean --force \
+    && command -v codex-acp \
+    && adapter=/usr/lib/node_modules/@agentclientprotocol/codex-acp \
+    && test -f "$adapter/node_modules/@openai/codex/bin/codex.js" \
+    && printf '#!/bin/sh\nexec node %s -c analytics.enabled=false -c feedback.enabled=false -c check_for_update_on_startup=false -c otel.metrics_exporter=none "$@"\n' \
+        "$adapter/node_modules/@openai/codex/bin/codex.js" > /usr/local/bin/handler-codex \
+    && chmod 755 /usr/local/bin/handler-codex \
+    && acp_version="$(jq -er .version "$adapter/package.json")" \
+    && codex_version="$(jq -er .version "$adapter/node_modules/@openai/codex/package.json")" \
+    && mkdir -p /usr/share/handler \
+    && echo "Codex ${codex_version} (codex-acp ${acp_version})" > /usr/share/handler/version \
+    && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent)
+
+LABEL org.opencontainers.image.title="handler-ai-codex"

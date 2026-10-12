@@ -1,0 +1,90 @@
+# A release: on a tag `v<version>` (= handler_control.__version__), the checks that need no podman
+# image, the wheel (scripts/build-wheel.sh) and the smoke test installing it in a bare container
+# (scripts/smoke-install.sh); then the wheel goes to PyPI, after the maintainer's approval (the
+# `pypi` environment's required reviewer); then a GitHub release holding the wheel and install.sh.
+# Users install with: uv tool install handler-ai  (README "Install").
+#
+# PyPI accepts the upload through Trusted Publishing: no token, only this workflow in
+# macray/handler-ai with the `pypi` environment. Any other repository (the maintainer's dry run)
+# uploads to TestPyPI with the `testpypi` environment.
+#
+# GitHub Actions syntax. Forgejo Actions reads this file too, but has no PyPI publisher and
+# publishes releases with its own action (forgejo-release) instead of `gh`: the last two jobs are
+# GitHub's.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: ubuntu-latest
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+
+      - name: The tag is handlerd's version
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/control-plane/src/handler_control/__init__.py)"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, version $version"; exit 1; }
+
+      - name: Checks without podman images
+        run: |
+          uv sync --locked
+          uv run python -m handler_contracts.schemas --check
+          uv run ruff check . && uv run ruff format --check .
+          uv run ty check
+          uv run pytest packages tests/architecture
+
+      - name: Wheel
+        run: scripts/build-wheel.sh dist
+
+      - name: Install it in a bare container
+        run: CONTAINER=docker scripts/smoke-install.sh dist/handler_ai-*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/handler_ai-*.whl
+
+  pypi:
+    needs: wheel
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    environment: ${{ github.repository == 'macray/handler-ai' && 'pypi' || 'testpypi' }}
+    permissions:
+      id-token: write  # GitHub's proof to PyPI that this workflow is the publisher
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ github.repository == 'macray/handler-ai' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+
+  release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/handler_ai-*.whl scripts/install.sh \
+            --title "Handler $GITHUB_REF_NAME" \
+            --notes "Install: \`uv tool install handler-ai\` (or, without uv: \`curl -fsSL $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest/download/install.sh | sh\`), then \`handler setup\`. Update: \`uv tool upgrade handler-ai\`."

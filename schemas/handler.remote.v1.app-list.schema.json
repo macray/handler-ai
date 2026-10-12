@@ -1,0 +1,74 @@
+{
+  "$id": "urn:handler.remote/v1/app-list",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SharedApp": {
+      "description": "A deployed mini app shared with the device's person (H.8).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "queued": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Queued",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "SharedApp",
+      "type": "object"
+    }
+  },
+  "description": "`_handler/remote/list_apps` \u2192 this: who the device is for, and the apps shared with them.",
+  "properties": {
+    "apps": {
+      "items": {
+        "$ref": "#/$defs/SharedApp"
+      },
+      "title": "Apps",
+      "type": "array"
+    },
+    "person": {
+      "title": "Person",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "all",
+        "apps"
+      ],
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apps",
+    "person",
+    "scope"
+  ],
+  "title": "AppList",
+  "type": "object"
+}

@@ -1,0 +1,138 @@
+[
+  {
+    "name": "llm_complete",
+    "description": "Call a model: `prompt` (and `system`, `input`); with `schema`, the answer is one JSON value valid against it, in `value`.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`llm_complete`'s input (I.5).",
+      "properties": {
+        "model": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+          "title": "Model",
+          "type": "string"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System"
+        },
+        "prompt": {
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "title": "LlmRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "LlmUsage": {
+          "additionalProperties": false,
+          "properties": {
+            "inTokens": {
+              "title": "Intokens",
+              "type": "integer"
+            },
+            "outTokens": {
+              "title": "Outtokens",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "inTokens",
+            "outTokens"
+          ],
+          "title": "LlmUsage",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "`llm_complete`'s output (I.5).",
+      "properties": {
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "usage": {
+          "$ref": "#/$defs/LlmUsage"
+        },
+        "ms": {
+          "title": "Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "valid",
+        "usage",
+        "ms"
+      ],
+      "title": "LlmResponse",
+      "type": "object"
+    }
+  }
+]

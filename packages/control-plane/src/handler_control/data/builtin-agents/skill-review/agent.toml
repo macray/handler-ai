@@ -1,0 +1,13 @@
+# A built-in agent (D.18), set up at most once: handler_control/builtin_agents.py. Its
+# instructions: instructions.md; its interface: interface.json.
+description = "Reviews a skill of the library before your agents use it: what it does, what it makes them run and reach, and where it does not do what it says."
+
+[agent]
+name = "Skill reviewer"
+description = "Reviews a skill: reads it, never runs it"
+# it reads text written by someone else, maybe to manipulate it: no host but its model's, the
+# skill mounted read-only; it runs unattended, so it never asks (D.18): its sandbox limits it
+network = "filtered"
+egress = "enforce"
+confinement = "strict"
+permissions = "bypass"

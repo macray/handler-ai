@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/skill-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Create a skill, or replace its SKILL.md (its other files stay). The name is the SKILL.md's\n`name`: a different one renames the skill, and its agents follow. The projects that give it\nto all their agents are listed in full: their agents that picked it get it from them.",
+  "properties": {
+    "content": {
+      "maxLength": 262144,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "projects": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Projects",
+      "type": "array"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "SkillRequest",
+  "type": "object"
+}

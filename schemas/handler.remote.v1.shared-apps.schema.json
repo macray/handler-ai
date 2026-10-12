@@ -1,0 +1,60 @@
+{
+  "$id": "urn:handler.remote/v1/shared-apps",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SharedApp": {
+      "description": "A deployed mini app shared with the device's person (H.8).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "queued": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Queued",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "SharedApp",
+      "type": "object"
+    }
+  },
+  "description": "The params of the notification `_handler/remote/apps_changed` (the device's person's).",
+  "properties": {
+    "apps": {
+      "items": {
+        "$ref": "#/$defs/SharedApp"
+      },
+      "title": "Apps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apps"
+  ],
+  "title": "SharedApps",
+  "type": "object"
+}

@@ -1,0 +1,27 @@
+# handler-gateway with the remote client it serves. Build from the repository root (the client is a
+# workspace package of the web apps):
+#   podman build -f remote-gateway/Containerfile -t handler-gateway .
+#   podman run -d --name handler-gateway -p 127.0.0.1:7431:7431 -v handler-gateway:/state handler-gateway
+#   podman exec handler-gateway handler-gateway add-host laptop
+# Put HTTPS in front (tailscale serve, Caddy): the client needs it for WebCrypto.
+
+FROM docker.io/oven/bun:1.3.14 AS client
+WORKDIR /src
+COPY package.json bun.lock ./
+COPY packages/acp-view packages/acp-view
+COPY packages/remote-client packages/remote-client
+COPY packages/web-ui/package.json packages/web-ui/package.json
+COPY tests/fixtures tests/fixtures
+RUN bun install --frozen-lockfile
+RUN cd packages/remote-client && bun run check && bun run test && bun run build
+
+FROM docker.io/library/python:3.13-slim
+COPY remote-gateway /opt/handler-gateway
+RUN pip install --no-cache-dir /opt/handler-gateway && useradd --uid 1000 --create-home gateway \
+    && mkdir /state && chown gateway /state
+COPY --from=client /src/packages/remote-client/dist /opt/handler-remote-client
+ENV HANDLER_GATEWAY_STATE=/state/state.json HANDLER_GATEWAY_CLIENT_DIR=/opt/handler-remote-client
+USER gateway
+VOLUME /state
+EXPOSE 7431
+CMD ["handler-gateway", "serve", "--host", "0.0.0.0", "--port", "7431"]

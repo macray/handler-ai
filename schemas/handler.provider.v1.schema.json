@@ -1,0 +1,287 @@
+{
+  "$id": "urn:handler.provider/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CommandSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "CommandSecret",
+      "type": "object"
+    },
+    "EnvSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "EnvSecret",
+      "type": "object"
+    },
+    "FileContent": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "FileContent",
+      "type": "object"
+    },
+    "FileSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "FileSecret",
+      "type": "object"
+    },
+    "ProviderModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "contextWindow": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contextwindow"
+        },
+        "maxOutput": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxoutput"
+        },
+        "reasoning": {
+          "default": false,
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "images": {
+          "default": false,
+          "title": "Images",
+          "type": "boolean"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "native": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ProviderModel",
+      "type": "object"
+    },
+    "StoreSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "secret": {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$",
+          "title": "Secret",
+          "type": "string"
+        }
+      },
+      "required": [
+        "secret"
+      ],
+      "title": "StoreSecret",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "handler.provider/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "endpoints": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "anthropic",
+          "openai-chat",
+          "responses"
+        ]
+      },
+      "title": "Endpoints",
+      "type": "object"
+    },
+    "apiKey": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvSecret"
+        },
+        {
+          "$ref": "#/$defs/FileSecret"
+        },
+        {
+          "$ref": "#/$defs/CommandSecret"
+        },
+        {
+          "$ref": "#/$defs/StoreSecret"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Apikey"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ProviderModel"
+      },
+      "minItems": 1,
+      "title": "Models",
+      "type": "array"
+    },
+    "files": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FileSecret"
+                },
+                {
+                  "$ref": "#/$defs/EnvSecret"
+                },
+                {
+                  "$ref": "#/$defs/FileContent"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Files"
+    },
+    "contexts": {
+      "default": [],
+      "items": {
+        "maxLength": 32,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+        "type": "string"
+      },
+      "title": "Contexts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "endpoints",
+    "models"
+  ],
+  "title": "Provider",
+  "type": "object"
+}

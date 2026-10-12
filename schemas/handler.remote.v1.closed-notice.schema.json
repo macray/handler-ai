@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.remote/v1/closed-notice",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The params of the notification `_handler/remote/closed`: one of the device's attachments was\nclosed, with a WebSocket-like close code (F.4).",
+  "properties": {
+    "s": {
+      "title": "S",
+      "type": "string"
+    },
+    "code": {
+      "title": "Code",
+      "type": "integer"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "s",
+    "code",
+    "reason"
+  ],
+  "title": "ClosedNotice",
+  "type": "object"
+}

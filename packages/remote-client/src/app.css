@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "@handler/acp-view/theme.css"; /* tokens, markdown, the terminal surface */
+
+@custom-variant dark (&:is(.dark *));
+
+/* the shared components are compiled here: let Tailwind see their classes */
+@source "../../acp-view/src";
+
+/* A phone first: the whole screen is the app, the terminal surface fills it. */
+html,
+body,
+#app {
+  height: 100%;
+}
+body {
+  background: var(--background);
+  overscroll-behavior: none;
+}

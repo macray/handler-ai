@@ -1,0 +1,316 @@
+{
+  "$id": "urn:handler.control/v1/addon-installed",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonInfo": {
+      "description": "An addon (G.1) and, when it has a tool, its image (G.4).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "imagePresent": {
+          "default": false,
+          "title": "Imagepresent",
+          "type": "boolean"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "builtAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Builtat"
+        },
+        "commands": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "settings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AddonSlotInfo"
+          },
+          "title": "Settings",
+          "type": "array"
+        },
+        "secretSlots": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AddonSlotInfo"
+          },
+          "title": "Secretslots",
+          "type": "array"
+        },
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "directory": {
+          "title": "Directory",
+          "type": "string"
+        },
+        "builtin": {
+          "default": false,
+          "title": "Builtin",
+          "type": "boolean"
+        },
+        "overridesBuiltin": {
+          "default": false,
+          "title": "Overridesbuiltin",
+          "type": "boolean"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "updateAvailable": {
+          "default": false,
+          "title": "Updateavailable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "directory"
+      ],
+      "title": "AddonInfo",
+      "type": "object"
+    },
+    "AddonSlotInfo": {
+      "description": "A setting or secret slot of an addon (G.1), for the binding form.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AddonSlotInfo",
+      "type": "object"
+    },
+    "Build": {
+      "description": "An image rebuild (D.4): build from the files on disk, check it, tag it ':latest'.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "target": {
+          "pattern": "^(addon:)?[a-z0-9][a-z0-9-]*$",
+          "title": "Target",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Steps"
+        },
+        "versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Versions",
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "title": "Startedat",
+          "type": "string"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        }
+      },
+      "required": [
+        "id",
+        "target",
+        "state",
+        "startedAt"
+      ],
+      "title": "Build",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "addon": {
+      "$ref": "#/$defs/AddonInfo"
+    },
+    "build": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Build"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "addon"
+  ],
+  "title": "AddonInstalled",
+  "type": "object"
+}

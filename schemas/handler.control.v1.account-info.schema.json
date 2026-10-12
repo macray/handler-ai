@@ -1,0 +1,189 @@
+{
+  "$id": "urn:handler.control/v1/account-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An account (E, D.9): a subscription one harness logs in with.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "harness": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Harness"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plan"
+    },
+    "login": {
+      "anyOf": [
+        {
+          "enum": [
+            "token",
+            "file"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Login"
+    },
+    "token": {
+      "anyOf": [
+        {
+          "enum": [
+            "secret",
+            "env",
+            "file",
+            "command"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Token"
+    },
+    "loggedInAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Loggedinat"
+    },
+    "expiresAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expiresat"
+    },
+    "hosts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Hosts",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "incomplete",
+        "invalid"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "problems": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "connectors": {
+      "default": false,
+      "title": "Connectors",
+      "type": "boolean"
+    },
+    "contexts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Contexts",
+      "type": "array"
+    },
+    "agents": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "sessions": {
+      "default": 0,
+      "title": "Sessions",
+      "type": "integer"
+    },
+    "lastUsedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lastusedat"
+    }
+  },
+  "required": [
+    "name",
+    "status"
+  ],
+  "title": "AccountInfo",
+  "type": "object"
+}

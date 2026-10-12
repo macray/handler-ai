@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.remote/v1/app-ui-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/app/ui` \u2192 AppUi. `have`: the version the device keeps, to get nothing new back.",
+  "properties": {
+    "have": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Have"
+    }
+  },
+  "title": "AppUiParams",
+  "type": "object"
+}

@@ -1,0 +1,687 @@
+{
+  "$id": "urn:handler.control/v1/automation-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Automation": {
+      "additionalProperties": false,
+      "description": "automation.toml (I.1).",
+      "properties": {
+        "apiVersion": {
+          "const": "handler.automation/v1",
+          "title": "Apiversion",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "const": "session.stopped",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Schedule"
+            }
+          ],
+          "title": "When"
+        },
+        "only": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationOnly"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/AutomationAgentRun"
+            },
+            {
+              "$ref": "#/$defs/AutomationAppCall"
+            }
+          ],
+          "title": "Run"
+        },
+        "timeoutSec": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
+        },
+        "services": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationServices"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "append": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AutomationAppend"
+          },
+          "title": "Append",
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "when",
+        "run"
+      ],
+      "title": "Automation",
+      "type": "object"
+    },
+    "AutomationAgentInput": {
+      "additionalProperties": false,
+      "description": "What the agent's run is started with (D.18 `SessionInput`).",
+      "properties": {
+        "fields": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationSubject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "AutomationAgentInput",
+      "type": "object"
+    },
+    "AutomationAgentRun": {
+      "additionalProperties": false,
+      "description": "`run = { agent, project?, input? }`: a run of an agent with an interface (I.3, D.18).",
+      "properties": {
+        "agent": {
+          "minLength": 1,
+          "title": "Agent",
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        },
+        "input": {
+          "$ref": "#/$defs/AutomationAgentInput",
+          "default": {
+            "fields": {},
+            "subject": null
+          }
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "title": "AutomationAgentRun",
+      "type": "object"
+    },
+    "AutomationAppCall": {
+      "additionalProperties": false,
+      "description": "`run = { app, call }`: a call to a mini app's route, as the owner (I.3, H.9).",
+      "properties": {
+        "app": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "App",
+          "type": "string"
+        },
+        "call": {
+          "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+          "title": "Call",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "call"
+      ],
+      "title": "AutomationAppCall",
+      "type": "object"
+    },
+    "AutomationAppend": {
+      "additionalProperties": false,
+      "description": "A file the run wrote, appended by handlerd to a knowledge note once the run succeeded\n(I.6).",
+      "properties": {
+        "from": {
+          "minLength": 1,
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "minLength": 1,
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "AutomationAppend",
+      "type": "object"
+    },
+    "AutomationAppended": {
+      "properties": {
+        "to": {
+          "title": "To",
+          "type": "string"
+        },
+        "bytes": {
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "to",
+        "bytes"
+      ],
+      "title": "AutomationAppended",
+      "type": "object"
+    },
+    "AutomationLlmUsage": {
+      "properties": {
+        "calls": {
+          "default": 0,
+          "title": "Calls",
+          "type": "integer"
+        },
+        "inTokens": {
+          "default": 0,
+          "title": "Intokens",
+          "type": "integer"
+        },
+        "outTokens": {
+          "default": 0,
+          "title": "Outtokens",
+          "type": "integer"
+        }
+      },
+      "title": "AutomationLlmUsage",
+      "type": "object"
+    },
+    "AutomationOnly": {
+      "additionalProperties": false,
+      "description": "The sessions an automation is for: by their project's name, their agent's; absent: any.",
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        }
+      },
+      "title": "AutomationOnly",
+      "type": "object"
+    },
+    "AutomationRun": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "automation": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Automation",
+          "type": "string"
+        },
+        "trial": {
+          "default": false,
+          "title": "Trial",
+          "type": "boolean"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "seqFrom": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seqfrom"
+        },
+        "seqTo": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seqto"
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slot"
+        },
+        "missed": {
+          "default": 0,
+          "title": "Missed",
+          "type": "integer"
+        },
+        "agentSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentsessionid"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exitcode"
+        },
+        "ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ms"
+        },
+        "llm": {
+          "$ref": "#/$defs/AutomationLlmUsage",
+          "default": {
+            "calls": 0,
+            "inTokens": 0,
+            "outTokens": 0
+          }
+        },
+        "appended": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AutomationAppended"
+          },
+          "title": "Appended",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        }
+      },
+      "required": [
+        "id",
+        "automation",
+        "state",
+        "createdAt"
+      ],
+      "title": "AutomationRun",
+      "type": "object"
+    },
+    "AutomationServices": {
+      "additionalProperties": false,
+      "properties": {
+        "llm": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+            "type": "string"
+          },
+          "title": "Llm",
+          "type": "array"
+        }
+      },
+      "title": "AutomationServices",
+      "type": "object"
+    },
+    "AutomationSubject": {
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "minLength": 1,
+          "title": "Skill",
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "title": "AutomationSubject",
+      "type": "object"
+    },
+    "Schedule": {
+      "additionalProperties": false,
+      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
+      "properties": {
+        "every": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Every"
+        },
+        "at": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
+        },
+        "days": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri",
+                  "sat",
+                  "sun"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Days"
+        }
+      },
+      "title": "Schedule",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "definition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Automation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "directory": {
+      "title": "Directory",
+      "type": "string"
+    },
+    "files": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "problems": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "permissions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "nextAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nextat"
+    },
+    "pending": {
+      "default": 0,
+      "title": "Pending",
+      "type": "integer"
+    },
+    "behind": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Behind"
+    },
+    "capped": {
+      "default": false,
+      "title": "Capped",
+      "type": "boolean"
+    },
+    "lastRun": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AutomationRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "name",
+    "directory"
+  ],
+  "title": "AutomationView",
+  "type": "object"
+}

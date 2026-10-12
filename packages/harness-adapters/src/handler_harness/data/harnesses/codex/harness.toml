@@ -1,0 +1,103 @@
+# OpenAI Codex harness descriptor (contract B, handler.harness/v1). ACP through the codex-acp
+# adapter, which drives `codex app-server`.
+apiVersion = "handler.harness/v1"
+name = "codex"
+product = "Codex"
+image = "localhost/handler-ai-codex"  # no tag: launches use :latest (contract B.6)
+acpCommand = ["codex-acp"]
+home = "/home/agent"
+
+# The hosts it reaches belong to what it runs on: the login below, or a provider (its endpoint).
+# A provider it can use speaks:
+providerProtocols = ["responses"]
+
+# ACP config options (codex-acp): mode, collaboration_mode, model, reasoning_effort, fast-mode.
+modelOption = "model"
+
+# User skills (Codex loads $CODEX_HOME/skills, CODEX_HOME = ~/.codex): each skill of the
+# agent and its addons is mounted read-only at ~/.codex/skills/<folder name>.
+skillsDir = "~/.codex/skills"
+# MCP servers of session/new: codex-acp advertises mcpCapabilities http (no sse) and hands them to
+# Codex, which starts stdio ones with a reduced environment (HOME, PATH, USER, LANG… and the
+# entry's env): "sandbox", render wraps them with handler-sandbox-env.
+mcpTransports = ["stdio", "http"]
+mcpEnv = "sandbox"
+
+# Codex writes its state under ~/.codex (auth.json after an API-key login, sessions, logs,
+# its sqlite state): writable, including when files are mounted inside it.
+writablePaths = ["~/.codex"]
+
+[env]
+CODEX_HOME = "/home/agent/.codex"
+NO_BROWSER = "1"   # headless: no browser ChatGPT login among the ACP auth methods
+# Without a ChatGPT login (auth_json), session/new logs in with the provider's key instead of
+# answering auth_required.
+DEFAULT_AUTH_REQUEST = '{"methodId": "api-key"}'
+# codex-acp starts `$CODEX_PATH app-server`: handler-codex is Codex with privacy overrides (analytics,
+# feedback uploads, update check and metrics to ab.chatgpt.com off; see the Containerfile). They
+# are config keys, not env: Codex has no env switch for them.
+CODEX_PATH = "handler-codex"
+
+# Codex's config.toml (model, model_provider, [model_providers.*] for a local model…). Codex
+# rewrites it (e.g. trusted projects): copied, not mounted; changes discarded.
+[configFiles.config_toml]
+target = "~/.codex/config.toml"
+description = "Codex config.toml"
+seed = true
+
+# Model metadata for models Codex does not know (a local model): context window, reasoning
+# levels, tools. config.toml points at it: model_catalog_json =
+# "~/.codex/model-catalog.json". Without it, Codex warns and uses fallback metadata.
+[configFiles.model_catalog_json]
+target = "~/.codex/model-catalog.json"
+description = "Codex model catalog (model_catalog_json)"
+
+# The system prompt, replacing the model's (config.toml: model_instructions_file =
+# "~/.codex/instructions.md"). For a model in model_catalog_json, which has none of its own.
+[configFiles.instructions_md]
+target = "~/.codex/instructions.md"
+description = "Codex system prompt (model_instructions_file)"
+
+# Credentials of a ChatGPT login (the account's, see [login]). Codex refreshes the tokens in it,
+# so it is bound writable.
+[stateSlots.auth_json]
+target = "~/.codex/auth.json"
+kind = "file"
+required = false
+credential = true
+
+# Session history (Codex writes its rollouts to $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl). Per
+# session: the daemon binds it to the session's own folder (contracts F.2), so a stopped session
+# can be resumed with ACP `session/load`.
+[stateSlots.sessions]
+target = "~/.codex/sessions"
+kind = "dir"
+required = false
+perSession = true
+
+# An account: a ChatGPT plan (verified 2026-09-30, Codex 0.159.2). `codex login` (on the host,
+# D.9) opens the sign-in page, which comes back to it on localhost. Its credential store is the OS
+# keyring when there is one, so it is told to write the file, in CODEX_HOME.
+[login]
+subscription = "ChatGPT"
+# Unattended use (an automation's agent run): its terms not read yet.
+unattended = "check-terms"
+terms = "https://openai.com/policies/terms-of-use/"
+command = ["npx", "--yes", "@openai/codex", "-c", "cli_auth_credentials_store=file", "login"]
+env = { CODEX_HOME = "{dir}" }
+file = "auth_json"
+hosts = ["chatgpt.com:443", "auth.openai.com:443"]
+help = "Sign in on the page it opens (or the link it prints)."
+
+# Neutral permission mode → ACP session mode (codex-acp: read-only, agent, agent-full-access).
+# None asks before an edit: "read-only" (despite its id) edits the project and runs commands in
+# Codex's workspace-write sandbox without asking, and asks the user before anything outside it;
+# that is "accept-edits". "ask" is left out: an agent asking for it is refused. ("agent" lets
+# a model approve instead of the user: not mapped.) "agent-full-access" never asks and drops
+# Codex's own sandbox (the container is the boundary).
+# In a container Codex's sandbox cannot start (bubblewrap needs user namespaces, verified
+# 2026-09-27 under the default `strict` confinement): in "read-only", each sandboxed command or
+# edit fails and Codex asks to run it unsandboxed, so it asks more, never less.
+[permissions]
+accept-edits = { sessionMode = "read-only" }
+bypass = { sessionMode = "agent-full-access" }

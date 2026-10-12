@@ -1,0 +1,96 @@
+# Mistral Vibe harness descriptor (contract B, handler.harness/v1).
+apiVersion = "handler.harness/v1"
+name = "vibe"
+product = "Mistral Vibe"
+image = "localhost/handler-ai-vibe"  # no tag: launches use :latest (contract B.6)
+acpCommand = ["vibe-acp"]
+home = "/home/agent"
+
+# The hosts it reaches belong to what it runs on: the login below, or a provider (its endpoint).
+# A provider it can use speaks:
+providerProtocols = ["openai-chat"]   # [[providers]] + [[models]] in config.toml
+
+modelOption = "model"   # ACP config option id (probed: mode, model, thinking)
+
+# User skills (verified: vibe GLOBAL_SKILLS_DIR = VIBE_HOME/skills): each skill of the agent
+# and its addons is mounted read-only at ~/.vibe/skills/<folder name>.
+skillsDir = "~/.vibe/skills"
+# MCP servers of session/new (verified 2026-09-26): vibe-acp starts stdio ones at session/new, with
+# only HOME, PATH and the entry's env ("sandbox": render wraps them with handler-sandbox-env so they
+# get the sandbox's environment). It advertises no mcpCapabilities: no http or sse.
+mcpTransports = ["stdio"]
+mcpEnv = "sandbox"
+
+# Vibe writes its own state under ~/.vibe (trusted_folders.toml, logs…): it must be writable by
+# the agent, including when files are mounted inside it (config.toml, skills).
+writablePaths = ["~/.vibe"]
+
+[env]
+VIBE_CONFIG_DIR = "/home/agent/.vibe"
+# Privacy (VIBE_* env beats config.toml, verified in mistral-vibe 2.25.8): enable_telemetry
+# gates its usage events, Sentry error reports and GrowthBook experiments (and OTel traces).
+VIBE_ENABLE_TELEMETRY = "false"
+VIBE_ENABLE_UPDATE_CHECKS = "false"   # the image is the unit of upgrade
+VIBE_ENABLE_AUTO_UPDATE = "false"
+
+# Vibe's configuration (providers, models, active_model, MCP servers…), e.g. to use a local
+# model. Written from the agent's provider (handler_harness/providers.py), or given whole by the
+# provider's [files.vibe] (a host file, an env var or inline). Without a provider (a Mistral
+# account) Vibe uses its defaults.
+[configFiles.config_toml]
+target = "~/.vibe/config.toml"
+description = "Vibe config.toml"
+seed = true   # Vibe rewrites it (e.g. model chosen over ACP): copied, not mounted; changes discarded
+
+# Vibe keeps the rest of its state in the (ephemeral) home.
+
+# Session history (verified: vibe.core.paths.SESSION_LOG_DIR = ~/.vibe/logs/session). Per
+# session: the daemon binds it to the session's own folder (contracts F.2), so a stopped session
+# can be resumed with ACP `session/load` and an agent sees only its own history.
+[stateSlots.sessions]
+target = "~/.vibe/logs/session"
+kind = "dir"
+required = false
+perSession = true
+
+# The key Vibe's sign-in registers, in the dotenv file it reads at start (the account's, see
+# [login]). Vibe does not rewrite it.
+[stateSlots.env_file]
+target = "~/.vibe/.env"
+kind = "file"
+required = false
+readOnly = true
+credential = true
+
+# An account: a Mistral account's Vibe key (verified 2026-09-30, mistral-vibe 2.25.8). `vibe
+# --setup` (on the host, D.9) opens the sign-in page; its home is handler's folder, and without a
+# keyring the key goes to its .env (else to the desktop's keyring).
+[login]
+subscription = "Mistral"
+# Unattended use (an automation's agent run): its terms not read yet.
+unattended = "check-terms"
+terms = "https://mistral.ai/terms"
+command = ["uvx", "--python", "3.12", "--from", "mistral-vibe", "vibe", "--setup"]
+env = { VIBE_HOME = "{dir}", PYTHON_KEYRING_BACKEND = "keyring.backends.fail.Keyring" }
+file = "env_file"
+hosts = ["api.mistral.ai:443"]
+help = "Choose to sign in with your Mistral account: its page opens in your browser. Then quit."
+
+# Neutral permission mode → ACP session mode (probed: ask, plan, accept-edits, auto-approve).
+[permissions]
+ask = { sessionMode = "ask" }
+accept-edits = { sessionMode = "accept-edits" }
+bypass = { sessionMode = "auto-approve" }
+
+# D.16: the harness's own terminal program (`handler terminal`). No model or MCP-config flags: VIBE_*
+# env vars override its config.toml (verified mistral-vibe 2.25.8; env MCP servers are added to
+# the config's, by name); the model is an alias of its config, as over ACP.
+[terminal]
+command = ["vibe"]
+modelEnv = "VIBE_ACTIVE_MODEL"
+mcpServersEnv = "VIBE_MCP_SERVERS"
+[terminal.permissions]
+ask = ["--agent", "ask"]
+accept-edits = ["--agent", "accept-edits"]
+bypass = ["--agent", "auto-approve"]
+

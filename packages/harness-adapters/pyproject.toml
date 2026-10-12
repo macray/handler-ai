@@ -1,0 +1,20 @@
+[project]
+name = "handler-harness-adapters"
+version = "0.1.0"
+license = "Apache-2.0"
+description = "Contract B (harness adapter): descriptors, render, image builds"
+requires-python = ">=3.12"
+dependencies = ["handler-contracts"]
+
+[project.scripts]
+handler-harness = "handler_harness.cli:main"
+
+[tool.uv.sources]
+handler-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/handler_harness"]

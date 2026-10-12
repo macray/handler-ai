@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "what"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "missing-tool",
+              "missing-permission",
+              "blocked-host",
+              "missing-file",
+              "missing-secret",
+              "other"
+            ]
+          },
+          "what": { "type": "string", "maxLength": 300 }
+        }
+      }
+    }
+  }
+}

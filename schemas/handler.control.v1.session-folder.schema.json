@@ -1,0 +1,73 @@
+{
+  "$id": "urn:handler.control/v1/session-folder",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SessionFolderEntry": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "folder",
+            "link"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "title": "SessionFolderEntry",
+      "type": "object"
+    }
+  },
+  "description": "One folder of a session's folder (F.8): folders first, then by name.",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/SessionFolderEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "entries"
+  ],
+  "title": "SessionFolder",
+  "type": "object"
+}

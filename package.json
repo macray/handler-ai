@@ -1,0 +1,16 @@
+{
+  "name": "handler-web",
+  "private": true,
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/web-ui",
+    "packages/acp-view",
+    "packages/remote-client"
+  ],
+  "scripts": {
+    "gen:types": "bun scripts/gen-types.ts"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "16.0.0"
+  }
+}

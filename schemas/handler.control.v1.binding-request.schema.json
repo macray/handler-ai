@@ -1,0 +1,68 @@
+{
+  "$id": "urn:handler.control/v1/binding-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Create a binding, or replace one (and rename it). Secret values go to the secret store\n(`bindings/<name>/<slot>`); a slot left out of `secrets` keeps what it has, unless it is in\n`removeSecrets`.",
+  "properties": {
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "addon": {
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Addon",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "settings": {
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "title": "Settings",
+      "type": "object"
+    },
+    "secrets": {
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*$",
+          "type": "string"
+        }
+      },
+      "title": "Secrets",
+      "type": "object"
+    },
+    "removeSecrets": {
+      "default": [],
+      "items": {
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "type": "string"
+      },
+      "title": "Removesecrets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "addon"
+  ],
+  "title": "BindingRequest",
+  "type": "object"
+}

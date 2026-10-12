@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.remote/v1/push-subscribe-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/push_subscribe` \u2192 PushSubscription. No endpoint: push off.",
+  "properties": {
+    "endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Endpoint"
+    }
+  },
+  "title": "PushSubscribeParams",
+  "type": "object"
+}

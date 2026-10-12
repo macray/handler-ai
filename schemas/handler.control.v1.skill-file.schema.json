@@ -1,0 +1,38 @@
+{
+  "$id": "urn:handler.control/v1/skill-file",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A file of a skill (D.17), relative to its folder. `text` when one file is read and it is\nUTF-8 text; absent: binary (or a listing).",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "size": {
+      "title": "Size",
+      "type": "integer"
+    },
+    "executable": {
+      "default": false,
+      "title": "Executable",
+      "type": "boolean"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text"
+    }
+  },
+  "required": [
+    "path",
+    "size"
+  ],
+  "title": "SkillFile",
+  "type": "object"
+}

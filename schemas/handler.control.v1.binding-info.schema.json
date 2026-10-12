@@ -1,0 +1,84 @@
+{
+  "$id": "urn:handler.control/v1/binding-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A binding (G.2): never its secret references' targets, only the slot names.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "addon": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Addon"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "settings": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "title": "Settings",
+      "type": "object"
+    },
+    "secrets": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Secrets",
+      "type": "array"
+    },
+    "handWritten": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Handwritten",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "usedBy": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Usedby",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "BindingInfo",
+  "type": "object"
+}

@@ -1,0 +1,49 @@
+{
+  "$id": "urn:handler.control/v1/caches-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CacheDeclaration": {
+      "additionalProperties": false,
+      "description": "A cache of the toolbox (B.6): the home path it is mounted at, what it holds, and whether\nit is a general folder any tool writes to (`~/.cache`) rather than one tool's (`~/.cargo`).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "default": "",
+          "maxLength": 200,
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "CacheDeclaration",
+      "type": "object"
+    }
+  },
+  "description": "PUT /v1/caches: the toolbox's caches by name, written to its toolbox.toml (B.6). Applies\nto new sessions.",
+  "properties": {
+    "caches": {
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_-]*$": {
+          "$ref": "#/$defs/CacheDeclaration"
+        }
+      },
+      "title": "Caches",
+      "type": "object"
+    }
+  },
+  "required": [
+    "caches"
+  ],
+  "title": "CachesRequest",
+  "type": "object"
+}

@@ -1,0 +1,32 @@
+{
+  "$id": "urn:handler.control/v1/pair-device-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "name": {
+      "maxLength": 60,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "person": {
+      "default": "owner",
+      "pattern": "^[a-z][a-z0-9_-]{0,29}$",
+      "title": "Person",
+      "type": "string"
+    },
+    "scope": {
+      "default": "all",
+      "enum": [
+        "all",
+        "apps"
+      ],
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "PairDeviceRequest",
+  "type": "object"
+}

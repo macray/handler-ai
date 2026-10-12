@@ -1,0 +1,83 @@
+{
+  "$id": "urn:handler.remote/v1/agent-list",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "RemoteAgent": {
+      "description": "An agent a device may start sessions with (its `remoteStart` is on, D.8).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "default": {
+          "type": "boolean",
+          "title": "Default"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "default"
+      ],
+      "title": "RemoteAgent",
+      "type": "object"
+    },
+    "RemoteProject": {
+      "properties": {
+        "projectId": {
+          "title": "Projectid",
+          "type": "string"
+        },
+        "project": {
+          "title": "Project",
+          "type": "string"
+        },
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/RemoteAgent"
+          },
+          "title": "Agents",
+          "type": "array"
+        }
+      },
+      "required": [
+        "projectId",
+        "project",
+        "agents"
+      ],
+      "title": "RemoteProject",
+      "type": "object"
+    }
+  },
+  "description": "`_handler/remote/list_agents` \u2192 this (owner's devices only; empty otherwise).",
+  "properties": {
+    "projects": {
+      "items": {
+        "$ref": "#/$defs/RemoteProject"
+      },
+      "title": "Projects",
+      "type": "array"
+    }
+  },
+  "required": [
+    "projects"
+  ],
+  "title": "AgentList",
+  "type": "object"
+}

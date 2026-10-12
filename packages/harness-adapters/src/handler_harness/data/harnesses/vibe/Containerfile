@@ -1,0 +1,19 @@
+# Mistral Vibe harness image: toolbox + mistral-vibe (speaks ACP natively via `vibe-acp`).
+#
+# Not pinned: every rebuild (`handler image rebuild vibe`, or the web UI) installs the latest release.
+# What was installed is recorded in /usr/share/handler/version (contract B.6).
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE}
+
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN uv tool install --python 3.12 mistral-vibe \
+    && command -v vibe-acp \
+    && version="$(uv tool list | sed -n 's/^mistral-vibe v//p')" \
+    && test -n "$version" \
+    && mkdir -p /usr/share/handler \
+    && echo "Mistral Vibe ${version}" > /usr/share/handler/version \
+    && rm -rf /home/agent  # build-time caches (uv runs as root with HOME=/home/agent)
+
+LABEL org.opencontainers.image.title="handler-ai-vibe"

@@ -1,0 +1,65 @@
+{
+  "$id": "urn:handler.control/v1/account-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Create an account, or rename it and change its description, plan and connectors (not its\nharness).",
+  "properties": {
+    "name": {
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "harness": {
+      "minLength": 1,
+      "title": "Harness",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plan"
+    },
+    "connectors": {
+      "default": false,
+      "title": "Connectors",
+      "type": "boolean"
+    },
+    "contexts": {
+      "default": [],
+      "items": {
+        "maxLength": 32,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+        "type": "string"
+      },
+      "title": "Contexts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "harness"
+  ],
+  "title": "AccountRequest",
+  "type": "object"
+}

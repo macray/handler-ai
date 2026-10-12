@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>app</title>
+  </head>
+  <body>
+    <p style="font-family: system-ui, sans-serif; color: #888; padding: 1em">Loading…</p>
+    <script>
+      // handler: the frame a mini app runs in on a phone (docs/dev/design/miniapps.md §5.2). The
+      // client shows it sandboxed (an opaque origin, nothing of the client's), and the gateway
+      // serves it with a policy that reaches nothing: no fetch, no connection. The client posts the
+      // app's page (inlined by handler); the app's backend calls (its api(), through
+      // window.__handlerFetch) go back to the client, which carries them to handler, sealed.
+      (function () {
+        var parent = window.parent;
+        var pending = new Map();
+        var next = 1;
+
+        window.__handlerFetch = function (input, init) {
+          init = init || {};
+          var path = typeof input === "string" ? input : input.url;
+          return new Promise(function (resolve, reject) {
+            var id = next++;
+            pending.set(id, { resolve: resolve, reject: reject });
+            var send = function (body) {
+              var headers = {};
+              new Headers(init.headers || {}).forEach(function (v, k) {
+                headers[k] = v;
+              });
+              var method = (init.method || "GET").toUpperCase();
+              parent.postMessage({ type: "handler-app-fetch", id: id, method: method, path: path, headers: headers, body: body }, "*");
+            };
+            if (init.body == null) send(null);
+            else new Response(init.body).arrayBuffer().then(send, reject);
+          });
+        };
+
+        window.addEventListener("message", function (event) {
+          if (event.source !== parent) return;
+          var m = event.data || {};
+          if (m.type === "handler-app-response") {
+            var p = pending.get(m.id);
+            if (!p) return;
+            pending.delete(m.id);
+            if (m.error) p.reject(new TypeError(m.error));
+            else {
+              var empty = m.status === 204 || m.status === 205 || m.status === 304;
+              p.resolve(new Response(empty ? null : m.body, { status: m.status, headers: m.headers }));
+            }
+          } else if (m.type === "handler-app-load") load(m.html);
+        });
+
+        // Scripts parsed by DOMParser do not run: each is created again, so it does.
+        function adopt(node) {
+          if (node.nodeName === "SCRIPT") {
+            var script = document.createElement("script");
+            for (var i = 0; i < node.attributes.length; i++) script.setAttribute(node.attributes[i].name, node.attributes[i].value);
+            script.textContent = node.textContent;
+            return script;
+          }
+          var copy = document.importNode(node, false);
+          node.childNodes.forEach(function (child) {
+            copy.appendChild(adopt(child));
+          });
+          return copy;
+        }
+
+        function load(html) {
+          var doc = new DOMParser().parseFromString(html, "text/html");
+          document.title = doc.title;
+          if (doc.documentElement.lang) document.documentElement.lang = doc.documentElement.lang;
+          document.head.replaceChildren.apply(document.head, Array.from(doc.head.childNodes).map(adopt));
+          document.body.replaceChildren.apply(document.body, Array.from(doc.body.childNodes).map(adopt));
+        }
+
+        parent.postMessage({ type: "handler-frame-ready" }, "*");
+      })();
+    </script>
+  </body>
+</html>

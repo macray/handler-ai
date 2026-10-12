@@ -1,0 +1,356 @@
+{
+  "$id": "urn:handler.control/v1/create-project-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AgentInterface": {
+      "description": "What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and\nthe result its final message holds. An agent with one runs unattended, so in permission mode\n`bypass`: no one is there to answer its requests.",
+      "properties": {
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "const": "skill",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        },
+        "result": {
+          "additionalProperties": true,
+          "title": "Result",
+          "type": "object"
+        },
+        "timeoutSec": {
+          "default": 1800,
+          "exclusiveMinimum": 0,
+          "maximum": 86400,
+          "title": "Timeoutsec",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "AgentInterface",
+      "type": "object"
+    },
+    "AgentRequest": {
+      "description": "An agent of a project: its settings (all its own, never followed from its project; it\nworks in its project's folder) and what it is in the project. The body of create (POST) and\nof a full update (PUT).",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelAccess"
+          },
+          "minItems": 1,
+          "title": "Models",
+          "type": "array"
+        },
+        "network": {
+          "default": "filtered",
+          "enum": [
+            "none",
+            "filtered",
+            "open"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "egress": {
+          "default": "enforce",
+          "enum": [
+            "enforce",
+            "log-only"
+          ],
+          "title": "Egress",
+          "type": "string"
+        },
+        "allow": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "confinement": {
+          "default": "strict",
+          "enum": [
+            "strict",
+            "nested",
+            "privileged"
+          ],
+          "title": "Confinement",
+          "type": "string"
+        },
+        "permissions": {
+          "default": "bypass",
+          "enum": [
+            "ask",
+            "accept-edits",
+            "bypass"
+          ],
+          "title": "Permissions",
+          "type": "string"
+        },
+        "bindings": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Bindings",
+          "type": "array"
+        },
+        "knowledge": {
+          "default": [],
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^/\\x00]",
+            "type": "string"
+          },
+          "title": "Knowledge",
+          "type": "array"
+        },
+        "display": {
+          "default": false,
+          "title": "Display",
+          "type": "boolean"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInterface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "pattern": "^\\s*\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructions"
+        },
+        "default": {
+          "type": "boolean",
+          "default": false,
+          "title": "Default"
+        },
+        "remoteStart": {
+          "default": false,
+          "title": "Remotestart",
+          "type": "boolean"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "confirmRisks": {
+          "default": false,
+          "title": "Confirmrisks",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "models",
+        "name"
+      ],
+      "title": "AgentRequest",
+      "type": "object"
+    },
+    "ModelAccess": {
+      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one or more (D.1); a session runs with one.",
+      "properties": {
+        "harness": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Harness"
+        },
+        "account": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Account"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        }
+      },
+      "title": "ModelAccess",
+      "type": "object"
+    }
+  },
+  "description": "A new project and its first agents (at least one).",
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "folder": {
+      "title": "Folder",
+      "type": "string"
+    },
+    "defaultAgent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Defaultagent"
+    },
+    "caches": {
+      "default": "project",
+      "enum": [
+        "global",
+        "project",
+        "off"
+      ],
+      "title": "Caches",
+      "type": "string"
+    },
+    "context": {
+      "anyOf": [
+        {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentRequest"
+      },
+      "minItems": 1,
+      "title": "Agents",
+      "type": "array"
+    }
+  },
+  "required": [
+    "folder",
+    "agents"
+  ],
+  "title": "CreateProjectRequest",
+  "type": "object"
+}

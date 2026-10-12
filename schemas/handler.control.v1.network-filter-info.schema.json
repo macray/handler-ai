@@ -1,0 +1,34 @@
+{
+  "$id": "urn:handler.control/v1/network-filter-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The network filter (D.4): the egress proxy's image (A.3, A.7), part of handler. Agents and\napps with a network allow-list or a secret need it; handlerd builds it when it is missing.",
+  "properties": {
+    "image": {
+      "title": "Image",
+      "type": "string"
+    },
+    "imagePresent": {
+      "title": "Imagepresent",
+      "type": "boolean"
+    },
+    "builtAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Builtat"
+    }
+  },
+  "required": [
+    "image",
+    "imagePresent"
+  ],
+  "title": "NetworkFilterInfo",
+  "type": "object"
+}

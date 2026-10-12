@@ -1,0 +1,46 @@
+{
+  "$id": "urn:handler.control/v1/automation-check",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a definition would do before it is saved (I.9): what `AutomationView` would say.",
+  "properties": {
+    "problems": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "permissions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "nextAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nextat"
+    }
+  },
+  "title": "AutomationCheck",
+  "type": "object"
+}

@@ -1,0 +1,164 @@
+{
+  "$id": "urn:handler.control/v1/addon-preview",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonSlotInfo": {
+      "description": "A setting or secret slot of an addon (G.1), for the binding form.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AddonSlotInfo",
+      "type": "object"
+    }
+  },
+  "description": "What installing from `source` would add (G.5), shown before the user decides; `digest`\nnames exactly this content: an install of other content is refused.",
+  "properties": {
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "commands": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "env": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Env",
+      "type": "array"
+    },
+    "settings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AddonSlotInfo"
+      },
+      "title": "Settings",
+      "type": "array"
+    },
+    "secretSlots": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AddonSlotInfo"
+      },
+      "title": "Secretslots",
+      "type": "array"
+    },
+    "egress": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress",
+      "type": "array"
+    },
+    "mcp": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mcp"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "replaces": {
+      "anyOf": [
+        {
+          "enum": [
+            "builtin",
+            "installed",
+            "own"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Replaces"
+    }
+  },
+  "required": [
+    "source",
+    "digest",
+    "name"
+  ],
+  "title": "AddonPreview",
+  "type": "object"
+}

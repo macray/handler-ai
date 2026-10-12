@@ -1,0 +1,51 @@
+{
+  "$id": "urn:handler.control/v1/egress-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A network decision reported by an agent's sandbox (A.3), exposed for the UI.",
+  "properties": {
+    "t": {
+      "format": "date-time",
+      "title": "T",
+      "type": "string"
+    },
+    "connection": {
+      "title": "Connection",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "allowed",
+        "denied",
+        "unlisted",
+        "injected",
+        "leak"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "host": {
+      "title": "Host",
+      "type": "string"
+    },
+    "secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Secret"
+    }
+  },
+  "required": [
+    "t",
+    "connection",
+    "decision",
+    "host"
+  ],
+  "title": "EgressEvent",
+  "type": "object"
+}

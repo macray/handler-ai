@@ -1,0 +1,5 @@
+# A minimal mini app for the tests (contract H): a counter in SQLite, a plain HTML UI (no build).
+apiVersion = "handler.miniapp/v1"
+name = "counter"
+version = "1.0.0"
+description = "Counts clicks"

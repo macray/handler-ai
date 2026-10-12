@@ -1,0 +1,151 @@
+{
+  "$id": "urn:handler.account/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CommandSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "CommandSecret",
+      "type": "object"
+    },
+    "EnvSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "EnvSecret",
+      "type": "object"
+    },
+    "FileSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "FileSecret",
+      "type": "object"
+    },
+    "StoreSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "secret": {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$",
+          "title": "Secret",
+          "type": "string"
+        }
+      },
+      "required": [
+        "secret"
+      ],
+      "title": "StoreSecret",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "handler.account/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "harness": {
+      "minLength": 1,
+      "title": "Harness",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plan"
+    },
+    "connectors": {
+      "default": false,
+      "title": "Connectors",
+      "type": "boolean"
+    },
+    "token": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvSecret"
+        },
+        {
+          "$ref": "#/$defs/FileSecret"
+        },
+        {
+          "$ref": "#/$defs/CommandSecret"
+        },
+        {
+          "$ref": "#/$defs/StoreSecret"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Token"
+    },
+    "contexts": {
+      "default": [],
+      "items": {
+        "maxLength": 32,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+        "type": "string"
+      },
+      "title": "Contexts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "harness"
+  ],
+  "title": "Account",
+  "type": "object"
+}

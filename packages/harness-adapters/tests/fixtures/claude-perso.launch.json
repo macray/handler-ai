@@ -1,0 +1,56 @@
+{
+  "apiVersion": "handler.harness-launch/v1",
+  "image": "localhost/handler-ai-claude-code:latest",
+  "argv": [
+    "claude-agent-acp"
+  ],
+  "home": "/home/agent",
+  "env": {
+    "NODE_USE_ENV_PROXY": "1",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+  },
+  "files": [],
+  "mounts": [
+    {
+      "source": "/data/agent-state/a1b2c3/config_dir",
+      "target": "/home/agent/.claude",
+      "readOnly": false,
+      "kind": "state"
+    },
+    {
+      "source": "/data/agent-state/a1b2c3/config_json",
+      "target": "/home/agent/.claude.json",
+      "readOnly": false,
+      "kind": "state"
+    },
+    {
+      "source": "/home/you/.cache/handler-ai/cargo",
+      "target": "/home/agent/.cargo",
+      "readOnly": false,
+      "kind": "cache"
+    }
+  ],
+  "writablePaths": [],
+  "egress": [
+    "api.anthropic.com:443",
+    "platform.claude.com:443",
+    "mcp.example.org:443"
+  ],
+  "sessionDefaults": {
+    "modeId": "bypassPermissions",
+    "configOptions": {
+      "model": "opus"
+    },
+    "mcpServers": [
+      {
+        "type": "http",
+        "name": "docs",
+        "url": "https://mcp.example.org/sse",
+        "headers": []
+      }
+    ]
+  }
+}

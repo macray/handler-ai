@@ -1,0 +1,304 @@
+{
+  "$id": "urn:handler.control/v1/harness-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "LoginRecipe": {
+      "description": "How an account of this harness is logged in (D.9), one of two kinds:\n\n- a token login (`token`: the env var the harness reads it from): the person runs\n  `tokenCommand` themselves, the harness's own sign-in, and gives handler the token it prints\n  (pasted, or a reference to where they keep it). handler never runs that sign-in nor reads its\n  output (Anthropic: sign-in through its own flow, credentials provisioned by the person).\n- a file login (`file`: a credential state slot, whose file name it has there): handler runs\n  `command` interactively on the host (its browser, its callbacks), with `env`, where `{dir}`\n  is a folder handler gives it for its state instead of the person's home; the file it writes\n  there becomes the account's login.",
+      "properties": {
+        "subscription": {
+          "minLength": 1,
+          "title": "Subscription",
+          "type": "string"
+        },
+        "unattended": {
+          "enum": [
+            "allowed",
+            "check-terms",
+            "refused"
+          ],
+          "title": "Unattended",
+          "type": "string"
+        },
+        "terms": {
+          "pattern": "^https://",
+          "title": "Terms",
+          "type": "string"
+        },
+        "checked": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked"
+        },
+        "token": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token"
+        },
+        "tokenCommand": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokencommand"
+        },
+        "tokenPrefix": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenprefix"
+        },
+        "tokenLifetimeDays": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenlifetimedays"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "env": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "hosts": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Hosts",
+          "type": "array"
+        },
+        "help": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Help"
+        },
+        "plans": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Plans",
+          "type": "array"
+        },
+        "planEnv": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planenv"
+        }
+      },
+      "required": [
+        "subscription",
+        "unattended",
+        "terms"
+      ],
+      "title": "LoginRecipe",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "product": {
+      "title": "Product",
+      "type": "string"
+    },
+    "image": {
+      "title": "Image",
+      "type": "string"
+    },
+    "imagePresent": {
+      "title": "Imagepresent",
+      "type": "boolean"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "builtAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Builtat"
+    },
+    "providerProtocols": {
+      "default": [],
+      "items": {
+        "enum": [
+          "anthropic",
+          "openai-chat",
+          "responses"
+        ],
+        "type": "string"
+      },
+      "title": "Providerprotocols",
+      "type": "array"
+    },
+    "login": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LoginRecipe"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "loginFile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Loginfile"
+    },
+    "permissions": {
+      "default": [],
+      "items": {
+        "enum": [
+          "ask",
+          "accept-edits",
+          "bypass"
+        ],
+        "type": "string"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "sessionModes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "propertyNames": {
+        "enum": [
+          "ask",
+          "accept-edits",
+          "bypass"
+        ]
+      },
+      "title": "Sessionmodes",
+      "type": "object"
+    },
+    "accountConnectors": {
+      "default": false,
+      "title": "Accountconnectors",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "product",
+    "image",
+    "imagePresent"
+  ],
+  "title": "HarnessInfo",
+  "type": "object"
+}

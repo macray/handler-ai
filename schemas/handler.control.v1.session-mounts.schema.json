@@ -1,0 +1,85 @@
+{
+  "$id": "urn:handler.control/v1/session-mounts",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SessionMount": {
+      "description": "What the session's sandbox sees of the host (F.8): a folder or file of it, or an addon's\ntools (an image).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "scope",
+                "state",
+                "cache",
+                "config",
+                "knowledge",
+                "app",
+                "subject"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "tools",
+              "type": "string"
+            }
+          ],
+          "title": "Kind"
+        },
+        "readOnly": {
+          "title": "Readonly",
+          "type": "boolean"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "browsable": {
+          "title": "Browsable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target",
+        "kind",
+        "readOnly",
+        "source",
+        "browsable"
+      ],
+      "title": "SessionMount",
+      "type": "object"
+    }
+  },
+  "description": "Everything of the host a session's sandbox sees, as of its last start (F.8).",
+  "properties": {
+    "startedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Startedat"
+    },
+    "mounts": {
+      "items": {
+        "$ref": "#/$defs/SessionMount"
+      },
+      "title": "Mounts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "mounts"
+  ],
+  "title": "SessionMounts",
+  "type": "object"
+}

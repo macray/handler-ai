@@ -1,0 +1,14 @@
+apiVersion = "handler.provider/v1"
+description = "Mistral API"
+apiKey = { secret = "key" }
+
+[endpoints]
+openai-chat = "https://api.mistral.ai/v1"
+
+[[models]]
+id = "devstral-medium-latest"
+name = "Devstral Medium"
+
+[[models]]
+id = "mistral-large-latest"
+name = "Mistral Large"

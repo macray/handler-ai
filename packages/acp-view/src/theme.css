@@ -1,0 +1,298 @@
+/* The handler look, shared by the web UI and the remote client (imported by each app's Tailwind
+   entry, after `@import "tailwindcss"` and the `dark` variant). */
+
+/* Linear-like: a quiet frame (the sidebar) around one raised content panel, neutral greys, a
+   single orange accent kept for what matters (the main action, focus, the current place). `.dark`
+   follows the OS, or the web UI's Settings → Appearance (theme.svelte.ts). Status colours: --ok, --warn, --danger. */
+:root {
+  --background: #ffffff;
+  --foreground: #17181a;
+  --card: #ffffff;
+  --card-foreground: #17181a;
+  --popover: #ffffff;
+  --popover-foreground: #17181a;
+  --primary: #c2410c; /* white text on it ≥ 4.5:1 (WCAG AA), and as text on white */
+  --primary-foreground: #ffffff;
+  --secondary: #f2f2f4;
+  --secondary-foreground: #17181a;
+  --muted: #f5f5f7;
+  --muted-foreground: #62666e;
+  --accent: #f0f0f3;
+  --accent-foreground: #17181a;
+  --accent-soft: #fff1e8;
+  --accent-soft-foreground: #b8460a;
+  --destructive: #dc3c42;
+  --border: #e7e7eb;
+  --input: #8f939b; /* form fields' borders ≥ 3:1 against the page (WCAG 1.4.11) */
+  --ring: #c2410c;
+  --radius: 0.5rem;
+  --sidebar: #f6f6f8;
+  --sidebar-foreground: #3a3d43;
+  --sidebar-primary: #c2410c;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eaeaee;
+  --sidebar-accent-foreground: #17181a;
+  --sidebar-border: #e4e4e8;
+  --sidebar-ring: #c2410c;
+  --ok: #18864b;
+  --warn: #9a6700;
+  --danger: #d4343a;
+  --link: #c94f0c;
+  --code-bg: #f4f4f6;
+  --diff-add: #e3f5e8;
+  --diff-del: #fbe6e4;
+  --panel-shadow: 0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px -4px rgb(0 0 0 / 0.06);
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #16171a;
+  --foreground: #e8e9ec;
+  --card: #1a1b1f;
+  --card-foreground: #e8e9ec;
+  --popover: #1c1d21;
+  --popover-foreground: #e8e9ec;
+  --primary: #f26b21;
+  --primary-foreground: #16171a; /* dark text on the bright orange: ≥ 4.5:1 */
+  --secondary: #232428;
+  --secondary-foreground: #e8e9ec;
+  --muted: #1f2024;
+  --muted-foreground: #959aa3;
+  --accent: #26272c;
+  --accent-foreground: #f1f2f4;
+  --accent-soft: #3a2116;
+  --accent-soft-foreground: #ffa26b;
+  --destructive: #eb5757;
+  --border: #2a2b30;
+  --input: #6b6f78;
+  --ring: #f26b21;
+  --sidebar: #0f1012;
+  --sidebar-foreground: #b8bbc2;
+  --sidebar-primary: #f26b21;
+  --sidebar-primary-foreground: #16171a;
+  --sidebar-accent: #1f2024;
+  --sidebar-accent-foreground: #f1f2f4;
+  --sidebar-border: #1f2023;
+  --sidebar-ring: #f26b21;
+  --ok: #4cc38a;
+  --warn: #f0b545;
+  --danger: #f06363;
+  --link: #ff965a;
+  --code-bg: #1f2024;
+  --diff-add: #1d3326;
+  --diff-del: #3d2220;
+  --panel-shadow: 0 0 0 1px rgb(255 255 255 / 0.05), 0 4px 16px -4px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", "Inter", system-ui, sans-serif;
+  --font-mono: var(--mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-link: var(--link);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-foreground: var(--accent-soft-foreground);
+  --shadow-panel: var(--panel-shadow);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-size: 16px; /* text-sm = 14px for body text, text-xs = 12px for hints */
+    font-feature-settings: "cv11", "ss01";
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-sidebar text-foreground;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.011em;
+  }
+  code,
+  pre {
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+}
+
+/* Rendered markdown (agent output, tool results): Tailwind's reset removes all of it. */
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md blockquote,
+.md table {
+  margin: 0.5em 0;
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.5em;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+}
+.md pre {
+  background: var(--code-bg);
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.md blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+}
+.md table {
+  border-collapse: collapse;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.2em 0.5em;
+}
+.md strong {
+  font-weight: 700;
+}
+.md em {
+  font-style: italic;
+}
+.md hr {
+  border-color: var(--border);
+  margin: 0.8em 0;
+}
+.md h1,
+.md h2,
+.md h3 {
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+}
+.md h1 {
+  font-size: 1.25em;
+}
+.md h2 {
+  font-size: 1.1em;
+}
+.md a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A terminal surface (the chat, replayed executions): always dark, like a terminal emulator. It
+   redefines the theme tokens, so everything inside (badges, diffs, selects) follows. */
+.term-surface {
+  --background: #0d0f12;
+  --foreground: #d5d9e0;
+  --card: #14171c;
+  --muted: #1a1e24;
+  --muted-foreground: #7d8590;
+  --accent: #1a1e24;
+  --accent-foreground: #d5d9e0;
+  --border: #2a2f37;
+  --input: #2a2f37;
+  --primary-foreground: #0d0f12;
+  --link: #7aa2f7;
+  --ok: #7ee787;
+  --warn: #e3b341;
+  --danger: #ff7b72;
+  --code-bg: #161a20;
+  --diff-add: #12301c;
+  --diff-del: #3a1a1a;
+  --prompt: #7ee787;
+  --user-line: #161b22;
+  color-scheme: dark;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.term-surface ::selection {
+  background: #264f78;
+}
+.term-surface pre,
+.term-surface code {
+  font-size: 1em;
+}
+.term-surface button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.9em; /* ≥ 12px: controls stay readable */
+  cursor: pointer;
+}
+.term-surface button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.term-surface select {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 1em;
+  padding: 0.1rem 0.3rem;
+}
+
+/* Project contexts (D.19, docs/dev/ui-ux.md): the one exception to the single accent. A
+   context's colour tints its projects' and agents' icons and its tags (`ctx-<colour>` sets the
+   pair, `ctx-icon` and `ctx-tag` use it); never orange, green, amber or red, which already mean
+   something. */
+.ctx-blue { --ctx: #2f6fdb; --ctx-soft: #eaf1fd; }
+.ctx-violet { --ctx: #7c4dda; --ctx-soft: #f2edfc; }
+.ctx-cyan { --ctx: #0e7490; --ctx-soft: #e3f4f8; }
+.ctx-pink { --ctx: #c2387a; --ctx-soft: #fcebf3; }
+.ctx-slate { --ctx: #52606d; --ctx-soft: #eef1f4; }
+.dark .ctx-blue { --ctx: #7aa7f0; --ctx-soft: #1d2b45; }
+.dark .ctx-violet { --ctx: #b394f0; --ctx-soft: #2c2340; }
+.dark .ctx-cyan { --ctx: #5cc8dc; --ctx-soft: #12343b; }
+.dark .ctx-pink { --ctx: #ec8fbc; --ctx-soft: #3d1f2e; }
+.dark .ctx-slate { --ctx: #a3afbb; --ctx-soft: #2a2f35; }
+.ctx-icon { color: var(--ctx); }
+.ctx-tag { background: var(--ctx-soft, var(--secondary)); color: var(--ctx, var(--secondary-foreground)); }

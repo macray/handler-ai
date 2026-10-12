@@ -1,0 +1,40 @@
+{
+  "$id": "urn:handler.control/v1/skill-file-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Write a file of a skill: `text`, or `base64` for any content (an upload).",
+  "properties": {
+    "text": {
+      "anyOf": [
+        {
+          "maxLength": 5242880,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text"
+    },
+    "base64": {
+      "anyOf": [
+        {
+          "maxLength": 6990510,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Base64"
+    },
+    "executable": {
+      "default": false,
+      "title": "Executable",
+      "type": "boolean"
+    }
+  },
+  "title": "SkillFileRequest",
+  "type": "object"
+}

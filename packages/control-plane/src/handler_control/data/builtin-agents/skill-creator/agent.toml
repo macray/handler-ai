@@ -1,0 +1,10 @@
+# A built-in agent (D.18), set up at most once: handler_control/builtin_agents.py. Its
+# instructions: instructions.md.
+# skills/skill-creator: Anthropic's, unchanged (Apache-2.0, its LICENSE.txt), from
+# https://github.com/anthropics/skills/tree/main/skills/skill-creator as of 2026-10-04.
+# skills/handler-skills: how handler keeps skills, and how a session's skill gets to the library.
+description = "Writes a skill with you, or improves one of the library: each session works on a copy, saved to the library when you say so."
+
+[agent]
+name = "Skill creator"
+description = "Writes and improves skills, in a folder of its own"

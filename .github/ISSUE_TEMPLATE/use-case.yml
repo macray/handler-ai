@@ -1,0 +1,23 @@
+name: Use case or pain point
+description: What you tried to do with Handler, or a problem you have with coding agents. The most useful feedback.
+labels: [use case]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you were trying to do
+      description: The task or the problem, in your words. Whether Handler covers it yet or not.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: How it went
+      description: It worked, it half-worked, you gave up (where?), or you do it another way today (how?).
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Harness and model access (if you tried)
+      placeholder: Claude Code on a Max subscription, Codex with an API key, pi on a local model…

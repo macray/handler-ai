@@ -1,0 +1,83 @@
+{
+  "$id": "urn:handler.control/v1/remote-pairing",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "RemoteDevice": {
+      "description": "A paired device (D.7). Its key never leaves the daemon after pairing.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "person": {
+          "default": "owner",
+          "pattern": "^[a-z][a-z0-9_-]{0,29}$",
+          "title": "Person",
+          "type": "string"
+        },
+        "scope": {
+          "default": "all",
+          "enum": [
+            "all",
+            "apps"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "lastSeenAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastseenat"
+        },
+        "attached": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Attached",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "createdAt"
+      ],
+      "title": "RemoteDevice",
+      "type": "object"
+    }
+  },
+  "description": "A new device (D.7): `pairingUrl` carries its key in the fragment \u2014 shown once, as a QR\ncode.",
+  "properties": {
+    "device": {
+      "$ref": "#/$defs/RemoteDevice"
+    },
+    "pairingUrl": {
+      "title": "Pairingurl",
+      "type": "string"
+    }
+  },
+  "required": [
+    "device",
+    "pairingUrl"
+  ],
+  "title": "RemotePairing",
+  "type": "object"
+}

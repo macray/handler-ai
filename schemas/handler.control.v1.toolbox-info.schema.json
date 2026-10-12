@@ -1,0 +1,38 @@
+{
+  "$id": "urn:handler.control/v1/toolbox-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "image": {
+      "title": "Image",
+      "type": "string"
+    },
+    "imagePresent": {
+      "title": "Imagepresent",
+      "type": "boolean"
+    },
+    "builtAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Builtat"
+    },
+    "directory": {
+      "title": "Directory",
+      "type": "string"
+    }
+  },
+  "required": [
+    "image",
+    "imagePresent",
+    "directory"
+  ],
+  "title": "ToolboxInfo",
+  "type": "object"
+}

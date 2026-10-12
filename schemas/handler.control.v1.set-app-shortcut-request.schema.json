@@ -1,0 +1,23 @@
+{
+  "$id": "urn:handler.control/v1/set-app-shortcut-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "shortcut": {
+      "anyOf": [
+        {
+          "pattern": "^(<(Super|Primary|Control|Ctrl|Alt|Shift)>)+([A-Za-z0-9]|F[1-9]|F1[0-2]|space|Return|period|comma|slash|minus|equal)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Shortcut"
+    }
+  },
+  "required": [
+    "shortcut"
+  ],
+  "title": "SetAppShortcutRequest",
+  "type": "object"
+}

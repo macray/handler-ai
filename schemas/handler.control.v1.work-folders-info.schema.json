@@ -1,0 +1,53 @@
+{
+  "$id": "urn:handler.control/v1/work-folders-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "WorkFolderInfo": {
+      "description": "A work folder (D.13) as Settings shows it: as written, where that is, whether it exists,\nand the projects whose folder is inside it.",
+      "properties": {
+        "root": {
+          "title": "Root",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "exists": {
+          "title": "Exists",
+          "type": "boolean"
+        },
+        "projects": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Projects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "root",
+        "path",
+        "exists"
+      ],
+      "title": "WorkFolderInfo",
+      "type": "object"
+    }
+  },
+  "description": "GET and PUT /v1/folders (D.13): the work folders, in their order.",
+  "properties": {
+    "folders": {
+      "items": {
+        "$ref": "#/$defs/WorkFolderInfo"
+      },
+      "title": "Folders",
+      "type": "array"
+    }
+  },
+  "required": [
+    "folders"
+  ],
+  "title": "WorkFoldersInfo",
+  "type": "object"
+}

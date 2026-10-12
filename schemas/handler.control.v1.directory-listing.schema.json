@@ -1,0 +1,63 @@
+{
+  "$id": "urn:handler.control/v1/directory-listing",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "DirectoryEntry": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "DirectoryEntry",
+      "type": "object"
+    }
+  },
+  "description": "Folder picker (UI): sub-directories of a path inside the work folders (D.13).",
+  "properties": {
+    "path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Path"
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/DirectoryEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "entries"
+  ],
+  "title": "DirectoryListing",
+  "type": "object"
+}

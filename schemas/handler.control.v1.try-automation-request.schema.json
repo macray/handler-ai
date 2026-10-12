@@ -1,0 +1,20 @@
+{
+  "$id": "urn:handler.control/v1/try-automation-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    }
+  },
+  "title": "TryAutomationRequest",
+  "type": "object"
+}

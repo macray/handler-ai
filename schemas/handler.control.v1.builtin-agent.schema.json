@@ -1,0 +1,184 @@
+{
+  "$id": "urn:handler.control/v1/builtin-agent",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AgentInterface": {
+      "description": "What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and\nthe result its final message holds. An agent with one runs unattended, so in permission mode\n`bypass`: no one is there to answer its requests.",
+      "properties": {
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "const": "skill",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        },
+        "result": {
+          "additionalProperties": true,
+          "title": "Result",
+          "type": "object"
+        },
+        "timeoutSec": {
+          "default": 1800,
+          "exclusiveMinimum": 0,
+          "maximum": 86400,
+          "title": "Timeoutsec",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "AgentInterface",
+      "type": "object"
+    }
+  },
+  "description": "An agent handler ships (D.18), set up at most once: everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.",
+  "properties": {
+    "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "agentName": {
+      "title": "Agentname",
+      "type": "string"
+    },
+    "agentDescription": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentdescription"
+    },
+    "instructions": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Instructions"
+    },
+    "network": {
+      "default": "filtered",
+      "enum": [
+        "none",
+        "filtered",
+        "open"
+      ],
+      "title": "Network",
+      "type": "string"
+    },
+    "egress": {
+      "default": "enforce",
+      "enum": [
+        "enforce",
+        "log-only"
+      ],
+      "title": "Egress",
+      "type": "string"
+    },
+    "allow": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allow",
+      "type": "array"
+    },
+    "confinement": {
+      "default": "strict",
+      "enum": [
+        "strict",
+        "nested",
+        "privileged"
+      ],
+      "title": "Confinement",
+      "type": "string"
+    },
+    "permissions": {
+      "default": "bypass",
+      "enum": [
+        "ask",
+        "accept-edits",
+        "bypass"
+      ],
+      "title": "Permissions",
+      "type": "string"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "interface": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentInterface"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "agentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "agentName"
+  ],
+  "title": "BuiltinAgent",
+  "type": "object"
+}

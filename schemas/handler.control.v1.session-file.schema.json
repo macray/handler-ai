@@ -1,0 +1,81 @@
+{
+  "$id": "urn:handler.control/v1/session-file",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One file of a session's folder (F.8), for reading. At most one of `text` and `image`: a\nfile that is neither (binary, too large) has only its size.",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Size"
+    },
+    "change": {
+      "anyOf": [
+        {
+          "enum": [
+            "added",
+            "modified",
+            "deleted"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Change"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "before": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Before"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "SessionFile",
+  "type": "object"
+}

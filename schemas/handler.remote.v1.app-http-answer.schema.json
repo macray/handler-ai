@@ -1,0 +1,28 @@
+{
+  "$id": "urn:handler.remote/v1/app-http-answer",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "status": {
+      "title": "Status",
+      "type": "integer"
+    },
+    "headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Headers",
+      "type": "object"
+    },
+    "body": {
+      "title": "Body",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "headers",
+    "body"
+  ],
+  "title": "AppHttpAnswer",
+  "type": "object"
+}

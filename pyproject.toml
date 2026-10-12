@@ -1,0 +1,90 @@
+[project]
+name = "handler-workspace"
+version = "0.0.0"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "handler-contracts",
+    "handler-sandbox-podman",
+    "handler-harness-adapters",
+    "handler-control-plane",
+    "handler-cli",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "ruff>=0.16",
+    "httpx>=0.28.1",
+    "playwright==1.63.0",
+    "ty>=0.0.84",
+    "pytest-xdist>=3.8",
+    "pytest-timeout>=2.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "packages/contracts",
+    "packages/sandbox-podman",
+    "packages/harness-adapters",
+    "packages/control-plane",
+    "packages/cli",
+]
+
+[tool.uv.sources]
+handler-contracts = { workspace = true }
+handler-sandbox-podman = { workspace = true }
+handler-harness-adapters = { workspace = true }
+handler-control-plane = { workspace = true }
+handler-cli = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# built-in agents' skills: other people's code, vendored as is (data, D.18)
+extend-exclude = [
+    "mistral-vibe-acp",
+    ".venv-py312",
+    "packages/web-ui",
+    "packages/control-plane/src/handler_control/data/builtin-agents",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PL"]
+ignore = ["PLR2004", "PLR0913", "RUF012"]  # RUF012: pydantic copies mutable defaults
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "handler_contracts",
+    "handler_sandbox_podman",
+    "handler_harness",
+    "handler_control",
+    "handler_cli",
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = [
+    "packages/contracts",
+    "packages/sandbox-podman",
+    "packages/harness-adapters",
+    "packages/control-plane",
+    "packages/cli",
+    "tests",
+]
+exclude = ["packages/control-plane/src/handler_control/data/builtin-agents"]
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "tests"]
+addopts = "-q"
+# a hung test fails with its stack instead of blocking the run (the slowest takes ~7 s); tests
+# that pull or build images say how long they may take: pytest.mark.timeout(IMAGE_TIMEOUT)
+timeout = 120

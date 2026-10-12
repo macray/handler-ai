@@ -1,0 +1,27 @@
+# Claude Code harness image: toolbox + the ACP adapter for the Claude Agent SDK.
+# The SDK ships the native Claude Code binary as an npm optional dependency (one package per
+# platform); it is also linked as `claude`, the terminal program of `handler terminal` (D.16), so both
+# run the same version on the same history.
+#
+# Not pinned: every rebuild (`handler image rebuild claude-code`, or the web UI) installs the latest release.
+# What was installed is recorded in /usr/share/handler/version (contract B.6); the build fails if
+# the versions cannot be read, so a package layout change is noticed.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE}
+
+RUN npm install -g --no-fund --no-audit @agentclientprotocol/claude-agent-acp \
+    && npm cache clean --force \
+    && command -v claude-agent-acp \
+    && adapter=/usr/lib/node_modules/@agentclientprotocol/claude-agent-acp \
+    && sdk="$adapter/node_modules/@anthropic-ai/claude-agent-sdk" \
+    && acp_version="$(jq -er .version "$adapter/package.json")" \
+    && claude_version="$(jq -er .claudeCodeVersion "$sdk/package.json")" \
+    && for bin in "$adapter"/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude; do \
+         "$bin" --version >/dev/null 2>&1 && ln -s "$bin" /usr/local/bin/claude && break; \
+       done \
+    && claude --version \
+    && mkdir -p /usr/share/handler \
+    && echo "Claude Code ${claude_version} (claude-agent-acp ${acp_version})" > /usr/share/handler/version \
+    && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent)
+
+LABEL org.opencontainers.image.title="handler-ai-claude-code"

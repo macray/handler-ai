@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/app-link",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A one-time link that opens the app in a browser (valid 2 minutes, H.4).",
+  "properties": {
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "AppLink",
+  "type": "object"
+}

@@ -1,0 +1,65 @@
+# pi harness descriptor (contract B, handler.harness/v1). ACP through the pi-acp adapter.
+apiVersion = "handler.harness/v1"
+name = "pi"
+product = "pi"
+image = "localhost/handler-ai-pi"  # no tag: launches use :latest (contract B.6)
+acpCommand = ["pi-acp"]
+home = "/home/agent"
+
+# No account: pi has no subscription of its own (its /login signs in to other vendors'), so it runs
+# on a provider, whose endpoint is the host it reaches. A provider it can use speaks:
+providerProtocols = ["openai-chat"]   # models.json + settings.json
+
+# ACP config options (pi-acp): model, thought_level. Its ACP session modes are thinking levels.
+modelOption = "model"
+
+# User skills (verified: pi-acp and pi load <agent-dir>/skills, agent dir = ~/.pi/agent): each
+# skill of the agent and its addons is mounted read-only at ~/.pi/agent/skills/<folder name>.
+skillsDir = "~/.pi/agent/skills"
+# MCP servers (its addons'): pi has no MCP of its own and pi-acp ignores
+# session/new's mcpServers. The image runs pi with the pi-mcp-adapter extension (handler-pi), which
+# reads ~/.config/mcp/mcp.json: render writes the servers there. It starts stdio servers with pi's
+# whole environment, provider keys included ("sandbox": render wraps them with handler-sandbox-env to
+# drop them); http servers fall back to SSE.
+mcpTransports = ["stdio", "http", "sse"]
+mcpEnv = "sandbox"
+mcpConfigFile = "~/.config/mcp/mcp.json"
+
+# pi writes its state under ~/.pi/agent (sessions, trust.json, settings.json) and pi-acp its
+# session map under ~/.pi/pi-acp: writable, including when files are mounted inside it.
+writablePaths = ["~/.pi"]
+
+[env]
+NODE_USE_ENV_PROXY = "1"     # Node's fetch only honours HTTPS_PROXY with this
+PI_ACP_PI_COMMAND = "handler-pi" # pi with the pi-mcp-adapter extension (see the Containerfile)
+PI_SKIP_VERSION_CHECK = "1"  # the image is the unit of upgrade (and pi.dev is not in egress)
+PI_TELEMETRY = "0"           # no install report to pi.dev, no attribution headers to providers
+PI_OFFLINE = "1"             # no startup network: version check, model catalog refresh from pi.dev,
+                             # fd/rg downloads (the toolbox has them), package update checks
+
+# pi's settings.json (defaultProvider, defaultModel, quietStartup…). pi rewrites it (e.g. the
+# model chosen over ACP): copied, not mounted; changes discarded.
+[configFiles.settings_json]
+target = "~/.pi/agent/settings.json"
+description = "pi settings.json"
+seed = true
+
+# Custom providers and models, e.g. a local OpenAI-compatible endpoint.
+[configFiles.models_json]
+target = "~/.pi/agent/models.json"
+description = "pi models.json"
+
+# Session history (verified: pi writes <agent dir>/sessions/<cwd>/*.jsonl, and pi-acp's
+# session/load, when its ~/.pi/pi-acp session map does not know the id, finds the file by scanning
+# that folder). Per session: the daemon binds it to the session's own folder (contracts F.2), so a
+# stopped session can be resumed with ACP `session/load`. A settings.json `sessionDir` defeats it.
+[stateSlots.sessions]
+target = "~/.pi/agent/sessions"
+kind = "dir"
+required = false
+perSession = true
+
+# pi never asks before a tool call (docs/security.md: "it does not ask for approval"), so only
+# "bypass" is honest. "ask" and "accept-edits" are left out: an agent asking for them is refused.
+[permissions]
+bypass = {}

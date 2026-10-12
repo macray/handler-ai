@@ -1,0 +1,208 @@
+{
+  "$id": "urn:handler.control/v1/skill-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ScanHit": {
+      "description": "Something the scan found at a line of a skill's file (D.17).",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "title": "Line",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "text"
+      ],
+      "title": "ScanHit",
+      "type": "object"
+    },
+    "SkillFile": {
+      "description": "A file of a skill (D.17), relative to its folder. `text` when one file is read and it is\nUTF-8 text; absent: binary (or a listing).",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "executable": {
+          "default": false,
+          "title": "Executable",
+          "type": "boolean"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "path",
+        "size"
+      ],
+      "title": "SkillFile",
+      "type": "object"
+    },
+    "SkillScan": {
+      "description": "What handlerd finds in a skill's files, no model involved (D.17).",
+      "properties": {
+        "executables": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Executables",
+          "type": "array"
+        },
+        "binaries": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Binaries",
+          "type": "array"
+        },
+        "hosts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ScanHit"
+          },
+          "title": "Hosts",
+          "type": "array"
+        },
+        "hiddenText": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ScanHit"
+          },
+          "title": "Hiddentext",
+          "type": "array"
+        },
+        "blobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ScanHit"
+          },
+          "title": "Blobs",
+          "type": "array"
+        }
+      },
+      "title": "SkillScan",
+      "type": "object"
+    }
+  },
+  "description": "A skill of the library (D.17): a folder with a SKILL.md and any other files, offered to\nevery agent. Projects may give it to all their agents; other agents pick it. `content` (its\nSKILL.md), `digest` and `scan` only when one skill is read.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "projects": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Projects",
+      "type": "array"
+    },
+    "files": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SkillFile"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "usedBy": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Usedby",
+      "type": "array"
+    },
+    "content": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content"
+    },
+    "digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Digest"
+    },
+    "scan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SkillScan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "SkillInfo",
+  "type": "object"
+}

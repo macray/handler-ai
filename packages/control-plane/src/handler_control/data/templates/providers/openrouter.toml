@@ -1,0 +1,10 @@
+apiVersion = "handler.provider/v1"
+description = "OpenRouter"
+apiKey = { secret = "key" }
+
+[endpoints]
+openai-chat = "https://openrouter.ai/api/v1"
+
+[[models]]
+id = "openrouter/auto"
+name = "OpenRouter Auto"

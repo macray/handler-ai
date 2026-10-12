@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/health",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "status": {
+      "const": "ok",
+      "title": "Status",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "display": {
+      "default": false,
+      "title": "Display",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "status",
+    "version"
+  ],
+  "title": "Health",
+  "type": "object"
+}

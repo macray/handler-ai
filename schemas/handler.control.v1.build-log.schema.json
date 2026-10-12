@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/build-log",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A slice of a build's log, from byte `offset`; ask again from `next_offset` for more.",
+  "properties": {
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "nextOffset": {
+      "title": "Nextoffset",
+      "type": "integer"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "text",
+    "nextOffset",
+    "complete"
+  ],
+  "title": "BuildLog",
+  "type": "object"
+}

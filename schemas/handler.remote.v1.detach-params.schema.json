@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.remote/v1/detach-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The notification `_handler/remote/detach`: the device leaves a session it is attached to.",
+  "properties": {
+    "s": {
+      "title": "S",
+      "type": "string"
+    }
+  },
+  "required": [
+    "s"
+  ],
+  "title": "DetachParams",
+  "type": "object"
+}

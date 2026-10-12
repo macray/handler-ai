@@ -1,0 +1,10 @@
+# Ollama on this machine: it must listen where the sandbox reaches it (OLLAMA_HOST=0.0.0.0).
+apiVersion = "handler.provider/v1"
+description = "Ollama on this machine"
+
+[endpoints]
+openai-chat = "http://127.0.0.1:11434/v1"
+
+[[models]]
+id = "qwen3:8b"
+name = "Qwen3 8B (a model you pulled)"

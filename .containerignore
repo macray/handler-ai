@@ -1,0 +1,6 @@
+# Root build context: only remote-gateway/Containerfile builds from here.
+**/node_modules
+**/dist
+**/.venv*
+**/__pycache__
+.git

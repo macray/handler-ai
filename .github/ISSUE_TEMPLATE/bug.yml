@@ -1,0 +1,25 @@
+name: Bug
+description: Something Handler does wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: doing
+    attributes:
+      label: What you were doing
+      description: The task you were using Handler for, the harness and the model access (account or provider).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you ran, what you expected, what happened
+      description: Commands or clicks, and the output (what `handler setup` reports, the daemon's log `journalctl --user -u handler-ai`).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version (`handler --version`) and system
+      placeholder: handler 0.1.0, Fedora 42, podman 5.4
+    validations:
+      required: true

@@ -1,0 +1,27 @@
+# pi harness image: toolbox + the pi coding agent + pi-acp, its ACP adapter (spawns `pi --mode rpc`)
+# + pi-mcp-adapter, the pi extension that gives it MCP servers. pi-acp starts handler-pi instead of pi
+# (PI_ACP_PI_COMMAND, harness.toml): pi with that extension, which reads the servers `render`
+# writes to ~/.config/mcp/mcp.json.
+#
+# Not pinned: every rebuild (`handler image rebuild pi`, or the web UI) installs the latest releases.
+# What was installed is recorded in /usr/share/handler/version (contract B.6); the build fails if
+# the versions cannot be read, so a package rename is noticed.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE}
+
+RUN npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp pi-mcp-adapter \
+    && npm cache clean --force \
+    && command -v pi \
+    && command -v pi-acp \
+    && modules=/usr/lib/node_modules \
+    && test -f "$modules/pi-mcp-adapter/index.ts" \
+    && printf '#!/bin/sh\nexec pi --extension %s "$@"\n' "$modules/pi-mcp-adapter" > /usr/local/bin/handler-pi \
+    && chmod 755 /usr/local/bin/handler-pi \
+    && pi_version="$(jq -er .version "$modules/@earendil-works/pi-coding-agent/package.json")" \
+    && acp_version="$(jq -er .version "$modules/pi-acp/package.json")" \
+    && mcp_version="$(jq -er .version "$modules/pi-mcp-adapter/package.json")" \
+    && mkdir -p /usr/share/handler \
+    && echo "pi ${pi_version} (pi-acp ${acp_version}, pi-mcp-adapter ${mcp_version})" > /usr/share/handler/version \
+    && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent)
+
+LABEL org.opencontainers.image.title="handler-ai-pi"

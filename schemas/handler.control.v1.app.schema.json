@@ -1,0 +1,288 @@
+{
+  "$id": "urn:handler.control/v1/app",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AppDeployment": {
+      "description": "One installed version of a mini app (H.6).",
+      "properties": {
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "deployedAt": {
+          "format": "date-time",
+          "title": "Deployedat",
+          "type": "string"
+        },
+        "needs": {
+          "$ref": "#/$defs/MiniAppNeeds"
+        }
+      },
+      "required": [
+        "version",
+        "deployedAt",
+        "needs"
+      ],
+      "title": "AppDeployment",
+      "type": "object"
+    },
+    "AppSecret": {
+      "description": "A secret an app declares (current or source version): whether it has a value. The value\nitself never leaves the daemon (H.2).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "set": {
+          "title": "Set",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "set"
+      ],
+      "title": "AppSecret",
+      "type": "object"
+    },
+    "AppSource": {
+      "description": "The app's source folder as it is now: what Deploy would install (H.6).",
+      "properties": {
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "addedNeeds": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Addedneeds",
+          "type": "array"
+        }
+      },
+      "title": "AppSource",
+      "type": "object"
+    },
+    "MiniAppFile": {
+      "additionalProperties": false,
+      "description": "A file or folder of the host the backend may read (or write): mounted at the same path.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "mode": {
+          "default": "ro",
+          "enum": [
+            "ro",
+            "rw"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "MiniAppFile",
+      "type": "object"
+    },
+    "MiniAppNeeds": {
+      "additionalProperties": false,
+      "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
+      "properties": {
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "secrets": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Secrets",
+          "type": "array"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MiniAppFile"
+          },
+          "maxItems": 10,
+          "title": "Files",
+          "type": "array"
+        },
+        "notify": {
+          "default": false,
+          "title": "Notify",
+          "type": "boolean"
+        }
+      },
+      "title": "MiniAppNeeds",
+      "type": "object"
+    }
+  },
+  "description": "A registered mini app (H): its source folder, what is installed, its backend's state.",
+  "properties": {
+    "name": {
+      "pattern": "^[a-z][a-z0-9-]{0,29}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "sourceDir": {
+      "title": "Sourcedir",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "stopped",
+        "starting",
+        "running",
+        "failed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "current": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppDeployment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppDeployment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "source": {
+      "$ref": "#/$defs/AppSource"
+    },
+    "secrets": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppSecret"
+      },
+      "title": "Secrets",
+      "type": "array"
+    },
+    "shortcut": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Shortcut"
+    },
+    "persons": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Persons",
+      "type": "array"
+    },
+    "lastUsedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lastusedat"
+    }
+  },
+  "required": [
+    "name",
+    "sourceDir",
+    "url",
+    "state",
+    "source"
+  ],
+  "title": "App",
+  "type": "object"
+}

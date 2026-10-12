@@ -1,0 +1,18 @@
+apiVersion = "handler.provider/v1"
+description = "Anthropic API"
+apiKey = { secret = "key" }
+
+[endpoints]
+anthropic = "https://api.anthropic.com"
+
+[[models]]
+id = "claude-sonnet-5-5"
+name = "Claude Sonnet 5.5"
+reasoning = true
+images = true
+
+[[models]]
+id = "claude-opus-5-5"
+name = "Claude Opus 5.5"
+reasoning = true
+images = true

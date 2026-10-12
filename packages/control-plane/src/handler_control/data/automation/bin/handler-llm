@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""handler-llm: call a model through handlerd's `llm` service (contracts I.5), from an automation's script.
+
+    handler-llm --model PROVIDER/MODEL [--system FILE] --prompt FILE [--schema FILE] < input > out
+
+Standard input, when there is any, is the input (the text the prompt is about). Prints the answer:
+with --schema, the JSON value valid against it; else the text. Exit 0; 1 when the call failed or
+the answer is not valid (the reason on stderr); 2 for a usage error.
+
+It speaks MCP (JSON-RPC, one message per line) on the socket $HANDLER_SERVICES. The model's key never
+comes here: handlerd calls the provider.
+"""
+
+import argparse
+import json
+import os
+import socket
+import sys
+
+
+def read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="handler-llm", description="Call a model through handlerd.")
+    parser.add_argument("--model", required=True, help="provider/model, one of services.llm")
+    parser.add_argument("--system", help="a file: the system prompt")
+    parser.add_argument("--prompt", required=True, help="a file: the prompt")
+    parser.add_argument("--schema", help="a file: a JSON Schema the answer must be valid against")
+    args = parser.parse_args()
+    where = os.environ.get("HANDLER_SERVICES")
+    if not where:
+        print("handler-llm: HANDLER_SERVICES is not set: no model to call (services.llm)", file=sys.stderr)
+        return 1
+    arguments = {"model": args.model, "prompt": read(args.prompt)}
+    if args.system:
+        arguments["system"] = read(args.system)
+    if args.schema:
+        arguments["schema"] = json.loads(read(args.schema))
+    if not sys.stdin.isatty() and (given := sys.stdin.read()):
+        arguments["input"] = given
+    call = {"name": "llm_complete", "arguments": arguments}
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "handler-llm", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": call},
+    ]  # fmt: skip
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(where)
+        s.sendall(b"".join(json.dumps(m).encode() + b"\n" for m in messages))
+        stream = s.makefile("rb")
+        reply = {}
+        while reply.get("id") != 2:
+            line = stream.readline()
+            if not line:
+                print("handler-llm: handlerd closed the connection", file=sys.stderr)
+                return 1
+            reply = json.loads(line)
+    if "error" in reply:
+        print(f"handler-llm: {reply['error'].get('message')}", file=sys.stderr)
+        return 1
+    result = reply["result"]
+    if result.get("isError"):
+        failed = json.loads(result["content"][0]["text"])
+        print(f"handler-llm: {failed.get('error')}: {failed.get('message')}", file=sys.stderr)
+        return 1
+    answer = result["structuredContent"]
+    if not answer["valid"]:
+        print(f"handler-llm: the answer is not valid: {answer.get('error')}", file=sys.stderr)
+        if answer.get("text"):
+            print(answer["text"], file=sys.stderr)
+        return 1
+    if args.schema:
+        print(json.dumps(answer.get("value")))
+    else:
+        print(answer.get("text", ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

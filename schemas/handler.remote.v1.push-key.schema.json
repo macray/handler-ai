@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.remote/v1/push-key",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/push_key` \u2192 this: handler's VAPID public key (H.10).",
+  "properties": {
+    "publicKey": {
+      "title": "Publickey",
+      "type": "string"
+    }
+  },
+  "required": [
+    "publicKey"
+  ],
+  "title": "PushKey",
+  "type": "object"
+}

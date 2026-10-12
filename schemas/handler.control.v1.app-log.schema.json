@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/app-log",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The end of an app's log: its last deploy, then its backend's output.",
+  "properties": {
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "AppLog",
+  "type": "object"
+}

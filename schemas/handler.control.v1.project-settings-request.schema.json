@@ -1,0 +1,77 @@
+{
+  "$id": "urn:handler.control/v1/project-settings-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A project's own settings: the body of a full update (PUT). Nothing in it is an agent's:\nwhich skills it gives to all its agents is set on the skills (D.17).",
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "folder": {
+      "title": "Folder",
+      "type": "string"
+    },
+    "defaultAgent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Defaultagent"
+    },
+    "caches": {
+      "default": "project",
+      "enum": [
+        "global",
+        "project",
+        "off"
+      ],
+      "title": "Caches",
+      "type": "string"
+    },
+    "context": {
+      "anyOf": [
+        {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context"
+    }
+  },
+  "required": [
+    "folder"
+  ],
+  "title": "ProjectSettingsRequest",
+  "type": "object"
+}

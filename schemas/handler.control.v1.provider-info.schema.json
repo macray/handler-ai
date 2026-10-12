@@ -1,0 +1,226 @@
+{
+  "$id": "urn:handler.control/v1/provider-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ProviderModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "contextWindow": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contextwindow"
+        },
+        "maxOutput": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxoutput"
+        },
+        "reasoning": {
+          "default": false,
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "images": {
+          "default": false,
+          "title": "Images",
+          "type": "boolean"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "native": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ProviderModel",
+      "type": "object"
+    }
+  },
+  "description": "A provider (E, D.12): where model calls go.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "endpoints": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "propertyNames": {
+        "enum": [
+          "anthropic",
+          "openai-chat",
+          "responses"
+        ]
+      },
+      "title": "Endpoints",
+      "type": "object"
+    },
+    "models": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ProviderModel"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "key": {
+      "anyOf": [
+        {
+          "enum": [
+            "secret",
+            "env",
+            "file",
+            "command"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Key"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "incomplete",
+        "invalid"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "problems": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "agents": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "harnesses": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Harnesses",
+      "type": "array"
+    },
+    "files": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "contexts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Contexts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "status"
+  ],
+  "title": "ProviderInfo",
+  "type": "object"
+}

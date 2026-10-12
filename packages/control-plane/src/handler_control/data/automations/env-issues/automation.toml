@@ -1,0 +1,17 @@
+# An automation (docs/user/automations.md): when a session stops, `run` runs in a
+# sandbox (no network) on its conversation; what it writes to `$HANDLER_OUTPUT/note.md` is appended to
+# the note below once it succeeded. Edit any file here; a change of the models, the note, `when`,
+# `only` or `run` turns it off until you turn it on again.
+apiVersion = "handler.automation/v1"
+description = "What my agents lacked in their environment: tools, permissions, hosts, files"
+when = "session.stopped"
+# only = { project = ["my-app"] }   # every session's conversation when absent
+
+run = "python3 extract.py"
+# the models the script may call: "provider/model", a provider of Settings → Model access (an API key
+# or a local server, never a subscription). extract.py uses the first.
+services = { llm = ["mistral/mistral-large-latest"] }
+
+[[append]]
+from = "note.md"
+to = "handler/env-issues.md"

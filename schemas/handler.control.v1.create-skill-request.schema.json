@@ -1,0 +1,41 @@
+{
+  "$id": "urn:handler.control/v1/create-skill-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A new skill; `copy_of`: another skill whose other files it starts with (its own SKILL.md\nis `content`), to change a skill for some agents and not for the others.",
+  "properties": {
+    "content": {
+      "maxLength": 262144,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "projects": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Projects",
+      "type": "array"
+    },
+    "copyOf": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Copyof"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "CreateSkillRequest",
+  "type": "object"
+}

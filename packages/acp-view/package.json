@@ -1,0 +1,31 @@
+{
+  "name": "@handler/acp-view",
+  "private": true,
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Rendering of an ACP session (sanitized agent output, tool calls, permission prompts, composer), shared by the handler web UI and the remote client. Svelte sources, compiled by the app that uses them.",
+  "exports": {
+    "./lib/*": "./src/lib/*.ts",
+    "./components/*": "./src/components/*",
+    "./theme.css": "./src/theme.css"
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
+  },
+  "peerDependencies": {
+    "svelte": "5.57.1"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "diff": "9.0.0",
+    "dompurify": "3.4.15",
+    "marked": "18.0.14"
+  },
+  "devDependencies": {
+    "@tsconfig/svelte": "5.0.8",
+    "svelte": "5.57.1",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3"
+  }
+}

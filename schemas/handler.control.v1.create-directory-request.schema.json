@@ -1,0 +1,24 @@
+{
+  "$id": "urn:handler.control/v1/create-directory-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Folder picker (UI): create one new folder `name` in `parent`, inside the allowed roots.",
+  "properties": {
+    "parent": {
+      "title": "Parent",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^/\\\\\\x00]+$",
+      "title": "Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "parent",
+    "name"
+  ],
+  "title": "CreateDirectoryRequest",
+  "type": "object"
+}

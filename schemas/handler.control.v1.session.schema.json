@@ -1,0 +1,323 @@
+{
+  "$id": "urn:handler.control/v1/session",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SessionInput": {
+      "description": "What a run of an agent with an interface is started with (D.18).",
+      "properties": {
+        "fields": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionSubject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SessionInput",
+      "type": "object"
+    },
+    "SessionOutput": {
+      "description": "A run's result (D.18), taken from its final message once its turn ended.",
+      "properties": {
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "valid"
+      ],
+      "title": "SessionOutput",
+      "type": "object"
+    },
+    "SessionSubject": {
+      "description": "The handler object a run works on (D.18).",
+      "properties": {
+        "skill": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Skill",
+          "type": "string"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "title": "SessionSubject",
+      "type": "object"
+    }
+  },
+  "description": "A daemon-held chat session (F.1): one sandbox, outliving the clients attached to it.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "agentId": {
+      "title": "Agentid",
+      "type": "string"
+    },
+    "projectId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Projectid"
+    },
+    "harness": {
+      "title": "Harness",
+      "type": "string"
+    },
+    "account": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Account"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    },
+    "acpSessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Acpsessionid"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "state": {
+      "enum": [
+        "starting",
+        "running",
+        "stopped",
+        "failed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "busy": {
+      "default": false,
+      "title": "Busy",
+      "type": "boolean"
+    },
+    "pendingPermissions": {
+      "default": 0,
+      "title": "Pendingpermissions",
+      "type": "integer"
+    },
+    "attached": {
+      "default": 0,
+      "title": "Attached",
+      "type": "integer"
+    },
+    "remote": {
+      "default": false,
+      "title": "Remote",
+      "type": "boolean"
+    },
+    "canResume": {
+      "default": false,
+      "title": "Canresume",
+      "type": "boolean"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "harnessVersion": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Harnessversion"
+    },
+    "origin": {
+      "default": "ui",
+      "enum": [
+        "ui",
+        "cli",
+        "editor",
+        "phone",
+        "automation"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "lastStopReason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Laststopreason"
+    },
+    "answer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Answer"
+    },
+    "input": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "output": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "lastActivityAt": {
+      "format": "date-time",
+      "title": "Lastactivityat",
+      "type": "string"
+    },
+    "acpUrl": {
+      "title": "Acpurl",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "agentId",
+    "harness",
+    "scope",
+    "state",
+    "createdAt",
+    "lastActivityAt",
+    "acpUrl"
+  ],
+  "title": "Session",
+  "type": "object"
+}

@@ -1,0 +1,19 @@
+{
+  "$id": "urn:handler.control/v1/cache-sizes",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "GET /v1/caches/sizes: bytes on disk of each folder of CachesInfo (0: not made yet).",
+  "properties": {
+    "sizes": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Sizes",
+      "type": "object"
+    }
+  },
+  "required": [
+    "sizes"
+  ],
+  "title": "CacheSizes",
+  "type": "object"
+}

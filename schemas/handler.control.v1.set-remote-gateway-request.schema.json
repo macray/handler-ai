@@ -1,0 +1,22 @@
+{
+  "$id": "urn:handler.control/v1/set-remote-gateway-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "gatewayUrl": {
+      "pattern": "^https?://[^\\s/]+(/[^\\s]*)?$",
+      "title": "Gatewayurl",
+      "type": "string"
+    },
+    "hostToken": {
+      "pattern": "^h_[0-9a-f]{16}\\.[A-Za-z0-9_-]{20,}$",
+      "title": "Hosttoken",
+      "type": "string"
+    }
+  },
+  "required": [
+    "gatewayUrl",
+    "hostToken"
+  ],
+  "title": "SetRemoteGatewayRequest",
+  "type": "object"
+}

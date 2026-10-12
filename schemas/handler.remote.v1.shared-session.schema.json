@@ -1,0 +1,120 @@
+{
+  "$id": "urn:handler.remote/v1/shared-session",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A running session shared with devices (F, D.7).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "projectId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Projectid"
+    },
+    "project": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Project"
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent"
+    },
+    "origin": {
+      "enum": [
+        "ui",
+        "cli",
+        "editor",
+        "phone",
+        "automation"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "harness": {
+      "title": "Harness",
+      "type": "string"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    },
+    "acpSessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Acpsessionid"
+    },
+    "busy": {
+      "title": "Busy",
+      "type": "boolean"
+    },
+    "pendingPermissions": {
+      "title": "Pendingpermissions",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "origin",
+    "harness",
+    "scope",
+    "busy",
+    "pendingPermissions"
+  ],
+  "title": "SharedSession",
+  "type": "object"
+}

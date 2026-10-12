@@ -1,0 +1,17 @@
+# The `llm/v1` service (docs/dev/design/services.md, contracts I.5): one model call. Its tools are
+# in tools.json (input LlmRequest, output LlmResponse of handler_contracts.automation: a unit test
+# keeps them equal). Served by handlerd's router; its connector (handler_control/llm.py) is built
+# in, its bindings are the providers.
+apiVersion = "handler.interface/v1"
+name = "llm"
+version = 1
+description = "Call a language model with a prompt; with a JSON Schema, get a JSON value valid against it"
+
+[limits]
+timeoutSeconds = 120
+callsPerRun = 50
+
+[errors]
+refused = "the model is not one this caller may use"
+limit = "a limit was reached: a call's time, one call at a time, the calls of a run"
+unavailable = "the provider failed or cannot be reached; retrying later may work"

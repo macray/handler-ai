@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-svelte/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@handler/acp-view/theme.css"; /* tokens, markdown, the terminal surface */
+
+@custom-variant dark (&:is(.dark *));
+
+/* the shared components are compiled here: let Tailwind see their classes */
+@source "../../acp-view/src";

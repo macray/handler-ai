@@ -1,0 +1,187 @@
+{
+  "$id": "urn:handler.control/v1/addon-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonSlotInfo": {
+      "description": "A setting or secret slot of an addon (G.1), for the binding form.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AddonSlotInfo",
+      "type": "object"
+    }
+  },
+  "description": "An addon (G.1) and, when it has a tool, its image (G.4).",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "imagePresent": {
+      "default": false,
+      "title": "Imagepresent",
+      "type": "boolean"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "builtAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Builtat"
+    },
+    "commands": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "settings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AddonSlotInfo"
+      },
+      "title": "Settings",
+      "type": "array"
+    },
+    "secretSlots": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AddonSlotInfo"
+      },
+      "title": "Secretslots",
+      "type": "array"
+    },
+    "egress": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "directory": {
+      "title": "Directory",
+      "type": "string"
+    },
+    "builtin": {
+      "default": false,
+      "title": "Builtin",
+      "type": "boolean"
+    },
+    "overridesBuiltin": {
+      "default": false,
+      "title": "Overridesbuiltin",
+      "type": "boolean"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source"
+    },
+    "updateAvailable": {
+      "default": false,
+      "title": "Updateavailable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "directory"
+  ],
+  "title": "AddonInfo",
+  "type": "object"
+}

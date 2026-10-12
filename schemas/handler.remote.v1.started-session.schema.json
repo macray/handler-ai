@@ -1,0 +1,15 @@
+{
+  "$id": "urn:handler.remote/v1/started-session",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "session": {
+      "title": "Session",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session"
+  ],
+  "title": "StartedSession",
+  "type": "object"
+}

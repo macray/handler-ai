@@ -1,0 +1,106 @@
+{
+  "$id": "urn:handler.control/v1/account-login-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CommandSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "CommandSecret",
+      "type": "object"
+    },
+    "EnvSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "EnvSecret",
+      "type": "object"
+    },
+    "FileSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "FileSecret",
+      "type": "object"
+    }
+  },
+  "description": "An account's login (D.9). A token login: the token the person's own sign-in printed\n(`token`, kept in handler's secret store), or where they keep it (`tokenRef`: an env var, a\nfile, a command). A file login: the content of the credential file its login left (`file`).",
+  "properties": {
+    "token": {
+      "anyOf": [
+        {
+          "maxLength": 16384,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Token"
+    },
+    "tokenRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvSecret"
+        },
+        {
+          "$ref": "#/$defs/FileSecret"
+        },
+        {
+          "$ref": "#/$defs/CommandSecret"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tokenref"
+    },
+    "file": {
+      "anyOf": [
+        {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "File"
+    }
+  },
+  "title": "AccountLoginRequest",
+  "type": "object"
+}

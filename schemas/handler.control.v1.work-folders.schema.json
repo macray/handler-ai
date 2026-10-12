@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.control/v1/work-folders",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The folders agents may work in (D.13): a project's folder or an ad-hoc session's must be\ninside one. Absolute paths, or `~/\u2026`, as written; handler's own folders are always refused.",
+  "properties": {
+    "roots": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Roots",
+      "type": "array"
+    }
+  },
+  "required": [
+    "roots"
+  ],
+  "title": "WorkFolders",
+  "type": "object"
+}

@@ -1,0 +1,148 @@
+{
+  "$id": "urn:handler.control/v1/caches-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CacheInfo": {
+      "description": "A cache the toolbox declares (B.6), as Settings \u2192 Caches shows it (D.8).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "default": "",
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ],
+      "title": "CacheInfo",
+      "type": "object"
+    },
+    "GlobalCachesInfo": {
+      "description": "The global caches: the projects that chose them and agents outside projects use them.",
+      "properties": {
+        "folder": {
+          "title": "Folder",
+          "type": "string"
+        },
+        "caches": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Caches",
+          "type": "object"
+        },
+        "removed": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Removed",
+          "type": "object"
+        },
+        "projects": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Projects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "folder",
+        "caches"
+      ],
+      "title": "GlobalCachesInfo",
+      "type": "object"
+    },
+    "ProjectCachesInfo": {
+      "description": "A project's own caches, removed with it.",
+      "properties": {
+        "folder": {
+          "title": "Folder",
+          "type": "string"
+        },
+        "caches": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Caches",
+          "type": "object"
+        },
+        "removed": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Removed",
+          "type": "object"
+        },
+        "projectId": {
+          "title": "Projectid",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "folder",
+        "caches",
+        "projectId",
+        "name"
+      ],
+      "title": "ProjectCachesInfo",
+      "type": "object"
+    }
+  },
+  "description": "GET and PUT /v1/caches (D.8): what is kept, the toolbox's caches in its order; and where:\nthe global folders, each project's own, and the projects without caches (`off`).",
+  "properties": {
+    "caches": {
+      "items": {
+        "$ref": "#/$defs/CacheInfo"
+      },
+      "title": "Caches",
+      "type": "array"
+    },
+    "global": {
+      "$ref": "#/$defs/GlobalCachesInfo"
+    },
+    "own": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ProjectCachesInfo"
+      },
+      "title": "Own",
+      "type": "array"
+    },
+    "off": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Off",
+      "type": "array"
+    }
+  },
+  "required": [
+    "caches",
+    "global"
+  ],
+  "title": "CachesInfo",
+  "type": "object"
+}

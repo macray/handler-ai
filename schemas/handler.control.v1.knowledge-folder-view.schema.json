@@ -1,0 +1,44 @@
+{
+  "$id": "urn:handler.control/v1/knowledge-folder-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One folder of the knowledge root, for reading (D.5): what it holds, and its _index.md.",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "folders": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Folders",
+      "type": "array"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "index": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Index"
+    }
+  },
+  "required": [
+    "path",
+    "folders",
+    "notes"
+  ],
+  "title": "KnowledgeFolderView",
+  "type": "object"
+}

@@ -1,0 +1,66 @@
+# The `handler-ai` distribution (its commands: `handler`, also as `handler-ai`, `handlerd`…): one wheel holding the
+# five Python packages of the workspace and the built web UI, for users (README "Install"). Not a workspace member and no code of its own: the packages
+# keep their boundaries (tests/architecture); this only ships them together.
+#
+#   scripts/build-wheel.sh   web UI, then this wheel into dist/
+#
+# Its dependencies are the third-party ones of the five packages, kept equal to them by
+# tests/architecture/test_packaging.py. Its version is handlerd's (handler_control/__init__.py).
+[project]
+name = "handler-ai"
+dynamic = ["version"]
+license = "Apache-2.0"
+description = "Run coding agents (Claude Code, Codex, Vibe, pi) in rootless Podman sandboxes on Linux"
+readme = "README.md"  # packaging/README.md: the PyPI page, absolute links only
+requires-python = ">=3.12"
+keywords = ["ai", "agents", "claude-code", "codex", "sandbox", "podman", "acp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "cryptography>=45",
+    "dulwich>=1.2",
+    "fastapi>=0.141",
+    "httpx>=0.28",
+    "jsonschema>=4.23",
+    "pydantic>=2.13,<3",
+    "pyyaml>=6",
+    "tomlkit>=0.13",
+    "uvicorn>=0.53",
+    "websockets>=17",
+]
+
+[project.scripts]
+handler = "handler_cli.cli:main"
+handler-ai = "handler_cli.cli:main"  # the same CLI: `uvx handler-ai` runs it
+handlerd = "handler_control.daemon:main"
+handler-harness = "handler_harness.cli:main"
+handler-sandbox-podman = "handler_sandbox_podman.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/macray/handler-ai"
+Documentation = "https://macray.github.io/handler-ai/"
+Changelog = "https://github.com/macray/handler-ai/blob/main/CHANGELOG.md"
+Issues = "https://github.com/macray/handler-ai/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "../packages/control-plane/src/handler_control/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true  # everything comes from force-include
+
+[tool.hatch.build.targets.wheel.force-include]
+"../packages/contracts/src/handler_contracts" = "handler_contracts"
+"../packages/sandbox-podman/src/handler_sandbox_podman" = "handler_sandbox_podman"
+"../packages/harness-adapters/src/handler_harness" = "handler_harness"
+"../packages/control-plane/src/handler_control" = "handler_control"
+"../packages/cli/src/handler_cli" = "handler_cli"

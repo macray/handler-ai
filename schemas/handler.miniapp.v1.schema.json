@@ -1,0 +1,209 @@
+{
+  "$id": "urn:handler.miniapp/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "MiniAppFile": {
+      "additionalProperties": false,
+      "description": "A file or folder of the host the backend may read (or write): mounted at the same path.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "mode": {
+          "default": "ro",
+          "enum": [
+            "ro",
+            "rw"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "MiniAppFile",
+      "type": "object"
+    },
+    "MiniAppNeeds": {
+      "additionalProperties": false,
+      "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
+      "properties": {
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "secrets": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Secrets",
+          "type": "array"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MiniAppFile"
+          },
+          "maxItems": 10,
+          "title": "Files",
+          "type": "array"
+        },
+        "notify": {
+          "default": false,
+          "title": "Notify",
+          "type": "boolean"
+        }
+      },
+      "title": "MiniAppNeeds",
+      "type": "object"
+    },
+    "MiniAppServer": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "default": "server/main.ts",
+          "title": "Entry",
+          "type": "string"
+        }
+      },
+      "title": "MiniAppServer",
+      "type": "object"
+    },
+    "MiniAppUi": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "default": "ui/dist",
+          "title": "Dir",
+          "type": "string"
+        }
+      },
+      "title": "MiniAppUi",
+      "type": "object"
+    },
+    "Resources": {
+      "additionalProperties": false,
+      "properties": {
+        "memory": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+[kmgKMG]?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory"
+        },
+        "cpus": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+(\\.\\d+)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpus"
+        }
+      },
+      "title": "Resources",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "handler.miniapp/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[a-z][a-z0-9-]{0,29}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.-]+)?$",
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "server": {
+      "$ref": "#/$defs/MiniAppServer",
+      "default": {
+        "entry": "server/main.ts"
+      }
+    },
+    "ui": {
+      "$ref": "#/$defs/MiniAppUi",
+      "default": {
+        "dir": "ui/dist"
+      }
+    },
+    "needs": {
+      "$ref": "#/$defs/MiniAppNeeds",
+      "default": {
+        "egress": [],
+        "secrets": [],
+        "files": [],
+        "notify": false
+      }
+    },
+    "routes": {
+      "default": {},
+      "patternProperties": {
+        "^(POST|PUT|PATCH|DELETE) /api/[A-Za-z0-9/_.-]*$": {
+          "enum": [
+            "sync",
+            "queued"
+          ],
+          "type": "string"
+        }
+      },
+      "title": "Routes",
+      "type": "object"
+    },
+    "resources": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Resources"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name",
+    "version"
+  ],
+  "title": "MiniAppManifest",
+  "type": "object"
+}

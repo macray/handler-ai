@@ -1,0 +1,645 @@
+{
+  "$id": "urn:handler.harness/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AccountConnectors": {
+      "properties": {
+        "offEnv": {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Offenv",
+          "type": "object"
+        }
+      },
+      "required": [
+        "offEnv"
+      ],
+      "title": "AccountConnectors",
+      "type": "object"
+    },
+    "ConfigFileSlot": {
+      "description": "A config file the harness reads; its content comes from the provider (`files.<harness>`),\nand it is mounted read-only at `target` (e.g. Vibe's ~/.vibe/config.toml).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "seed": {
+          "default": false,
+          "title": "Seed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "ConfigFileSlot",
+      "type": "object"
+    },
+    "LoginRecipe": {
+      "description": "How an account of this harness is logged in (D.9), one of two kinds:\n\n- a token login (`token`: the env var the harness reads it from): the person runs\n  `tokenCommand` themselves, the harness's own sign-in, and gives handler the token it prints\n  (pasted, or a reference to where they keep it). handler never runs that sign-in nor reads its\n  output (Anthropic: sign-in through its own flow, credentials provisioned by the person).\n- a file login (`file`: a credential state slot, whose file name it has there): handler runs\n  `command` interactively on the host (its browser, its callbacks), with `env`, where `{dir}`\n  is a folder handler gives it for its state instead of the person's home; the file it writes\n  there becomes the account's login.",
+      "properties": {
+        "subscription": {
+          "minLength": 1,
+          "title": "Subscription",
+          "type": "string"
+        },
+        "unattended": {
+          "enum": [
+            "allowed",
+            "check-terms",
+            "refused"
+          ],
+          "title": "Unattended",
+          "type": "string"
+        },
+        "terms": {
+          "pattern": "^https://",
+          "title": "Terms",
+          "type": "string"
+        },
+        "checked": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked"
+        },
+        "token": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token"
+        },
+        "tokenCommand": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokencommand"
+        },
+        "tokenPrefix": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenprefix"
+        },
+        "tokenLifetimeDays": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenlifetimedays"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "env": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "hosts": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Hosts",
+          "type": "array"
+        },
+        "help": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Help"
+        },
+        "plans": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Plans",
+          "type": "array"
+        },
+        "planEnv": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planenv"
+        }
+      },
+      "required": [
+        "subscription",
+        "unattended",
+        "terms"
+      ],
+      "title": "LoginRecipe",
+      "type": "object"
+    },
+    "PermissionMapping": {
+      "description": "How a neutral permission mode is applied. Decision 4: ACP session mode preferred;\n`env` only when the harness has no ACP mode for it. `{}` = harness default matches.\nA mode the harness cannot honour is left out of `permissions` (e.g. pi never asks).",
+      "properties": {
+        "sessionMode": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionmode"
+        },
+        "env": {
+          "anyOf": [
+            {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env"
+        }
+      },
+      "title": "PermissionMapping",
+      "type": "object"
+    },
+    "StateSlot": {
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "dir",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "readOnly": {
+          "default": false,
+          "title": "Readonly",
+          "type": "boolean"
+        },
+        "perSession": {
+          "default": false,
+          "title": "Persession",
+          "type": "boolean"
+        },
+        "credential": {
+          "default": false,
+          "title": "Credential",
+          "type": "boolean"
+        },
+        "initial": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initial"
+        }
+      },
+      "required": [
+        "target",
+        "kind",
+        "required"
+      ],
+      "title": "StateSlot",
+      "type": "object"
+    },
+    "TerminalCommand": {
+      "description": "The harness's own terminal program, run instead of its ACP adapter by `handler terminal`\n(D.16): the agent's settings are given to it as flags. `permissions`: the flags of each\nneutral mode (`[]`: its default matches); `modelFlag`, `mcpConfigFlag`: the flags taking the\nmodel and the file of MCP servers (Claude Code's `--mcp-config` format); or, for a program\nwithout them, `modelEnv`, `mcpServersEnv`: the env vars taking the model and the MCP servers\n(a JSON list in Vibe's `mcp_servers` format). `instructionsFlag`: the flag taking the agent's\ninstructions, added to the program's system prompt; without it, an agent with instructions\nhas no terminal.",
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "permissions": {
+          "additionalProperties": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "enum": [
+              "ask",
+              "accept-edits",
+              "bypass"
+            ]
+          },
+          "title": "Permissions",
+          "type": "object"
+        },
+        "modelFlag": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelflag"
+        },
+        "modelEnv": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelenv"
+        },
+        "mcpConfigFlag": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcpconfigflag"
+        },
+        "mcpServersEnv": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcpserversenv"
+        },
+        "instructionsFlag": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructionsflag"
+        }
+      },
+      "required": [
+        "command",
+        "permissions"
+      ],
+      "title": "TerminalCommand",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "const": "handler.harness/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "product": {
+      "minLength": 1,
+      "title": "Product",
+      "type": "string"
+    },
+    "image": {
+      "minLength": 1,
+      "title": "Image",
+      "type": "string"
+    },
+    "acpCommand": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Acpcommand",
+      "type": "array"
+    },
+    "home": {
+      "title": "Home",
+      "type": "string"
+    },
+    "stateSlots": {
+      "additionalProperties": {
+        "$ref": "#/$defs/StateSlot"
+      },
+      "default": {},
+      "title": "Stateslots",
+      "type": "object"
+    },
+    "configFiles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ConfigFileSlot"
+      },
+      "default": {},
+      "title": "Configfiles",
+      "type": "object"
+    },
+    "login": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LoginRecipe"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "providerProtocols": {
+      "default": [],
+      "items": {
+        "enum": [
+          "anthropic",
+          "openai-chat",
+          "responses"
+        ],
+        "type": "string"
+      },
+      "title": "Providerprotocols",
+      "type": "array"
+    },
+    "permissions": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PermissionMapping"
+      },
+      "propertyNames": {
+        "enum": [
+          "ask",
+          "accept-edits",
+          "bypass"
+        ]
+      },
+      "title": "Permissions",
+      "type": "object"
+    },
+    "modelOption": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Modeloption"
+    },
+    "skillsDir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Skillsdir"
+    },
+    "mcpTransports": {
+      "default": [],
+      "items": {
+        "enum": [
+          "stdio",
+          "http",
+          "sse"
+        ],
+        "type": "string"
+      },
+      "title": "Mcptransports",
+      "type": "array"
+    },
+    "mcpEnv": {
+      "default": "inherit",
+      "enum": [
+        "inherit",
+        "sandbox"
+      ],
+      "title": "Mcpenv",
+      "type": "string"
+    },
+    "mcpConfigFile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mcpconfigfile"
+    },
+    "env": {
+      "anyOf": [
+        {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Env"
+    },
+    "writablePaths": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Writablepaths"
+    },
+    "accountConnectors": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AccountConnectors"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "terminal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TerminalCommand"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name",
+    "product",
+    "image",
+    "acpCommand",
+    "home",
+    "permissions"
+  ],
+  "title": "HarnessDescriptor",
+  "type": "object"
+}

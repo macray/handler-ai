@@ -1,0 +1,34 @@
+{
+  "$id": "urn:handler.remote/v1/app-http-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/app/http` \u2192 AppHttpAnswer: one call to the app's backend (/api/\u2026 only).",
+  "properties": {
+    "method": {
+      "default": "GET",
+      "title": "Method",
+      "type": "string"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "title": "Headers",
+      "type": "object"
+    },
+    "body": {
+      "default": "",
+      "title": "Body",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "AppHttpParams",
+  "type": "object"
+}

@@ -1,0 +1,151 @@
+{
+  "$id": "urn:handler.control/v1/remote-status",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "RemoteDevice": {
+      "description": "A paired device (D.7). Its key never leaves the daemon after pairing.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "person": {
+          "default": "owner",
+          "pattern": "^[a-z][a-z0-9_-]{0,29}$",
+          "title": "Person",
+          "type": "string"
+        },
+        "scope": {
+          "default": "all",
+          "enum": [
+            "all",
+            "apps"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "lastSeenAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastseenat"
+        },
+        "attached": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Attached",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "createdAt"
+      ],
+      "title": "RemoteDevice",
+      "type": "object"
+    }
+  },
+  "description": "The remote connector (D.7).",
+  "properties": {
+    "gatewayUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gatewayurl"
+    },
+    "hostId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hostid"
+    },
+    "light": {
+      "enum": [
+        "off",
+        "idle",
+        "ok",
+        "unreachable",
+        "unauthorized"
+      ],
+      "title": "Light",
+      "type": "string"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "since": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Since"
+    },
+    "sharedSessions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Sharedsessions",
+      "type": "array"
+    },
+    "devices": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RemoteDevice"
+      },
+      "title": "Devices",
+      "type": "array"
+    }
+  },
+  "required": [
+    "light"
+  ],
+  "title": "RemoteStatus",
+  "type": "object"
+}

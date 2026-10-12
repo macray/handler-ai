@@ -1,0 +1,56 @@
+# handler toolbox — the development environment agents work in. Yours to edit (README.md).
+#
+# Harness-independent: every harness and addon image is built FROM this one, so Claude Code,
+# Vibe, … all get the same tools. Add tools here, then rebuild the toolbox (web UI or
+# `handler image rebuild toolbox`): every harness and addon image is rebuilt on it and checked before any
+# switches.
+#
+# Runtime conventions (set by handler-sandbox-podman, contract A3):
+#   - runs as the host user's uid/gid (keep-id), HOME=/home/agent on a private tmpfs;
+#   - toolchain state (~/.cargo, ~/.m2, ~/.npm, ~/.cache, ~/.local, podman's images, …) comes from
+#     the cache mounts declared in toolbox.toml (each project chooses whether they are shared),
+#     so nothing user-specific is baked in here;
+#   - chromium (and fonts) for web development and the playwright addon
+#     (docs/dev/design/browser.md §6): its own sandbox cannot start under `strict`, so it runs
+#     with --no-sandbox (the container is the boundary); headed only when the sandbox is given a
+#     display (contract A.6);
+#   - wl-clipboard: the clipboard of the display, when there is one (A.6), e.g. a harness's
+#     terminal UI pasting an image (`wl-paste`);
+#   - podman is here for podman in podman, which works only when the agent asks for
+#     `confinement = "nested"` (or `privileged`, contract A.5); the launcher then provides
+#     /etc/subuid, /etc/subgid and the inner podman's configuration (fuse-overlayfs, cgroupfs,
+#     events and `podman logs` in files: no systemd nor journald). Under the default `strict` it
+#     cannot start containers.
+FROM docker.io/library/archlinux:latest
+
+RUN pacman -Syu --noconfirm --needed \
+        base-devel gcc pkgconf make \
+        git openssh ca-certificates curl wget unzip zip tar \
+        ripgrep fd jq less which diffutils findutils procps-ng \
+        jdk25-openjdk maven \
+        python python-pip uv \
+        nodejs npm \
+        rustup sccache \
+        podman fuse-overlayfs passt \
+        chromium ttf-liberation ttf-dejavu \
+        wl-clipboard \
+    && pacman -Scc --noconfirm
+
+# Inner rootless podman (`nested`): newuidmap/newgidmap need their file capabilities, which
+# pacman's install hook cannot set during an image build.
+RUN setcap cap_setuid=ep /usr/bin/newuidmap \
+    && setcap cap_setgid=ep /usr/bin/newgidmap
+
+# Bun is not in the Arch repositories: official installer, into /usr/local (not ~/.bun, which is
+# a cache mount at runtime).
+ARG BUN_VERSION=bun-v1.4.2
+RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s "${BUN_VERSION}" \
+    && rm -rf /usr/local/install
+
+ENV LANG=C.UTF-8 \
+    HOME=/home/agent \
+    PATH=/home/agent/.cargo/bin:/home/agent/.local/bin:/home/agent/.bun/bin:/usr/local/bin:/usr/bin:/usr/sbin \
+    JAVA_HOME=/usr/lib/jvm/default
+
+LABEL org.opencontainers.image.title="handler-ai-toolbox" \
+      org.opencontainers.image.description="Development environment for handler agent sandboxes"

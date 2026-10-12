@@ -1,0 +1,29 @@
+{
+  "$id": "urn:handler.control/v1/set-knowledge-root-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Set the knowledge root (D.5); `root: null` goes back to the default.",
+  "properties": {
+    "root": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Root"
+    },
+    "create": {
+      "default": false,
+      "title": "Create",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "root"
+  ],
+  "title": "SetKnowledgeRootRequest",
+  "type": "object"
+}

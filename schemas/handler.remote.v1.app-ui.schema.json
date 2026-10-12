@@ -1,0 +1,39 @@
+{
+  "$id": "urn:handler.remote/v1/app-ui",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "html": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Html"
+    },
+    "unchanged": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unchanged"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "AppUi",
+  "type": "object"
+}

@@ -1,0 +1,60 @@
+{
+  "$id": "urn:handler.control/v1/image-updates",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Automatic image updates (D.4): the network filter and every built harness and addon image\nrebuilt, checked and switched only if it passes, on a schedule and after a handler upgrade. Not\nthe toolbox.",
+  "properties": {
+    "schedule": {
+      "enum": [
+        "off",
+        "daily",
+        "weekly"
+      ],
+      "title": "Schedule",
+      "type": "string"
+    },
+    "running": {
+      "default": false,
+      "title": "Running",
+      "type": "boolean"
+    },
+    "lastRun": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lastrun"
+    },
+    "nextRun": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nextrun"
+    },
+    "lastFailed": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Lastfailed",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schedule"
+  ],
+  "title": "ImageUpdates",
+  "type": "object"
+}

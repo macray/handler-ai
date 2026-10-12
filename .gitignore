@@ -1,0 +1,16 @@
+node_modules/
+*.log
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+.venv-py312/
+.idea/
+# the built web UI (scripts/build-web-ui.sh), shipped in the wheel (packaging/)
+packages/control-plane/src/handler_control/web-ui/
+# scripts/build-docs-site.py
+/docs-site/
+# scripts/build-wheel.sh
+/dist/

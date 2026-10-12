@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.control/v1/login-window",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The terminal window handlerd opened for a file login (D.9): its harness's login runs in\nit.",
+  "properties": {
+    "terminal": {
+      "title": "Terminal",
+      "type": "string"
+    },
+    "command": {
+      "title": "Command",
+      "type": "string"
+    }
+  },
+  "required": [
+    "terminal",
+    "command"
+  ],
+  "title": "LoginWindow",
+  "type": "object"
+}

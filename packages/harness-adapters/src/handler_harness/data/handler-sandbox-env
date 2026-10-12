@@ -1,0 +1,30 @@
+#!/usr/bin/python3
+"""handler-sandbox-env [--drop NAME …] -- COMMAND [ARG …]
+
+Run COMMAND with the sandbox's environment, whatever environment its caller gave it (contract A8:
+in a container sandbox, PID 1 holds the spec's env). For harnesses that start MCP servers with a
+reduced environment (vibe gives only HOME and PATH) or with their own secrets (pi), descriptor
+`mcpEnv = "sandbox"`: `render` wraps their stdio MCP servers with it, so a server gets the proxy, display, its addon's settings
+and secrets like any other process of the sandbox. `--drop` leaves out the harness's own secrets.
+Variables the caller set win (e.g. the MCP entry's own `env`).
+"""
+
+import os
+import sys
+
+args = sys.argv[1:]
+drop = set()
+while args and args[0] == "--drop" and len(args) > 1:
+    drop.add(args[1])
+    args = args[2:]
+if args[:1] == ["--"]:
+    args = args[1:]
+if not args:
+    sys.exit(__doc__)
+with open("/proc/1/environ", "rb") as f:
+    entries = [e for e in f.read().split(b"\0") if b"=" in e]
+env = dict(os.fsdecode(e).split("=", 1) for e in entries)
+env.update(os.environ)
+for name in drop:
+    env.pop(name, None)
+os.execvpe(args[0], args, env)

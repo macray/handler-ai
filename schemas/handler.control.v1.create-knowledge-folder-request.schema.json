@@ -1,0 +1,18 @@
+{
+  "$id": "urn:handler.control/v1/create-knowledge-folder-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "path": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "pattern": "^[^/\\x00]",
+      "title": "Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "CreateKnowledgeFolderRequest",
+  "type": "object"
+}

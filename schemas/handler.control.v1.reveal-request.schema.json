@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/reveal-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Show a file or folder of a session in the desktop's file manager (F.8).",
+  "properties": {
+    "path": {
+      "default": "",
+      "title": "Path",
+      "type": "string"
+    },
+    "mount": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mount"
+    }
+  },
+  "title": "RevealRequest",
+  "type": "object"
+}

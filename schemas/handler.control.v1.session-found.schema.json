@@ -1,0 +1,31 @@
+{
+  "$id": "urn:handler.control/v1/session-found",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The files of a session's folder that a search finds (F.8), the best first.",
+  "properties": {
+    "paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Paths",
+      "type": "array"
+    },
+    "notFollowed": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notfollowed"
+    }
+  },
+  "required": [
+    "paths"
+  ],
+  "title": "SessionFound",
+  "type": "object"
+}

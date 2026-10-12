@@ -1,0 +1,95 @@
+# Claude Code harness descriptor (contract B, handler.harness/v1).
+apiVersion = "handler.harness/v1"
+name = "claude-code"
+product = "Claude Code"
+image = "localhost/handler-ai-claude-code"  # no tag: launches use :latest (contract B.6)
+acpCommand = ["claude-agent-acp"]
+home = "/home/agent"
+
+# The hosts it reaches belong to what it runs on: the login below, or a provider (its endpoint).
+# A provider it can use speaks:
+providerProtocols = ["anthropic"]   # ANTHROPIC_BASE_URL + key + model (verified)
+
+modelOption = "model"   # ACP config option id (config options: mode, model, effort, fast)
+
+# User skills (verified: claude-agent-acp loads settingSources "user"): each skill of the
+# agent and its addons is mounted read-only at ~/.claude/skills/<folder name>.
+skillsDir = "~/.claude/skills"
+
+# MCP servers passed in ACP session/new (its addons'): claude-agent-acp
+# advertises mcpCapabilities http and sse; stdio is mandatory in ACP. It starts stdio servers at
+# session/new with its own environment, minus its token (verified 2026-09-26): mcpEnv "inherit".
+mcpTransports = ["stdio", "http", "sse"]
+
+[env]
+NODE_USE_ENV_PROXY = "1"     # Node's fetch only honours HTTPS_PROXY with this
+DISABLE_AUTOUPDATER = "1"    # the image is the unit of upgrade, not the container
+# Privacy (verified in the binary, 2.1.283): the strongest of its three levels. No telemetry,
+# Sentry error reports, GrowthBook feature flags, /feedback or update checks; only the API.
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY = "1"   # gated on its own, not by the line above
+
+# Settings and history: the agent's own (handler keeps them).
+# The login is not here: an account's token (below) reaches it as an env var.
+[stateSlots.config_dir]
+target = "~/.claude"
+kind = "dir"
+required = false
+
+[stateSlots.config_json]
+target = "~/.claude.json"
+kind = "file"
+required = false
+# Its terminal UI (`handler terminal`) onboards a new ~/.claude.json, and onboarding asks to log in
+# even with the account's token set (verified, 2.1.286): the account brings the login, so the
+# file starts onboarded.
+initial = "{\"hasCompletedOnboarding\": true}\n"
+
+# An account: a Claude subscription's long-lived token (verified 2026-09-30, Claude Code 2.1.285).
+# The person runs `claude setup-token` themselves (Anthropic's own sign-in, in their browser) and
+# gives handler the token it prints, or a reference to where they keep it: handler never runs the sign-in
+# nor reads its output (Anthropic's terms, D.9). A token lasts a year and has no refresh, so any
+# number of sandboxes can share it. (`/login` would leave ~/.claude/.credentials.json with a
+# refresh token instead, which several sandboxes sharing one account could invalidate for each
+# other.)
+[login]
+subscription = "Claude Pro or Max"
+# Unattended use (an automation's agent run): refused. A Claude subscription is for interactive
+# use by its owner (plan limits "assume ordinary, individual usage"): sessions you start and follow,
+# never runs nobody is there for (docs/dev/ui-ux.md "Vendors' terms").
+unattended = "refused"
+terms = "https://www.anthropic.com/legal/consumer-terms"
+checked = 2026-10-05
+token = "CLAUDE_CODE_OAUTH_TOKEN"
+tokenCommand = "claude setup-token"
+# its sign-in page may show a code to paste back into `claude setup-token` (when the browser
+# cannot call it back): that code is not the token, refused as "401 Invalid bearer token"
+tokenPrefix = "sk-ant-oat01-"
+tokenLifetimeDays = 365
+hosts = ["api.anthropic.com:443", "platform.claude.com:443"]
+help = "It is Claude Code's own sign-in, with your Claude subscription, for your own use (Anthropic's terms). Run it in a terminal where Claude Code is installed and sign in on the page it opens (a code that page shows goes back into that terminal), then give handler the token it prints at the end (sk-ant-oat01-…)."
+# The token says nothing of the subscription: Claude Code reads its plan from the env (verified,
+# 2.1.286: without it, "Claude API" and an API user's default model).
+plans = ["pro", "max", "team", "enterprise"]
+planEnv = "CLAUDE_CODE_SUBSCRIPTION_TYPE"
+
+# Neutral permission mode → ACP session mode (decision 4).
+[permissions]
+ask = { sessionMode = "default" }
+accept-edits = { sessionMode = "acceptEdits" }
+bypass = { sessionMode = "bypassPermissions" }
+
+# `handler terminal` (D.16): Claude Code's own terminal UI instead of the ACP adapter; the same binary
+# (the SDK's, linked by the Containerfile). The agent's settings reach it as flags.
+[terminal]
+command = ["claude"]
+modelFlag = "--model"
+mcpConfigFlag = "--mcp-config"
+instructionsFlag = "--append-system-prompt"   # the agent's instructions, after its own prompt
+[terminal.permissions]
+ask = ["--permission-mode", "default"]
+accept-edits = ["--permission-mode", "acceptEdits"]
+bypass = ["--dangerously-skip-permissions"]
+
+[accountConnectors]
+offEnv = { ENABLE_CLAUDEAI_MCP_SERVERS = "false" }   # verified: hides claude.ai connectors

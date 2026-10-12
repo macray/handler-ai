@@ -1,0 +1,21 @@
+[project]
+name = "handler-cli"
+version = "0.1.0"
+license = "Apache-2.0"
+description = "handler: command line client of the control plane daemon (contracts C and D)"
+requires-python = ">=3.12"
+dependencies = ["handler-contracts", "httpx>=0.28", "websockets>=17"]
+
+[project.scripts]
+handler = "handler_cli.cli:main"
+handler-ai = "handler_cli.cli:main"  # the same CLI: `uvx handler-ai` runs it
+
+[tool.uv.sources]
+handler-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/handler_cli"]

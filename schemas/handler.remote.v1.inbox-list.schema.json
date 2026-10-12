@@ -1,0 +1,139 @@
+{
+  "$id": "urn:handler.remote/v1/inbox-list",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "InboxMessage": {
+      "description": "What handler tells a person (the person's inbox, like mail): an app's notification\n(H.9), an automation's result or failure (I.3). Shown on the computer and pushed to the\nperson's phones (content-free: the text travels encrypted when the phone asks for it).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "app",
+            "automation"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "person": {
+          "title": "Person",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "ok",
+                "attention",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "data": {
+          "default": null,
+          "title": "Data"
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runid"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "read": {
+          "default": false,
+          "title": "Read",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "name",
+        "person",
+        "title",
+        "at"
+      ],
+      "title": "InboxMessage",
+      "type": "object"
+    }
+  },
+  "description": "`_handler/remote/inbox` \u2192 this: the inbox of the device's person (H.9, I.3).",
+  "properties": {
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/InboxMessage"
+      },
+      "title": "Messages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "messages"
+  ],
+  "title": "InboxList",
+  "type": "object"
+}

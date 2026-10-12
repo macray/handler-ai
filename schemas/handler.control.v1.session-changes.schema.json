@@ -1,0 +1,80 @@
+{
+  "$id": "urn:handler.control/v1/session-changes",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SessionFileChange": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "change": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted"
+          ],
+          "title": "Change",
+          "type": "string"
+        },
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
+        }
+      },
+      "required": [
+        "path",
+        "change"
+      ],
+      "title": "SessionFileChange",
+      "type": "object"
+    }
+  },
+  "description": "What changed in a session's folder since the session started (F.8), most recent first.",
+  "properties": {
+    "since": {
+      "format": "date-time",
+      "title": "Since",
+      "type": "string"
+    },
+    "git": {
+      "title": "Git",
+      "type": "boolean"
+    },
+    "files": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SessionFileChange"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "notFollowed": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notfollowed"
+    }
+  },
+  "required": [
+    "since",
+    "git"
+  ],
+  "title": "SessionChanges",
+  "type": "object"
+}

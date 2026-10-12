@@ -1,0 +1,19 @@
+{
+  "$id": "urn:handler.control/v1/skill-url-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Import a skill from a URL (D.17): a folder of a GitHub repository\n(`https://github.com/<owner>/<repo>/tree/<ref>/<folder>`, a `\u2026/blob/<ref>/<folder>/SKILL.md`,\nor the repository itself), or an https:// zip archive of one skill (a `.skill`, a `.zip`).",
+  "properties": {
+    "url": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "pattern": "^https://",
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "SkillUrlRequest",
+  "type": "object"
+}

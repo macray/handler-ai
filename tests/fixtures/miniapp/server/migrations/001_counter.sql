@@ -1,0 +1,2 @@
+CREATE TABLE counter (n INTEGER NOT NULL);
+INSERT INTO counter VALUES (0);

@@ -1,0 +1,108 @@
+{
+  "$id": "urn:handler.control/v1/build",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An image rebuild (D.4): build from the files on disk, check it, tag it ':latest'.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "target": {
+      "pattern": "^(addon:)?[a-z0-9][a-z0-9-]*$",
+      "title": "Target",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stage"
+    },
+    "step": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step"
+    },
+    "steps": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Steps"
+    },
+    "versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "title": "Versions",
+      "type": "object"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "startedAt": {
+      "format": "date-time",
+      "title": "Startedat",
+      "type": "string"
+    },
+    "endedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Endedat"
+    }
+  },
+  "required": [
+    "id",
+    "target",
+    "state",
+    "startedAt"
+  ],
+  "title": "Build",
+  "type": "object"
+}

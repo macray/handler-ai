@@ -1,0 +1,19 @@
+{
+  "comment": "Envelope test vectors (docs/dev/design/remote.md §4), checked by the Python connector and the remote client's WebCrypto code.",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "hostId": "h_0123456789abcdef",
+  "deviceId": "d_fedcba9876543210",
+  "derived": {
+    "down": "a8b2101c4c941d11711fa969edd813de52ab85d7459cd42e78867d06f820e70f",
+    "up": "50d109e872e2c437c21485f1f12ec6ff87fa0f8954dad42a0bacf6ef532a8ce5",
+    "gatewayToken": "rV1yxyNacJrw6X_hhQHIxx9qydnhhdErGIkhituD0ms"
+  },
+  "down": {
+    "envelope": {"id": "gCDEhijP85k9ulnQ4UtxNw", "nonce": "hkT9e97m2nqs_mU8", "ct": "Wx827t0JBOZ1PwY8At0U2CsE6B59ccLl293NgxdWsQl78nnfGaJeiuE1igfGmH-Z3EnUQLKOq7vy8ytP48JfYPtyZJtdy6YmuMT6gan9hLSn_Nk1s0lNXMLEmwiyUta8eSpfMLhXtMp-sMazuwFVFvqcB7fkueJ8VosoKGEcF-M"},
+    "plaintext": {"ts": 1790000000000, "frames": [{"s": null, "m": {"jsonrpc": "2.0", "id": 1, "method": "_handler/remote/list_sessions"}}]}
+  },
+  "up": {
+    "envelope": {"id": "tgyS-d9kJ6fD9qrOVigJyQ", "nonce": "F0mVeXF5GDC4lZtR", "ct": "u68w3ebaZHFcr0qzEpPWhcSBypUtYDHrg7K2LUykgsIOCz066Z_nCPubIC5tT42uAd4MXy73WlhToVIFM94P"},
+    "plaintext": {"ts": 1790000000000, "frames": [], "acks": ["abc"]}
+  }
+}

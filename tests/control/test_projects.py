@@ -1,0 +1,291 @@
+"""Contract D conformance: projects and their agents (docs/dev/contracts.md §D.8)."""
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+from ..support.daemon import Daemon
+
+
+def create_project(daemon: Daemon, folder: Path, **body: Any) -> dict[str, Any]:
+    body = {
+        "folder": str(folder),
+        "agents": [{"models": [{"account": "fake"}], "name": "dev"}],
+    } | body
+    with daemon.http() as c:
+        r = c.post("/v1/projects", json=body)
+        assert r.status_code == 201, r.text
+        return r.json()
+
+
+def test_create_list_and_defaults(daemon: Daemon) -> None:
+    folder = daemon.make_scope()
+    project = create_project(
+        daemon,
+        folder,
+        description="the shop",
+        agents=[
+            {
+                "models": [{"account": "fake"}],
+                "name": "coder",
+                "description": "writes code",
+                "allow": ["npm.example:443"],
+                "bindings": ["browser"],
+            },
+            {"models": [{"account": "fake"}], "name": "review", "network": "none", "default": True},
+        ],
+    )
+    assert project["name"] == folder.name and project["description"] == "the shop"
+    review, coder = project["agents"]  # the default agent first
+    assert project["defaultAgent"] == review["id"]
+    assert (coder["name"], coder["description"]) == ("coder", "writes code")
+    assert coder["allow"] == ["npm.example:443"] and coder["bindings"] == ["browser"]
+    assert (coder["network"], coder["egress"], coder["permissions"]) == (
+        "filtered",
+        "enforce",
+        "bypass",
+    )  # the preset of new agents (Guarded)
+    assert (review["bindings"], review["network"]) == ([], "none")  # nothing from the project
+    assert coder["projectId"] == project["id"] and coder["scope"] == str(folder)
+    with daemon.http() as c:
+        assert project["id"] in [p["id"] for p in c.get("/v1/projects").json()]
+        # an agent of a project is listed with every agent, and sessions open on it
+        assert coder["id"] in [w["id"] for w in c.get("/v1/agents").json()]
+
+
+def test_refusals(daemon: Daemon, tmp_path: Path) -> None:
+    folder = daemon.make_scope()
+    project = create_project(daemon, folder)
+    agent = project["agents"][0]
+    with daemon.http() as c:
+        again = c.post(
+            "/v1/projects",
+            json={
+                "folder": str(folder),
+                "agents": [{"models": [{"account": "fake"}], "name": "dev"}],
+            },
+        )
+        assert again.status_code == 409 and again.json()["title"] == "folder already used"
+        outside = c.post(
+            "/v1/projects",
+            json={
+                "folder": str(tmp_path),
+                "agents": [{"models": [{"account": "fake"}], "name": "dev"}],
+            },
+        )
+        assert outside.status_code == 403
+        none = c.post("/v1/projects", json={"folder": str(daemon.make_scope()), "agents": []})
+        assert none.status_code == 422
+        twins = [
+            {"models": [{"account": "fake"}], "name": "dev"},
+            {"models": [{"account": "fake"}], "name": "DEV"},
+        ]
+        dupes = c.post("/v1/projects", json={"folder": str(daemon.make_scope()), "agents": twins})
+        assert dupes.status_code == 409
+        # an agent of a project is named after its goal, never after its model (D.8)
+        for unnamed in (
+            {"models": [{"account": "fake"}]},
+            {"models": [{"account": "fake"}], "name": " "},
+        ):
+            r = c.post(f"/v1/projects/{project['id']}/agents", json=unnamed)
+            assert r.status_code == 422, unnamed
+        # agents of projects are changed through their project, not as ad-hoc ones
+        base = f"/v1/agents/{agent['id']}"
+        assert (
+            c.put(base, json={"models": [{"account": "fake"}], "scope": str(folder)}).status_code
+            == 409
+        )
+        assert c.delete(base).status_code == 409
+        # the last agent stays
+        last = c.delete(f"/v1/projects/{project['id']}/agents/{agent['id']}")
+        assert last.status_code == 409 and last.json()["title"] == "a project needs an agent"
+        assert c.get("/v1/projects/p_nope").status_code == 404
+
+
+def test_update_project_and_agents(daemon: Daemon) -> None:
+    project = create_project(daemon, daemon.make_scope())
+    pid, first = project["id"], project["agents"][0]
+    with daemon.http() as c:
+        r = c.post(
+            f"/v1/projects/{pid}/agents",
+            json={
+                "models": [{"account": "fake"}],
+                "name": "review",
+                "instructions": "  be brief ",
+                "bindings": ["browser"],
+            },
+        )
+        assert r.status_code == 201, r.text
+        review = r.json()
+        assert review["instructions"] == "be brief"
+
+        moved = daemon.make_scope()
+        body = {"folder": str(moved), "defaultAgent": review["id"]}
+        r = c.put(f"/v1/projects/{pid}", json=body)
+        assert r.status_code == 200, r.text
+        updated = r.json()
+        agents = {a["name"]: a for a in updated["agents"]}
+        assert updated["defaultAgent"] == review["id"] and updated["name"] == moved.name
+        assert (agents["dev"]["bindings"], agents["review"]["bindings"]) == ([], ["browser"])
+        assert {a["scope"] for a in agents.values()} == {str(moved)}
+
+        r = c.put(
+            f"/v1/projects/{pid}/agents/{first['id']}",
+            json={"models": [{"account": "fake"}], "name": "coder", "network": "none"},
+        )
+        assert r.status_code == 200 and r.json()["network"] == "none"
+        assert c.delete(f"/v1/projects/{pid}/agents/{review['id']}").status_code == 204
+        after = c.get(f"/v1/projects/{pid}").json()
+        assert [a["name"] for a in after["agents"]] == ["coder"]
+        assert after["defaultAgent"] == first["id"]
+
+        assert c.delete(f"/v1/projects/{pid}").status_code == 204
+        assert c.get(f"/v1/agents/{first['id']}").status_code == 404
+
+
+def test_session_started_with_a_request(daemon: Daemon) -> None:
+    project = create_project(
+        daemon,
+        daemon.make_scope(),
+        agents=[
+            {"models": [{"account": "fake"}], "name": "dev", "instructions": "You review code."}
+        ],
+    )
+    agent = project["agents"][0]
+    with daemon.http() as c:
+        r = c.post("/v1/sessions", json={"agentId": agent["id"], "prompt": "report"})
+        assert r.status_code == 202, r.text
+        session = r.json()
+        assert session["projectId"] == project["id"] and session["title"] == "report"
+        resumed = {"agentId": agent["id"], "acpSessionId": "s1", "prompt": "x"}
+        assert c.post("/v1/sessions", json=resumed).status_code == 400
+
+    deadline = time.monotonic() + 30
+    while True:
+        with daemon.http() as c:
+            state = c.get(f"/v1/sessions/{session['id']}").json()
+        if state["state"] == "running" and not state["busy"]:
+            break
+        assert time.monotonic() < deadline, state
+        time.sleep(0.1)
+
+    client = daemon.connect(session["acpUrl"])
+    try:
+        client.initialize()
+        params = {"sessionId": state["acpSessionId"], "cwd": session["scope"], "mcpServers": []}
+        client.request("session/load", params)
+        replayed = [
+            u["params"]["update"] for u in client.updates if u["method"] == "session/update"
+        ]
+        sent = [
+            u["content"]["text"] for u in replayed if u["sessionUpdate"] == "user_message_chunk"
+        ]
+        assert sent == ["You review code.\n\nreport"]
+        report = json.loads(client.text())
+        assert report["prompt"] == ["You review code.\n\nreport"]
+    finally:
+        client.close()
+
+
+def test_agent_permission_mode(daemon: Daemon) -> None:
+    """An agent's own starting mode: shown, given to its sessions, and only one its harness
+    offers."""
+    project = create_project(
+        daemon,
+        daemon.make_scope(),
+        agents=[{"models": [{"account": "fake"}], "name": "dev", "permissions": "accept-edits"}],
+    )
+    pid, agent = project["id"], project["agents"][0]
+    assert agent["permissions"] == "accept-edits"
+    with daemon.http() as c:
+        r = c.post("/v1/sessions", json={"agentId": agent["id"]})
+        assert r.status_code == 202, r.text
+        session = r.json()
+        deadline = time.monotonic() + 30
+        while (state := c.get(f"/v1/sessions/{session['id']}").json())["state"] != "running":
+            assert time.monotonic() < deadline, state
+            time.sleep(0.1)
+    client = daemon.connect(session["acpUrl"])
+    try:
+        client.initialize()
+        params = {"sessionId": state["acpSessionId"], "cwd": session["scope"], "mcpServers": []}
+        loaded = client.request("session/load", params)
+        assert loaded["modes"]["currentModeId"] == "edits"  # the fake harness's accept-edits
+    finally:
+        client.close()
+
+    with daemon.http() as c:  # the login-box harness only has bypass
+        body = {"models": [{"account": "login-box"}], "name": "login", "permissions": "ask"}
+        r = c.post(f"/v1/projects/{pid}/agents", json=body)
+        assert r.status_code == 400 and r.json()["title"] == "permission mode not offered"
+        assert "it offers: bypass" in r.json()["detail"]
+
+
+def test_saves_that_widen_an_agent_need_confirming(daemon: Daemon) -> None:
+    """PE4 on agents: an open network, containers, a privileged sandbox or auto-approve beyond
+    what it had (a new agent: beyond the preset) is saved only once confirmed."""
+    folder = daemon.make_scope()
+    open_agent = {"models": [{"account": "fake"}], "name": "dev", "network": "open"}
+    with daemon.http() as c:
+        r = c.post("/v1/projects", json={"folder": str(folder), "agents": [open_agent]})
+        assert r.status_code == 409 and "open network" in r.json()["detail"]
+    project = create_project(
+        daemon,
+        folder,
+        agents=[{"models": [{"account": "fake"}], "name": "dev", "permissions": "ask"}],
+    )
+    url = f"/v1/projects/{project['id']}/agents/{project['agents'][0]['id']}"
+    with daemon.http() as c:
+        wider = {
+            "models": [{"account": "fake"}],
+            "name": "dev",
+            "permissions": "bypass",
+            "confinement": "privileged",
+        }
+        r = c.put(url, json=wider)
+        assert r.status_code == 409 and r.json()["title"] == "risks not confirmed"
+        assert "auto-approve" in r.json()["detail"] and "privileged" in r.json()["detail"]
+        r = c.put(url, json=wider | {"confirmRisks": True})
+        assert r.status_code == 200 and r.json()["confinement"] == "privileged"
+        assert c.put(url, json=wider).status_code == 200  # nothing wider than before
+        assert (
+            c.put(
+                url, json={"models": [{"account": "fake"}], "name": "dev", "network": "none"}
+            ).status_code
+            == 200
+        )
+
+
+def test_log_only_is_a_wider_network(daemon: Daemon) -> None:
+    """D.8: log only lets every host through, so a save that turns it on is confirmed, as one
+    that opens the network further is."""
+    folder = daemon.make_scope()
+    dev = {"models": [{"account": "fake"}], "name": "dev"}
+    learning = dev | {"egress": "log-only"}
+    with daemon.http() as c:
+        r = c.post("/v1/projects", json={"folder": str(folder), "agents": [learning]})
+        assert r.status_code == 409 and "log only" in r.json()["detail"]
+    project = create_project(daemon, folder, agents=[dev])
+    url = f"/v1/projects/{project['id']}/agents/{project['agents'][0]['id']}"
+    with daemon.http() as c:
+        r = c.put(url, json=learning)
+        assert r.status_code == 409 and "log only" in r.json()["detail"]
+        assert c.put(url, json=learning | {"confirmRisks": True}).status_code == 200
+        assert c.put(url, json=learning).status_code == 200  # nothing wider than before
+        r = c.put(url, json=dev | {"network": "open"})
+        assert r.status_code == 409 and "open network" in r.json()["detail"]
+        assert c.put(url, json=dev).status_code == 200  # enforcing again: narrower
+
+
+def test_project_caches(daemon: Daemon) -> None:
+    """Its own by default; the global ones or none on request; refused otherwise (D.8)."""
+    project = create_project(daemon, daemon.make_scope())
+    assert project["caches"] == "project"
+    with daemon.http() as c:
+        url = f"/v1/projects/{project['id']}"
+        r = c.put(url, json={"folder": project["folder"], "caches": "global"})
+        assert r.status_code == 200 and r.json()["caches"] == "global"
+        assert c.get(url).json()["caches"] == "global"
+        bad = c.put(url, json={"folder": project["folder"], "caches": "per-scope"})
+        assert bad.status_code == 422

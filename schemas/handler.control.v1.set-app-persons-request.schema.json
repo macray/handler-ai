@@ -1,0 +1,20 @@
+{
+  "$id": "urn:handler.control/v1/set-app-persons-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "persons": {
+      "items": {
+        "pattern": "^[a-z][a-z0-9_-]{0,29}$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Persons",
+      "type": "array"
+    }
+  },
+  "required": [
+    "persons"
+  ],
+  "title": "SetAppPersonsRequest",
+  "type": "object"
+}

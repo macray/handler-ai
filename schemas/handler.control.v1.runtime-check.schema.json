@@ -1,0 +1,60 @@
+{
+  "$id": "urn:handler.control/v1/runtime-check",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "RuntimeCheckItem": {
+      "description": "One thing the runtime needs from the host (A.8), and what was found.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "ok",
+        "required",
+        "detail"
+      ],
+      "title": "RuntimeCheckItem",
+      "type": "object"
+    }
+  },
+  "description": "What `handler-sandbox-<impl> check` prints (A.8): can this host run sandboxes.",
+  "properties": {
+    "runtime": {
+      "title": "Runtime",
+      "type": "string"
+    },
+    "ok": {
+      "title": "Ok",
+      "type": "boolean"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/RuntimeCheckItem"
+      },
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "runtime",
+    "ok",
+    "items"
+  ],
+  "title": "RuntimeCheck",
+  "type": "object"
+}

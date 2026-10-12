@@ -1,0 +1,27 @@
+# Pull requests are not merged (CONTRIBUTING.md): each one is closed with a note pointing to the
+# issues. pull_request_target runs this repository's workflow, never the pull request's code (no
+# checkout). GitHub only: Forgejo Actions reads this file too, and its pull requests are the
+# maintainer's.
+name: pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr close "$PR" --repo "$REPO" --comment "$NOTE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          NOTE: >-
+            Thank you! Pull requests are not merged here (CONTRIBUTING.md explains why), so this
+            one is closed. Please open an issue describing the problem it solves and how you met
+            it: if the idea fits, it is built in a later release, and its notes credit you.

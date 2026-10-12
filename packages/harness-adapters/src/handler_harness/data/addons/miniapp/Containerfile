@@ -1,0 +1,20 @@
+# Mini apps addon image (contract G.1): the Deno binary, the same version mini apps run on
+# (RUNTIME_IMAGE in packages/contracts/src/handler_contracts/miniapp.py; a test keeps them equal),
+# mounted read-only at /opt/addons/miniapp.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+ARG DENO_IMAGE=docker.io/denoland/deno:bin-2.9.7
+FROM ${DENO_IMAGE} AS deno
+
+FROM ${TOOLBOX_IMAGE} AS build
+ARG PREFIX=/opt/addons/miniapp
+COPY --from=deno /deno /tmp/deno
+RUN install -D -m 0755 /tmp/deno "$PREFIX/lib/deno" \
+    && mkdir -p "$PREFIX/bin" \
+    && ln -s ../lib/deno "$PREFIX/bin/deno" \
+    && "$PREFIX/bin/deno" --version | head -n 1 > "$PREFIX/version" \
+    && grep -q '^deno ' "$PREFIX/version" \
+    && rm /tmp/deno
+
+FROM scratch
+COPY --from=build /opt/addons/miniapp /
+LABEL org.opencontainers.image.title="handler-ai-addon-miniapp"

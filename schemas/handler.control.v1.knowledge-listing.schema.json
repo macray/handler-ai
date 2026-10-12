@@ -1,0 +1,39 @@
+{
+  "$id": "urn:handler.control/v1/knowledge-listing",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The knowledge root and its folders that can be selected (D.5).",
+  "properties": {
+    "root": {
+      "title": "Root",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "env",
+        "config",
+        "default"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "exists": {
+      "title": "Exists",
+      "type": "boolean"
+    },
+    "folders": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Folders",
+      "type": "array"
+    }
+  },
+  "required": [
+    "root",
+    "source",
+    "exists",
+    "folders"
+  ],
+  "title": "KnowledgeListing",
+  "type": "object"
+}

@@ -1,0 +1,52 @@
+{
+  "$id": "urn:handler.control/v1/context-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A project context (D.19): Work, Personal, a client. A project has at most one; accounts and\nproviders say which they may be used in.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "color": {
+      "enum": [
+        "blue",
+        "violet",
+        "cyan",
+        "pink",
+        "slate"
+      ],
+      "title": "Color",
+      "type": "string"
+    },
+    "projects": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Projects",
+      "type": "array"
+    },
+    "accounts": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Accounts",
+      "type": "array"
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Providers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "color"
+  ],
+  "title": "ContextInfo",
+  "type": "object"
+}
