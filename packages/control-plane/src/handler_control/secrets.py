@@ -236,7 +236,7 @@ def visible(value: str | None, hosts: Sequence[str] | None) -> str | None:
     if hosts is None:
         return "its addon gives it as it is (it signs with it, or does not speak HTTP)"
     if not hosts:
-        return "no host to give it to: its addon reaches none"
+        return "no host to give it to: what it belongs to reaches none"
     if value is not None and not _INJECTABLE.match(value):
         return "the proxy cannot carry it: under 8 characters, or not printable ASCII"
     return None

@@ -22,28 +22,35 @@ from handler_contracts import (
 )
 
 from .. import (
+    areas,
     auth,
-    checks,
-    contexts,
     knowledge,
     launcher,
+    llm,
+    save_rules,
 )
+from ..agent_checks import CheckStore
+from ..agent_service import AgentService, AgentServiceError
 from ..agents import (
     AgentRecord,
     AgentRegistry,
     RunsAs,
 )
 from ..apps import AppStore
+from ..assistant import Assistant
 from ..automations import Automations
 from ..builds import (
     BuildStore,
 )
 from ..image_updates import ImageUpdater
+from ..improvements import ImprovementStore
 from ..inbox import Inbox
 from ..projects import ProjectRecord, ProjectRegistry
 from ..remote import Connector
 from ..sessions import SessionRecord, SessionStore
 from ..settings import Settings
+from ..uses import UseGraph
+from ..voice import VoiceStore
 
 log = logging.getLogger("handler.api")
 
@@ -77,6 +84,12 @@ class Context:
     updates: ImageUpdater
     automations: Automations
     inbox: Inbox
+    checks: CheckStore
+    improvements: ImprovementStore
+    uses: UseGraph
+    assistant: Assistant
+    voice: VoiceStore
+    agents: AgentService
 
     def require_auth(self, request: Request) -> None:
         """HTTP auth (invariant 5): allowed Origin (if any) and the bearer token."""
@@ -118,15 +131,18 @@ class Context:
             folder=p.folder,
             default_agent=p.default_agent,
             caches=p.caches,
-            context=p.context,
+            area=p.area,
+            skills=p.skills,
+            apps=self.apps.folder_apps(p.folder),
+            pinned=p.pinned,
             agents=[self.to_agent(a) for a in self.projects.agents(p)],
             created_at=p.created_at,
             last_used_at=self.projects.last_used(p),
         )
 
     def to_agent(self, r: AgentRecord) -> Agent:
-        """An agent as seen by clients, with, for each of its models, the hosts a session with
-        it requires *now* (its account or provider, the agent's tools), or why it cannot start."""
+        """An agent as seen by clients, with, for its model, the hosts a session with it
+        requires *now* (its account or provider, the agent's tools), or why it cannot start."""
         connections = [
             Connection(id=c.id, sandbox=c.sandbox, since=c.since, terminal=c.terminal)
             for c in list(r.connections.values())
@@ -134,7 +150,7 @@ class Context:
         return Agent.model_validate(
             r.model_dump()
             | {
-                "models": [self.to_agent_model(r, m) for m in r.models],
+                "model": self.to_agent_model(r, r.model),
                 "egress": r.egress if r.network == "filtered" else None,
                 "acp_url": self.settings.base_url.replace("http://", "ws://") + acp_path(r.id),
                 "connections": connections,
@@ -144,11 +160,15 @@ class Context:
     def to_agent_model(self, r: AgentRecord, runs: RunsAs) -> AgentModel:
         required, problem = [], None
         try:
-            contexts.check(self.settings.sources, r.context, runs.account, runs.provider)
-            resolved = launcher.agent_spec(self.settings, runs)
-            if r.network == "filtered":
-                required = launcher.required_hosts(self.settings, resolved, r)
-        except (contexts.ContextError, launcher.AgentStartError) as e:
+            areas.check(self.settings.sources, r.area, runs.account, runs.provider)
+            if r.model_alone:  # no sandbox: no hosts (D.18)
+                assert runs.provider is not None
+                llm.check(self.settings.providers_dir, runs.provider, runs.model)
+            else:
+                resolved = launcher.agent_spec(self.settings, runs)
+                if r.network == "filtered":
+                    required = launcher.required_hosts(self.settings, resolved, r)
+        except (areas.AreaError, launcher.AgentStartError, ValueError) as e:
             problem = str(e)
         return AgentModel(**runs.model_dump(), problem=problem, required_hosts=required)
 
@@ -175,16 +195,18 @@ def text_or_none(value: str | None) -> str | None:
 
 @contextlib.contextmanager
 def check_problems() -> Iterator[None]:
-    """The rules an agent or a project must pass (checks.py) → 403 (forbidden), 409 (conflict),
+    """The rules an agent or a project must pass (save_rules.py) → 403 (forbidden), 409 (conflict),
     400 (anything else)."""
     try:
         yield
-    except checks.ForbiddenError as e:
+    except save_rules.ForbiddenError as e:
         raise ProblemError(403, e.title, str(e)) from None
-    except checks.ConflictError as e:
+    except save_rules.ConflictError as e:
         raise ProblemError(409, e.title, str(e)) from None
-    except checks.CheckError as e:
+    except save_rules.CheckError as e:
         raise ProblemError(400, e.title, str(e)) from None
+    except AgentServiceError as e:
+        raise ProblemError(e.status, e.title, str(e)) from None
 
 
 @contextlib.contextmanager

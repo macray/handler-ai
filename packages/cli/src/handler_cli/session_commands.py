@@ -4,10 +4,10 @@ more attachment, so the web UI and a paired phone see the same session.
     handler run [AGENT|ACCOUNT|PROVIDER] [-p REQUEST] [agent options] [--remote] [--detach]
                 [--anyway]
             a session in the current directory. In a project's folder (or below): the project's
-            agent of that name, or the one listing that account or provider among its models
-            (the default agent first; --harness, --model: which of its models), else its
-            default agent with that account or provider this time; one not made for the
-            project's context is refused unless --anyway. No name: the default agent.
+            agent of that name, or the one whose model is that account or provider (the
+            default agent first; --harness, --model: which one), else its default agent with
+            that account or provider this time; one not made for the
+            project's area is refused unless --anyway. No name: the default agent.
             Elsewhere, or with --anyway: the ad-hoc agent of the folder and --name, with that
             account or provider this time (default: the only one ready; a provider's harness:
             --harness, or the only one speaking its protocol). Agent options that differ from
@@ -40,6 +40,7 @@ import time
 from typing import Any
 
 from . import terminal
+from .agent_commands import program
 from .client import ClientError, Daemon
 from .output import table
 from .session_bridge import run_session_bridge
@@ -97,10 +98,10 @@ def project_agent(
     d: Daemon, name: str | None, folder: str, args: Any
 ) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
     """In a project's folder (or below), the agent of that project to use and the model it runs
-    with (None: its first): the agent named `name`, else the one listing account or provider
-    `name` among its models (the default agent first), with that model (narrowed by --harness and
-    --model), else the default agent on `name`, for this session only (D.19). None outside
-    projects and with --anyway. ClientError when `name` is not made for the project's context:
+    with (None: the agent's): the agent named `name`, else the one whose model is account or
+    provider `name` (the default agent first; narrowed by --harness and --model), else the
+    default agent on `name`, for this session only (D.19). None outside
+    projects and with --anyway. ClientError when `name` is not made for the project's area:
     the folder decides which account works in it; --anyway, acknowledged, runs it outside."""
     project = project_of(d, folder)
     if project is None:
@@ -117,10 +118,10 @@ def project_agent(
         return settle_flags(d, agent, args, project), None
     harness, model = getattr(args, "harness", None), getattr(args, "model", None)
     for agent in agents:
-        for m in agent["models"]:
-            chosen = harness in (None, m["harness"]) and model in (None, m.get("model"))
-            if uses(m) == name and chosen:
-                return settle_flags(d, agent, args, project), m
+        m = agent["model"]
+        chosen = harness in (None, m.get("harness")) and model in (None, m.get("model"))
+        if uses(m) == name and chosen:
+            return settle_flags(d, agent, args, project), m
     assert name is not None  # else the default agent, above
     access = [*d.call("GET", "/v1/accounts"), *d.call("GET", "/v1/providers")]
     if name not in {x["name"] for x in access}:
@@ -138,21 +139,19 @@ def project_agent(
 
 
 def not_for(d: Daemon, project: dict[str, Any], name: str) -> str | None:
-    """Why that account or provider may not run in the project (its context, D.19), or None."""
-    context = project.get("context")
-    if context is None:
+    """Why that account or provider may not run in the project (its area, D.19), or None."""
+    area = project.get("area")
+    if area is None:
         return None
     found = [*d.call("GET", "/v1/accounts"), *d.call("GET", "/v1/providers")]
-    made = next((x.get("contexts", []) for x in found if x["name"] == name), [])
-    if context in made or "any" in made:
+    made = next((x.get("areas", []) for x in found if x["name"] == name), [])
+    if area in made or "any" in made:
         return None
-    return (
-        f"{name} is for {', '.join(made) or 'no context'}; {project['name']} is a {context} project"
-    )
+    return f"{name} is for {', '.join(made) or 'no area'}; {project['name']} is a {area} project"
 
 
 def acknowledge_outside(d: Daemon, project: dict[str, Any], name: str | None, args: Any) -> None:
-    """--anyway in a project's folder with an account or provider not made for its context: the
+    """--anyway in a project's folder with an account or provider not made for its area: the
     person confirms it in a terminal, typing yes (D.19); without a terminal, refused."""
     name = name or default_access(d)
     if (refused := not_for(d, project, name)) is None:
@@ -222,11 +221,7 @@ def settle_flags(
         if input("Save this to the agent? [y/N] ").strip().lower() not in ("y", "yes"):
             raise ClientError("not started (--name NAME makes another agent)")
     body = request_of(agent, project) | changed
-    path = (
-        f"/v1/projects/{project['id']}/agents/{agent['id']}"
-        if project is not None
-        else f"/v1/agents/{agent['id']}"
-    )
+    path = f"/v1/agents/{agent['id']}"
     try:
         return d.call("PUT", path, body)
     except ClientError as e:
@@ -241,11 +236,11 @@ SETTINGS += ("display", "interface")
 
 
 def request_of(agent: dict[str, Any], project: dict[str, Any] | None) -> dict[str, Any]:
-    """The request that saves the agent as it is (D.1 `AdHocAgentRequest`, D.8 `AgentRequest`)."""
-    own = ("name", "description", "instructions", "skills")
-    own += ("remoteStart",) if project is not None else ("scope", "origin")
+    """The request that saves the agent as it is (D.2 `AgentRequest`), its home unchanged."""
+    own = ("projectId", "app", "chat", "name", "description", "instructions", "skills", "origin")
+    own += ("remoteStart",) if project is not None else ("scope",)
     body = {k: agent[k] for k in (*SETTINGS, *own) if agent.get(k) is not None}
-    body["models"] = [access_of(m) for m in agent["models"]]
+    body["model"] = access_of(agent["model"])
     if project is not None:
         body["default"] = agent["id"] == project.get("defaultAgent")
     return body
@@ -265,6 +260,8 @@ def open_ad_hoc(d: Daemon, args: Any) -> tuple[dict[str, Any], dict[str, Any]]:
             a
             for a in d.call("GET", "/v1/agents")
             if a.get("projectId") is None
+            and a.get("app") is None
+            and not a.get("chat")
             and a.get("scope") == scope
             and (a.get("name") or "").lower() == name
         ),
@@ -272,7 +269,7 @@ def open_ad_hoc(d: Daemon, args: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     )
     if agent is not None:
         return settle_flags(d, agent, args, None), access
-    body: dict[str, Any] = {"models": [access], "scope": scope}
+    body: dict[str, Any] = {"model": access, "scope": scope}
     if args.name:
         body["name"] = args.name
     changed, _ = flag_changes({}, args)  # every flag typed
@@ -295,7 +292,7 @@ def agent_named(project: dict[str, Any], name: str | None) -> dict[str, Any] | N
 
 
 def agent_label(agent: dict[str, Any]) -> str:
-    return agent.get("name") or agent["models"][0]["harness"]
+    return agent.get("name") or program(agent["model"])
 
 
 def uses(model: dict[str, Any]) -> str:
@@ -333,7 +330,7 @@ def model_access(d: Daemon, name: str, harness: str | None) -> dict[str, Any]:
 
 
 def access_of(model: dict[str, Any]) -> dict[str, Any]:
-    """One of an agent's models as a request names it (without what handlerd adds: its problem, the
+    """A model as a request names it (without what handlerd adds: its problem, the
     hosts it requires)."""
     return {k: model[k] for k in ("harness", "account", "provider", "model") if k in model}
 
@@ -452,12 +449,15 @@ def show_session(d: Daemon, s: dict[str, Any]) -> None:
         state = "needs you"
     elif s.get("busy"):
         state = "working"
+    elif s.get("waitingFor"):
+        state = f"waiting for its agent's run {s['waitingFor']}"
     print(f"{s['id']} · {labels(d).get(s['agentId'], s['harness'])} · {state}")
     if s.get("title"):
         print(f"  {s['title']}")
     print(f"  runs      {s['harness']} · {access}{model}")
     print(f"  folder    {s['scope']}")
-    print(f"  started   {s['createdAt'][:16].replace('T', ' ')} ({s.get('origin', 'ui')})")
+    origin = f"app {s['app']}" if s.get("app") else s.get("origin", "ui")
+    print(f"  started   {s['createdAt'][:16].replace('T', ' ')} ({origin})")
     print(f"  active    {s['lastActivityAt'][:16].replace('T', ' ')}")
     shared = ", shared with your paired devices" if s.get("remote") else ""
     print(f"  attached  {s.get('attached', 0)} client(s){shared}")
@@ -480,6 +480,8 @@ def print_sessions(d: Daemon, everything: bool) -> None:
             state = "needs you"
         elif s.get("busy"):
             state = "working"
-        agent = names.get(s["agentId"], s["harness"])
+        elif s.get("waitingFor"):
+            state = "waiting"
+        agent = names.get(s["agentId"], s.get("harness") or "the model alone")
         rows.append([s["id"], state, agent, (s.get("title") or "-")[:50], s["scope"]])
     table(rows)

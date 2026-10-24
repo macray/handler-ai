@@ -42,7 +42,9 @@ scripts/build-docs-site.py [serve]            # documentation website (Zensical)
 
 Many conformance/e2e tests need built images or real credentials and skip otherwise; credential
 tests are opt-in via `HANDLER_TEST_CLAUDE_CONFIG_DIR` (+ `_JSON`), `HANDLER_TEST_MISTRAL_API_KEY`,
-`HANDLER_TEST_OPENAI_API_KEY`, `HANDLER_TEST_SHOPIFY_STORE` + `HANDLER_TEST_SHOPIFY_THEME_TOKEN`. When running
+`HANDLER_TEST_OPENAI_API_KEY`, `HANDLER_TEST_SHOPIFY_STORE` + `HANDLER_TEST_SHOPIFY_THEME_TOKEN`. The tests
+read a made-up source (`tests/fixtures/source/`) as the official one; those of Handler's real registry items
+(Planner, shopify) are opt-in via `HANDLER_TEST_REGISTRY` (a checkout of the registry). When running
 as root (dev container with nested rootful podman), `tests/support/dev_env.py` drops keep-id and runs
 sandboxes as uid 1000 with scopes under `/var/tmp/handler-tests`.
 
@@ -76,17 +78,17 @@ or lower ones, and a new module gets a layer in `CONTROL_LAYERS`, see its README
 - `packages/harness-adapters` (`handler_harness`, contract B): pure `render(descriptor, AgentSpec…) → HarnessLaunch`,
   plus `handler-harness` CLI. Harness-specific knowledge lives only here and in data dirs
   `handler_harness/data/`: `harnesses/<name>/` (`harness.toml` + Containerfile), the built-in
-  `addons/<name>/` (`miniapp`), the `catalog/` of installable addons (G.5: shopify, playwright),
+  `addons/<name>/` (`app-builder`), the `catalog/` of installable addons (G.5: shopify, playwright),
   the default `toolbox/` (copied to the user's `~/.config/handler-ai/toolbox/` on
   handlerd's first start: the shared base image; the user's addons are in `~/.config/handler-ai/addons/`).
   Per-harness provider config writers: `handler_harness/providers.py`.
 - `packages/control-plane` (`handler_control`, daemon `handlerd`): the only block composing others. Control
   API (HTTP, contract D, `api/`: one module per contract section, routes only translate HTTP; the
-  rules an agent or a project must pass before it is saved: `checks.py`), ACP WebSocket endpoint
+  rules an agent or a project must pass before it is saved: `save_rules.py`), ACP WebSocket endpoint
   with the P1–P8 policy pipeline (`policy.py`, `relay.py`),
   `compose.py` combines the render output + the agent's sandbox settings + its addons into a
   `SandboxSpec`.
-  Also sessions, projects, apps (mini apps), remote control, builds.
+  Also sessions, projects, apps, remote control, builds.
 - `packages/cli` (`handler_cli`): a pure client of handlerd over HTTP/WebSocket; may import only contracts.
 - `packages/web-ui` (Svelte 5 + TS, shadcn-svelte, Tailwind), `packages/remote-client` (phone),
   both using `packages/acp-view` for session rendering; one bun workspace at the repo root.

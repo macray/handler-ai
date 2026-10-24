@@ -9,11 +9,11 @@
     "gatewayToken": "rV1yxyNacJrw6X_hhQHIxx9qydnhhdErGIkhituD0ms"
   },
   "down": {
-    "envelope": {"id": "gCDEhijP85k9ulnQ4UtxNw", "nonce": "hkT9e97m2nqs_mU8", "ct": "Wx827t0JBOZ1PwY8At0U2CsE6B59ccLl293NgxdWsQl78nnfGaJeiuE1igfGmH-Z3EnUQLKOq7vy8ytP48JfYPtyZJtdy6YmuMT6gan9hLSn_Nk1s0lNXMLEmwiyUta8eSpfMLhXtMp-sMazuwFVFvqcB7fkueJ8VosoKGEcF-M"},
-    "plaintext": {"ts": 1790000000000, "frames": [{"s": null, "m": {"jsonrpc": "2.0", "id": 1, "method": "_handler/remote/list_sessions"}}]}
+    "envelope": {"id": "gCDEhijP85k9ulnQ4UtxNw", "nonce": "hkT9e97m2nqs_mU8", "ct": "Wx8n5Y9aR7Q_LQw9BdQU2CsE6wJvJ4C0mprY00xgr1gq6hjKTr0QnK0txFGRmHjIiVyEWqLD_-uwvjlX7dIYNPtkd94bhPlj_Inzxue3tLjkqJ8GvloMSsvMhlOlGNe6fjsvL7RXs_xiu8birxNmGM2lxZYDlj60YnqdkSICdSwcfgU59Q"},
+    "plaintext": {"expires": 1790000300000, "frames": [{"s": null, "m": {"jsonrpc": "2.0", "id": 1, "method": "_handler/remote/list_sessions"}}]}
   },
   "up": {
-    "envelope": {"id": "tgyS-d9kJ6fD9qrOVigJyQ", "nonce": "F0mVeXF5GDC4lZtR", "ct": "u68w3ebaZHFcr0qzEpPWhcSBypUtYDHrg7K2LUykgsIOCz066Z_nCPubIC5tT42uAd4MXy73WlhToVIFM94P"},
-    "plaintext": {"ts": 1790000000000, "frames": [], "acks": ["abc"]}
+    "envelope": {"id": "tgyS-d9kJ6fD9qrOVigJyQ", "nonce": "F0mVeXF5GDC4lZtR", "ct": "u68h1rSJJyMWvUCyFZrWhcSBw4k_NnO6wvWjfReSup0OUAUMtp-8MLKJYHcUMJE-AoxWfKn0ZbVQNWhdNkp21o2wdTU"},
+    "plaintext": {"expires": 1790000900000, "frames": [], "acks": ["abc"]}
   }
 }

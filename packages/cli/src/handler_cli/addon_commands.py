@@ -4,11 +4,11 @@ the Shopify CLI) with the hosts, secrets and skills it needs. An agent gets one 
 
 handler addon list                   the installed addons: where from, commands, image, the settings
                                      and secrets they need, errors, updates
-handler addon catalog                the addons handler ships, installed or not
-handler addon add NAME|FOLDER|URL [--yes]
+handler addon add NAME|FOLDER|URL [--from SOURCE] [--yes]
                                      what it brings (its hosts, secrets, commands, MCP server,
                                      skills), then, once you agree, install it and build its image:
-                                     NAME from the catalog, a FOLDER, an https:// .tar.gz archive
+                                     NAME from a source (`handler source list`; the official one
+                                     without --from), a FOLDER, an https:// .tar.gz archive
 handler addon rm NAME                an installed addon (refused while a binding uses it)
 """
 
@@ -27,20 +27,23 @@ def add_parser(sub: Any) -> None:
                            formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     s = addon.add_subparsers(dest="addon_cmd", required=True)
     s.add_parser("list")
-    s.add_parser("catalog")
     add = s.add_parser("add")
     add.add_argument("source", metavar="NAME|FOLDER|URL")
+    add.add_argument("--from", dest="source_id", metavar="SOURCE", help="the source offering NAME")
     add.add_argument("--yes", action="store_true", help="install without asking")
     s.add_parser("rm").add_argument("name")
 
 
-def source(arg: str) -> str:
-    """What the API calls the source: catalog:NAME, an absolute folder path, or the URL."""
+def source(arg: str, source_id: str | None) -> str:
+    """What the API calls the source: source:SOURCE/NAME (D.26), an absolute folder path, or the
+    URL."""
+    if source_id is not None:
+        return f"source:{source_id}/{arg}"
     if arg.startswith(("https://", "http://")):
         return arg
     if "/" in arg or arg.startswith(".") or Path(arg).is_dir():
         return str(Path(arg).resolve())
-    return f"catalog:{arg}"
+    return f"source:official/{arg}"
 
 
 def describe(p: dict[str, Any]) -> str:
@@ -63,22 +66,16 @@ def describe(p: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def dispatch(args: argparse.Namespace) -> int:  # noqa: PLR0911 — one branch per subcommand
+def dispatch(args: argparse.Namespace) -> int:
     d = Daemon()
     if args.addon_cmd == "list":
         print_addons(d)
-        return 0
-    if args.addon_cmd == "catalog":
-        rows = [["NAME", "INSTALLED", "DESCRIPTION"]]
-        for e in d.call("GET", "/v1/addon-catalog"):
-            rows.append([e["name"], "yes" if e["installed"] else "-", e.get("description", "")])
-        table(rows)
         return 0
     if args.addon_cmd == "rm":
         d.call("DELETE", f"/v1/addons/{args.name}")
         print(f"removed {args.name}")
         return 0
-    seen = d.call("POST", "/v1/addons/preview", {"source": source(args.source)})
+    seen = d.call("POST", "/v1/addons/preview", {"source": source(args.source, args.source_id)})
     print(describe(seen))
     if not args.yes:
         if not sys.stdin.isatty():
@@ -113,7 +110,8 @@ def print_addons(d: Daemon) -> None:
         ]
         origin = "built-in" if a.get("builtin") else a.get("source", "yours")
         if a.get("updateAvailable"):
-            origin += " (update: handler addon add " + a["name"] + ")"
+            source_id = a["source"].removeprefix("source:").split("/")[0]
+            origin += f" (update: handler addon add {a['name']} --from {source_id})"
         rows.append(
             [
                 a["name"],

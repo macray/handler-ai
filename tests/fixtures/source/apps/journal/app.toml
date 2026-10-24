@@ -1,0 +1,17 @@
+# Taken from the source by the tests (H.15), never deployed: only its manifest is read.
+apiVersion = "handler.app/v1"
+name = "journal"
+version = "1.0.0"
+description = "A journal kept in a folder of yours"
+
+[needs]
+notify = true
+
+[needs.files.notes]
+description = "Where the journal is kept"
+mode = "rw"
+
+[actions.write]
+description = "Write in my journal"
+examples = ["Note that I called the bank"]
+route = "POST /api/actions/write"

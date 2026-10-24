@@ -34,7 +34,7 @@
 </script>
 
 <section class="flex flex-col gap-4 text-sm" data-testid="save-skill-panel">
-  <h3 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Save to library</h3>
+  <h3 class="section-label">Save to library</h3>
   <p class="text-xs text-muted-foreground">The skill in this session's folder (its <code>SKILL.md</code>, the files next to it, no hidden ones) into your Skills.</p>
   <div class="space-y-1.5">
     <Label for="save-skill-project">Give it to</Label>

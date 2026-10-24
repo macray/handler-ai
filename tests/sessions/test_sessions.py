@@ -86,13 +86,14 @@ def test_create_attach_prompt(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
             "turnStartedAt": None,
             "pendingPermissions": 0,
             "attached": 1,
+            "lastStopReason": None,
         }
         acp_id = get_session(daemon, session["id"])["acpSessionId"]
         assert client.prompt(acp_id, "hello")["stopReason"] == "end_turn"
         assert client.text() == "ok"
         client.prompt(acp_id, "report")
         # P8 applies to the daemon's own session/new too
-        assert json.loads(client.text()[2:])["mcpServers"] == ["playwright"]
+        assert json.loads(client.text()[2:])["mcpServers"] == ["fake-browser"]
         with pytest.raises(AcpError, match="-32010"):
             client.request("session/new", {"cwd": session["scope"], "mcpServers": []})
     finally:
@@ -257,6 +258,28 @@ def test_turn_in_progress_refuses_a_second_prompt(daemon: Daemon, ad_hoc: dict[s
         client.close()
 
 
+def test_an_interrupted_turn_is_told_to_who_attaches_later(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """F.7: a client that was away (a phone asleep) learns how the last turn ended."""
+    session = create_session(daemon, ad_hoc)
+    client, _ = attach(daemon, session)
+    acp_id = get_session(daemon, session["id"])["acpSessionId"]
+    send_prompt(client, acp_id, "sleep")
+    time.sleep(0.3)
+    client.send({"method": "session/cancel", "params": {"sessionId": acp_id}})
+    while client.wait_notification("_handler/session_state")["busy"]:
+        pass
+    client.close()
+    later, loaded = attach(daemon, session)
+    try:
+        assert loaded["state"]["lastStopReason"] == "cancelled"
+        assert later.prompt(acp_id, "hello")["stopReason"] == "end_turn"
+        assert later.wait_notification("_handler/session_state")["lastStopReason"] == "end_turn"
+    finally:
+        later.close()
+
+
 def test_stop_then_attach_restarts_and_replays(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     client, _ = attach(daemon, session)
@@ -276,30 +299,40 @@ def test_stop_then_attach_restarts_and_replays(daemon: Daemon, ad_hoc: dict[str,
         again.close()
 
 
+def ran_with(daemon: Daemon, session: dict[str, Any]) -> str:
+    """The model the session's harness runs with (attached: started again if stopped)."""
+    client, _ = attach(daemon, session)
+    try:
+        client.prompt(get_session(daemon, session["id"])["acpSessionId"], "report")
+        chunks = [u for u in client.updates if u.get("method") == "session/update"]
+        report = json.loads(chunks[-1]["params"]["update"]["content"]["text"])  # not the replay
+        return report["options"]["model"]
+    finally:
+        client.close()
+
+
 def test_a_session_runs_with_the_model_asked_for(daemon: Daemon) -> None:
-    """D.1, F.3, D.19: a session runs with the model asked for, one of the agent's (default: its
-    first) or another, and resumes with it, also once the agent no longer lists it."""
-    small, big = ({"account": "fake", "model": m} for m in ("small", "big-model"))
-    agent = daemon.create_ad_hoc(None, daemon.make_scope(), models=[small, big])
+    """D.1, F.3, D.19: a session runs with the model asked for, the agent's (the default) or
+    another, and resumes with it; started with the agent's, it resumes with the agent's new one
+    on the same harness and access, if any."""
+    agent = daemon.create_ad_hoc("fake", daemon.make_scope(), model="small")
     first = create_session(daemon, agent)
     assert (first["harness"], first["account"], first["model"]) == ("fake", "fake", "small")
-    session = create_session(daemon, agent, model=big)
+    session = create_session(daemon, agent, model={"account": "fake", "model": "big-model"})
     assert session["model"] == "big-model"
     wait_state(daemon, first["id"], "running")
     with daemon.http() as c:
         r = c.post("/v1/sessions", json={"agentId": agent["id"], "model": {"account": "nope"}})
         assert r.status_code == 400 and r.json()["title"] == "model access unusable"
-    other = create_session(daemon, agent, model={"account": "fake", "model": "tiny"})
-    assert other["model"] == "tiny"  # not one of the agent's
-    wait_state(daemon, other["id"], "running")
     wait_state(daemon, session["id"], "running")
+    assert ran_with(daemon, session) == "big-model"  # not the agent's on that account
     with daemon.http() as c:
-        for sid in (first["id"], session["id"], other["id"]):
+        for sid in (first["id"], session["id"]):
             assert c.post(f"/v1/sessions/{sid}/stop").status_code == 200
-        body = {"models": [{"account": "echo-box"}], "scope": agent["scope"]}
+        body = {"model": {"account": "fake", "model": "medium"}, "scope": agent["scope"]}
         assert c.put(f"/v1/agents/{agent['id']}", json=body).status_code == 200
-    client, _ = attach(daemon, session)  # its own model, which the agent no longer lists
-    client.close()
+    assert ran_with(daemon, session) == "big-model"  # picked for it alone: as it was
+    assert ran_with(daemon, first) == "medium"  # the agent's, changed since
     assert get_session(daemon, session["id"])["model"] == "big-model"
 
 
@@ -336,6 +369,40 @@ def test_stopped_before_its_first_turn_restarts_fresh(
         assert "session/load" in report["methods"] and report["promptSession"] == "own"
     finally:
         client.close()
+
+
+def test_an_image_not_built_leaves_it_stopped_until_it_is(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """F.1, A.7: nothing launched, the build that makes the image said; it starts once built."""
+    missing = daemon.config_dir.parent / "fake-ran" / "harness-image-missing"
+    missing.touch()
+    try:
+        session = create_session(daemon, ad_hoc)
+        stopped = wait_state(daemon, session["id"], "stopped")
+        assert stopped["missingImage"] == "fake"
+        assert "`handler image rebuild fake`" in stopped["error"]
+    finally:
+        missing.unlink()
+    client, _ = attach(daemon, session)  # built now: it starts
+    try:
+        running = get_session(daemon, session["id"])
+        assert running["state"] == "running"
+        assert "missingImage" not in running and "error" not in running
+    finally:
+        client.close()
+
+
+def test_a_sandbox_that_did_not_start_says_why(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
+    """Its launcher's own reason (A.1), not only its exit code."""
+    fails = daemon.config_dir.parent / "fake-ran" / "setup-fails"
+    fails.touch()
+    try:
+        session = create_session(daemon, ad_hoc)
+        failed = wait_state(daemon, session["id"], "failed")
+    finally:
+        fails.unlink()
+    assert failed["error"] == "setup failed: the fake was told to"
 
 
 def test_idle_session_stops_and_can_be_deleted(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:

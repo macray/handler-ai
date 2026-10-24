@@ -73,15 +73,17 @@ def sentence(definition: dict[str, Any] | None) -> str:
     return "when a session stops" + (f" ({'; '.join(who)})" if who else "")
 
 
-def what(definition: dict[str, Any] | None) -> str:
-    """What it runs, in a few words."""
+def what(view: dict[str, Any], names: dict[str, str]) -> str:
+    """What it runs, in a few words; an agent by the name it has now (`names`: id → name, I.1)."""
+    definition = view.get("definition")
     if not definition:
         return "-"
     run = definition["run"]
     if isinstance(run, str):
         return "a script"
     if "agent" in run:
-        return f"agent {run['agent']}" + (f" ({run['project']})" if run.get("project") else "")
+        name = names.get(view.get("agentId") or "", run["agent"])
+        return f"agent {name}" + (f" ({run['project']})" if run.get("project") else "")
     return f"app {run['app']}"
 
 
@@ -97,12 +99,13 @@ def list_automations(d: Daemon, _: argparse.Namespace) -> int:
     if not views:
         print("no automation: handler automation new NAME --from env-issues")
         return 0
+    names = {a["id"]: a.get("name") or a["id"] for a in d.call("GET", "/v1/agents")}
     rows = [["NAME", "", "WHEN", "RUNS", "LAST RUN", "PROBLEMS"]]
     for v in views:
         state = "on" if v.get("enabled") else "off"
         problems = one_line("; ".join(v.get("problems") or []), 60) or "-"
         definition = v.get("definition")
-        rows.append([v["name"], state, sentence(definition), what(definition), last_run(v),
+        rows.append([v["name"], state, sentence(definition), what(v, names), last_run(v),
                      problems])  # fmt: skip
     table(rows)
     return 0
@@ -156,7 +159,7 @@ def new(d: Daemon, args: argparse.Namespace) -> int:
 
 def last_session(d: Daemon) -> str:
     sessions = d.call("GET", "/v1/sessions")
-    stopped = [s for s in sessions if s["state"] == "stopped" and not s.get("input")]
+    stopped = [s for s in sessions if s["state"] == "stopped" and not s.get("unattended")]
     if not stopped:
         raise ClientError("no stopped session to try it on (--session ID)")
     return max(stopped, key=lambda s: s["lastActivityAt"])["id"]

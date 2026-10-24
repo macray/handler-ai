@@ -66,6 +66,14 @@
       "title": "Versions",
       "type": "object"
     },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
     "error": {
       "anyOf": [
         {

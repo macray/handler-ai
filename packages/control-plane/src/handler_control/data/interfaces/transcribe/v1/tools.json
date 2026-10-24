@@ -1,0 +1,73 @@
+[
+  {
+    "name": "transcribe_audio",
+    "description": "Write down what is said in `audio` (base64, its `format`), with a speech model; `language` is a hint.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`transcribe_audio`'s input (I.11): speech, written down by a provider's speech model.",
+      "properties": {
+        "model": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+          "title": "Model",
+          "type": "string"
+        },
+        "audio": {
+          "minLength": 1,
+          "title": "Audio",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "webm",
+            "ogg",
+            "mp4",
+            "wav",
+            "mp3"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        }
+      },
+      "required": [
+        "model",
+        "audio",
+        "format"
+      ],
+      "title": "TranscribeRequest",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "description": "`transcribe_audio`'s output (I.11).",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ms": {
+          "title": "Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "text",
+        "ms"
+      ],
+      "title": "TranscribeResponse",
+      "type": "object"
+    }
+  }
+]

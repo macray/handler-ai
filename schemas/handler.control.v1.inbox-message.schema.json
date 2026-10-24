@@ -96,6 +96,18 @@
       "default": null,
       "title": "Sessionid"
     },
+    "app": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "App"
+    },
     "at": {
       "format": "date-time",
       "title": "At",

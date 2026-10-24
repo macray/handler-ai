@@ -1,7 +1,7 @@
 # Contributing
 
-Handler is open source, but not open to code contributions: **pull requests are not merged**
-(they are closed automatically). What helps most is hearing how you use it.
+Handler is open source, but not open to code contributions: **pull requests are very unlikely to be merged**. What helps
+most is hearing how you use it.
 
 ## What I'm looking for
 
@@ -24,8 +24,8 @@ notes say whose idea it was.
 
 ## How the repository works
 
-Each commit here is one release, exported from the maintainer's working repository; what changed
-is in [`CHANGELOG.md`](CHANGELOG.md), with the issues each release fixes. The design is meant to be
+Each commit here is one release; what changed is in [`CHANGELOG.md`](CHANGELOG.md), with the issues each release fixes.
+The design is meant to be
 read: [`docs/dev/architecture.md`](docs/dev/architecture.md), [`docs/dev/contracts.md`](docs/dev/contracts.md)
 (the normative specs), [`docs/dev/code-map.md`](docs/dev/code-map.md), and [`CLAUDE.md`](CLAUDE.md) (also
 `AGENTS.md`), the instructions the coding agents work with: point yours at it to explore the code.

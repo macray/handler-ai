@@ -1,0 +1,60 @@
+{
+  "$id": "urn:handler.remote/v1/ask-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AskTurn": {
+      "description": "One turn of an exchange with Ask: the person's words, or what Handler answered.",
+      "properties": {
+        "who": {
+          "enum": [
+            "you",
+            "handler"
+          ],
+          "title": "Who",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "text"
+      ],
+      "title": "AskTurn",
+      "type": "object"
+    }
+  },
+  "description": "`_handler/remote/ask` \u2192 AskAnswer: Ask (D.24) from one of the owner's devices: the\nexchange so far, the person's words last, the device's time zone.",
+  "properties": {
+    "turns": {
+      "items": {
+        "$ref": "#/$defs/AskTurn"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Turns",
+      "type": "array"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timezone"
+    }
+  },
+  "required": [
+    "turns"
+  ],
+  "title": "AskParams",
+  "type": "object"
+}

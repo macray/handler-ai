@@ -2,7 +2,6 @@
 allow-list, live on running sandboxes."""
 
 import json
-import subprocess
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -11,7 +10,7 @@ import pytest
 
 from handler_sandbox_podman.launch import instance_dir
 
-from ..support.daemon import Daemon, start_daemon
+from ..support.daemon import Daemon, require_echo_box, start_daemon
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +91,7 @@ def test_a_provider_in_use_is_not_renamed_but_deleted(daemon: Daemon) -> None:
         assert r.status_code == 409 and f"an agent in {scope.name}" in r.text
         assert c.delete("/v1/providers/used").status_code == 204
         # its agent keeps the name: a model that cannot start until given another (E1)
-        [model] = c.get(f"/v1/agents/{used['id']}").json()["models"]
+        model = c.get(f"/v1/agents/{used['id']}").json()["model"]
         assert model["provider"] == "used" and "no provider 'used'" in model["problem"]
 
 
@@ -173,7 +172,7 @@ def test_an_account_in_use_is_deleted_its_agents_cannot_start(daemon: Daemon) ->
     used = daemon.create_ad_hoc("fake", daemon.make_scope(), name="uses fake")
     with daemon.http() as c:
         assert c.delete("/v1/accounts/fake").status_code == 204
-        [model] = c.get(f"/v1/agents/{used['id']}").json()["models"]
+        model = c.get(f"/v1/agents/{used['id']}").json()["model"]
         assert model["account"] == "fake" and "no account 'fake'" in model["problem"]
 
 
@@ -237,20 +236,12 @@ def test_a_provider_keeps_its_harness_files(daemon: Daemon) -> None:
         assert c.delete("/v1/providers/withfiles").status_code == 204
 
 
-def podman_ok() -> bool:
-    try:
-        exists = ["podman", "image", "exists", "localhost/handler-ai-test-echo-box:latest"]
-        return subprocess.run(exists, check=False).returncode == 0
-    except OSError:
-        return False
-
-
-@pytest.mark.skipif(not podman_ok(), reason="podman or the echo-box image missing")
 def test_allow_applies_to_running_sandboxes(daemon: Daemon) -> None:
     """An ad-hoc agent's own hosts and log-only, changed by a full update, reach its running
     filtered sandbox at once (A.4)."""
+    require_echo_box()
     scope = daemon.make_scope()
-    settings = {"models": [{"account": "echo-box"}], "scope": str(scope), "egress": "enforce"}
+    settings = {"model": {"account": "echo-box"}, "scope": str(scope), "egress": "enforce"}
     ad_hoc = daemon.create_ad_hoc("echo-box", scope, egress="enforce", allow=["a.org:443"])
     client = daemon.connect(ad_hoc["acpUrl"])  # `cat` agent: nothing to initialize
     try:

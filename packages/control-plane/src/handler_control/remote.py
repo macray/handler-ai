@@ -3,13 +3,12 @@ gateway that handlerd polls — handlerd never listens to anything but loopback.
 
     config     <config>/remote.json          gateway URL + host token (0600)
     devices    <config>/remote-devices.json  paired devices and their keys (0600)
-    replay     <state>/remote-replay.json    ids of the envelopes accepted in the last 10 min
-    queued     <state>/remote-queue-replay.json  ids of the queued envelopes taken (8 days)
+    seen       <state>/remote-replay.json    ids of the envelopes taken, each until it expires
     push key   <config>/vapid.json           Web Push signing key (0600), made when first asked
 
     Connector  one loop for every device: long-polls the gateway while a gateway is set and
                at least one session is shared; opens each envelope (remote_crypto), refuses
-               replays and envelopes older than 5 min, and hands the frames to the sessions.
+               an expired or replayed one (Seen), and hands the frames to the sessions.
     Link       one device: its attachments (one per session it has open), its outbox (frames
                batched ~250 ms per envelope), its lease (no envelope for 90 s: detached).
 
@@ -18,14 +17,15 @@ ALLOWED (plus answers to permission requests). Everything goes through the sessi
 client's traffic: the policy (C.4) applies.
 
 A device belongs to a person (`owner`, or a family member) and has a scope: `all`, or `apps` for
-mini apps only (no session, ever). Frames `s: "app:<name>"` reach a mini app shared with the
+apps only (no session, ever). Frames `s: "app:<name>"` reach an app shared with the
 device's person (app_remote.py, H.8). handlerd polls while a session or an app is shared, or while
-an agent may be started from a device (`remoteStart`: the owner's devices start sessions of it).
+an agent may be started from a device (`remoteStart`, or one you talk to in Chat: the owner's
+devices start sessions of it).
 
-A5 (docs/dev/design/miniapps.md §5.3, §7): what a device queued at the gateway while the host was
-off is taken when handlerd is back (only app calls to routes the app declares "queued", up to 7 days
-old); what handler tells a person (its inbox: apps' notifications, automations' results) is pushed,
-content-free, to the devices of that person (Web Push).
+A5 (docs/dev/design/apps.md §5.3, §7): what a device queued at the gateway while the host was
+off is taken when handlerd is back (only app calls to routes the app declares "queued", until
+they expire: 7 days); what handler tells a person (its inbox: apps' notifications, automations'
+results) is pushed, content-free, to the devices of that person (Web Push).
 """
 
 import asyncio
@@ -35,7 +35,7 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -46,9 +46,14 @@ from pydantic import BaseModel, ValidationError
 
 from handler_contracts import (
     AcpCloseCode,
+    ActionOption,
+    ActionRunParams,
     AgentList,
     AppHttpParams,
     AppList,
+    AskAnswer,
+    AskOptions,
+    AskParams,
     ClosedNotice,
     DetachParams,
     DeviceScope,
@@ -57,23 +62,30 @@ from handler_contracts import (
     PushKey,
     PushSubscribeParams,
     PushSubscription,
+    RemoteActionRun,
+    RemoteAgent,
     RemoteDevice,
     RemoteLight,
     RemotePairing,
     RemoteStatus,
+    RemoteTranscription,
     SessionList,
     SharedApps,
     SharedSession,
     StartedSession,
     StartSessionParams,
+    TranscribeParams,
 )
 
-from . import files, webpush
+from . import agents, files, webpush
 from . import remote_crypto as rc
+from .agents import describe as model_label
 from .app_remote import AppChannel, RemoteAppError
 from .apps import AppError, AppStore
+from .assistant import Assistant, AssistantError
 from .policy import is_request, is_response
 from .projects import ProjectRegistry
+from .services import ServiceError
 from .sessions import (
     Attachment,
     LiveSession,
@@ -84,15 +96,16 @@ from .sessions import (
     now,
 )
 from .settings import Settings
+from .voice import VoiceOffError, VoiceStore
 
 log = logging.getLogger("handler.remote")
 
 Message = dict[str, Any]
 
-MAX_AGE = 300.0  # seconds: an older command is refused (the gateway held it back)
-REPLAY_KEEP = 2 * MAX_AGE
-QUEUE_MAX_AGE = 7 * 24 * 3600.0  # a queued call older than this is refused
-QUEUE_KEEP = QUEUE_MAX_AGE + 24 * 3600.0
+# Every envelope says until when it may be taken (`expires`, unix ms, set by its sender): a device's
+# command now or never in 5 min, a call it queues for when the host is back in 7 days.
+MAX_LIFETIME = (7 * 24 * 3600 + 300) * 1000  # the furthest a device may set it (+ a clock ahead)
+UP_LIFETIME = 15 * 60 * 1000  # handlerd's own envelopes: a device takes them by then or never
 QUEUE_EVERY = 30.0  # seconds between two looks at the gateway's queue
 PUSH_CONTACT = os.environ.get("HANDLER_PUSH_CONTACT", "mailto:handler@example.invalid")
 LEASE = 90.0  # seconds without an envelope from a device: its attachments are closed
@@ -186,6 +199,32 @@ class Link:
     app_calls: set[asyncio.Task[None]] = field(default_factory=set)
 
 
+class Seen:
+    """The envelopes taken from devices: each id kept until its `expires`, on disk (a restart
+    does not forget them). One rule, whichever way an envelope came (live, or queued at the
+    gateway, which can move one from a way to the other): taken before it expires, once."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.ids: dict[str, int] = {
+            k: v for k, v in read_json(path, {}).items() if v > time.time() * 1000
+        }
+
+    def take(self, envelope_id: str, expires: int) -> str | None:
+        """None: taken (kept until it expires), else why not."""
+        at = time.time() * 1000
+        if expires < at:
+            return "expired"
+        if expires > at + MAX_LIFETIME:
+            return "expires too late"
+        if envelope_id in self.ids:
+            return "replayed"
+        self.ids = {k: v for k, v in self.ids.items() if v > at}
+        self.ids[envelope_id] = expires
+        write_private(self.path, self.ids)
+        return None
+
+
 class Connector:
     def __init__(
         self, settings: Settings, sessions: SessionStore, apps: AppStore | None = None
@@ -194,18 +233,16 @@ class Connector:
         self.sessions = sessions
         self.apps = apps
         self.projects: ProjectRegistry | None = None  # set by the app: names, remote agents
+        self.assistant: Assistant | None = None  # set by the app: Ask from the owner's devices
+        self.voice: VoiceStore | None = None  # set by the app: speaking to Ask (D.25)
         self.app_channel = AppChannel(apps) if apps else None
         self.config_file = settings.config_dir / "remote.json"
         self.devices_file = settings.config_dir / "remote-devices.json"
-        self.replay_file = settings.state_dir / "remote-replay.json"
+        self.seen = Seen(settings.state_dir / "remote-replay.json")
         self.config: Message | None = read_json(self.config_file, None)
         self.devices = {
             d["id"]: Device.from_json(d)
             for d in read_json(self.devices_file, {}).get("devices", [])
-        }
-        cutoff = time.time() * 1000 - REPLAY_KEEP * 1000
-        self.replay: dict[str, int] = {
-            k: v for k, v in read_json(self.replay_file, {}).items() if v > cutoff
         }
         self.links: dict[str, Link] = {}
         self.light: RemoteLight = "off" if self.config is None else "idle"
@@ -217,14 +254,10 @@ class Connector:
         self.tasks: list[asyncio.Task[None]] = []
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(15.0, read=POLL_WAIT + 15.0))
         sessions.listeners.append(self.sessions_changed)
+        sessions.registry.listeners.append(self.agents_changed)
         if apps is not None:
             apps.listeners.append(self.apps_changed)
             apps.inbox.listeners.append(self.on_message)
-        self.queue_file = settings.state_dir / "remote-queue-replay.json"
-        cutoff = time.time() * 1000 - QUEUE_KEEP * 1000
-        self.queue_replay: dict[str, int] = {
-            k: v for k, v in read_json(self.queue_file, {}).items() if v > cutoff
-        }
         self.queue_checked = 0.0  # monotonic
         self._vapid: webpush.Vapid | None = None
         self.pushes: set[asyncio.Task[None]] = set()
@@ -268,12 +301,16 @@ class Connector:
         ]
 
     def active(self) -> bool:
-        """Something is shared, or an agent may be started from a device: handlerd polls."""
-        agents = bool(self.projects and self.projects.remote_agents())
-        return bool(self.shared()) or bool(self.apps and self.apps.remote_apps()) or agents
+        """Something is shared, an agent may be started from a device, or Ask can answer one
+        (D.24): handlerd polls."""
+        agents = bool(self.projects and self.projects.remote_agents()) or bool(self.chats())
+        asking = bool(self.assistant and self.assistant.ready())
+        shared = bool(self.shared()) or bool(self.apps and self.apps.remote_apps())
+        return shared or agents or asking
 
     def agents_changed(self) -> None:
-        """An agent's `remoteStart` may have changed: poll (or stop polling)."""
+        """An agent's `remoteStart`, who you talk to in Chat, or Ask's router may have changed
+        (an agent saved, one given for a need of Handler's): poll (or stop polling)."""
         self.wake.set()
 
     def set_light(self, light: RemoteLight, detail: str | None = None) -> None:
@@ -490,39 +527,43 @@ class Connector:
         return link
 
     async def receive(self, envelope: Message) -> None:
-        device = self.devices.get(str(envelope.get("dev")))
-        if device is None or self.host_id is None:
-            return  # revoked (or never ours)
-        try:
-            plain = rc.open_envelope(device.key, self.host_id, device.id, "down", envelope)
-        except rc.EnvelopeError as e:
-            log.warning("remote: dropped an envelope from %s: %s", device.id, e)
+        taken = self.take(envelope)
+        if taken is None:
             return
-        envelope_id = envelope["id"]
-        if envelope_id in self.replay or envelope_id in self.queue_replay:
-            log.warning("remote: dropped a replayed envelope from %s", device.id)
-            return
-        link = self.link(device)
-        self.remember(envelope_id)
-        if abs(time.time() * 1000 - plain["ts"]) > MAX_AGE * 1000:
-            link.rejected.append({"id": envelope_id, "reason": "expired"})
-            self.schedule_flush(link)
-            return
+        link, plain = taken
         link.last_seen = time.monotonic()
+        device = link.device
         if device.last_seen_at is None or (now() - device.last_seen_at).total_seconds() > 60:
             device.last_seen_at = now()
             self.save_devices()
-        link.acks.append(envelope_id)
         for frame in plain.get("frames") or []:
             if isinstance(frame, dict):
                 await self.frame(link, frame)
         self.schedule_flush(link)
 
-    def remember(self, envelope_id: str) -> None:
-        cutoff = time.time() * 1000 - REPLAY_KEEP * 1000
-        self.replay = {k: v for k, v in self.replay.items() if v > cutoff}
-        self.replay[envelope_id] = int(time.time() * 1000)
-        write_private(self.replay_file, self.replay)
+    def take(self, envelope: Message) -> tuple[Link, Message] | None:
+        """A device's envelope, live or queued alike: opened, taken if it has not expired and was
+        not taken before (then acknowledged), else None (an expired one is said so)."""
+        device = self.devices.get(str(envelope.get("dev")))
+        if device is None or self.host_id is None:
+            return None  # revoked (or never ours)
+        try:
+            plain = rc.open_envelope(device.key, self.host_id, device.id, "down", envelope)
+        except rc.EnvelopeError as e:
+            log.warning("remote: dropped an envelope from %s: %s", device.id, e)
+            return None
+        envelope_id = envelope["id"]
+        refused = self.seen.take(envelope_id, plain["expires"])
+        if refused == "replayed":
+            log.warning("remote: dropped a replayed envelope from %s", device.id)
+            return None
+        link = self.link(device)
+        if refused is not None:
+            link.rejected.append({"id": envelope_id, "reason": refused})
+            self.schedule_flush(link)
+            return None
+        link.acks.append(envelope_id)
+        return link, plain
 
     async def frame(self, link: Link, frame: Message) -> None:
         s, m = frame.get("s"), frame.get("m")
@@ -597,12 +638,20 @@ class Connector:
             return
         if not is_request(m):  # _handler/remote/ping is a notification: the lease is renewed
             return
+        if method in self.slow:  # a provider's call (then an ask): answered when done
+            call = self.slow[method](link.device, params or {})
+            task = asyncio.get_running_loop().create_task(self.answer_later(link, m, call))
+            self.pushes.add(task)
+            task.add_done_callback(self.pushes.discard)
+            return
         handlers: dict[str, tuple[type[BaseModel] | None, Callable[..., BaseModel]]] = {
             "_handler/remote/list_sessions": (None, self.list_sessions),
             "_handler/remote/list_agents": (None, self.list_agents),
             "_handler/remote/start_session": (StartSessionParams, self.start_session),
             "_handler/remote/list_apps": (None, self.list_apps),
             "_handler/remote/inbox": (None, self.device_inbox),
+            "_handler/remote/ask_options": (None, self.ask_options),
+            "_handler/remote/action_run": (ActionRunParams, self.action_run),
             "_handler/remote/push_key": (None, self.push_key),
             "_handler/remote/push_subscribe": (PushSubscribeParams, self.push_subscribe),
         }
@@ -621,20 +670,105 @@ class Connector:
             return
         self.send(link, None, {"jsonrpc": "2.0", "id": m["id"], "result": wire(result)})
 
+    # ── Ask, from the owner's devices (D.24) ────────────────────────────
+
+    def asker(self, device: Device) -> Assistant:
+        """Ask runs actions as the owner: the owner's devices only, never a family member's."""
+        if device.scope != "all" or self.assistant is None:
+            raise RemoteError("Ask is for the owner's devices")
+        return self.assistant
+
+    def ask_options(self, device: Device) -> AskOptions:
+        options = self.asker(device).options()
+        actions = [
+            ActionOption(app=a, action=k, description=v["description"]) for a, k, v in options
+        ]
+        if self.voice is None:
+            return AskOptions(actions=actions)
+        chosen = self.voice.get()
+        return AskOptions(
+            actions=actions,
+            listens=self.voice.listens(),
+            read_aloud_spoken=chosen.read_aloud_spoken,
+            read_aloud_typed=chosen.read_aloud_typed,
+        )
+
+    def action_run(self, device: Device, params: ActionRunParams) -> RemoteActionRun:
+        self.asker(device)
+        assert self.apps is not None
+        try:
+            run = self.apps.action_run(params.app, params.action, params.run_id)
+        except AppError as e:
+            raise RemoteError(str(e)) from None
+        return RemoteActionRun.model_validate(run.model_dump())
+
+    @property
+    def slow(self) -> dict[str, Callable[[Device, dict[str, Any]], Awaitable[BaseModel]]]:
+        """The requests answered once a provider was called: not in the polling loop's turn."""
+        return {"_handler/remote/ask": self.ask, "_handler/remote/transcribe": self.transcribe}
+
+    async def answer_later(self, link: Link, m: Message, call: Awaitable[BaseModel]) -> None:
+        try:
+            result = await call
+        except ValidationError as e:
+            self.send(link, None, error(m["id"], -32602, files.describe(e)))
+            return
+        except (RemoteError, AssistantError, VoiceOffError, ServiceError) as e:
+            self.send(link, None, error(m["id"], -32602, str(e)))
+            return
+        except Exception as e:  # the device must get an answer
+            log.exception("remote: %s", m.get("method"))
+            self.send(link, None, error(m["id"], -32603, f"{type(e).__name__}: {e}"))
+            return
+        self.send(link, None, {"jsonrpc": "2.0", "id": m["id"], "result": wire(result)})
+
+    async def ask(self, device: Device, params: dict[str, Any]) -> AskAnswer:
+        """`_handler/remote/ask`: answered once the router decided and the pick ran."""
+        asked = AskParams.model_validate(params)
+        if asked.turns[-1].who != "you":
+            raise RemoteError("the last turn is the person's")
+        answer = await self.asker(device).answer(asked.turns, asked.timezone)
+        return AskAnswer.model_validate(answer.model_dump())
+
+    async def transcribe(self, device: Device, params: dict[str, Any]) -> RemoteTranscription:
+        """`_handler/remote/transcribe` (D.25): the owner's devices, as they Ask."""
+        speech = TranscribeParams.model_validate(params)
+        self.asker(device)
+        if self.voice is None:
+            raise VoiceOffError("no speech model is chosen (Settings → Voice)")
+        heard = await self.voice.hear(speech)
+        return RemoteTranscription(text=heard.text)
+
     def list_sessions(self, device: Device) -> SessionList:
         shared = self.shared() if device.scope == "all" else []
         return SessionList(sessions=[self.describe(live) for live in shared])
 
     def list_agents(self, device: Device) -> AgentList:
-        """The agents a device may start sessions with: those marked `remoteStart` (D.7)."""
+        """The agents a device may start sessions with: those marked `remoteStart` (D.7), and who
+        you talk to in Chat."""
         if device.scope != "all" or self.projects is None:
             return AgentList(projects=[])
-        return AgentList(projects=self.projects.remote_agents())
+        return AgentList(projects=self.projects.remote_agents(), chats=self.chats())
+
+    def chats(self) -> list[RemoteAgent]:
+        """Who you talk to in Chat (D.1): with no folder, the owner's devices start them as they
+        Ask (D.24), with no `remoteStart` of their own; the one used last is the default."""
+        found = agents.chats(list(self.sessions.registry.agents.values()))
+        return [
+            RemoteAgent(
+                id=a.id,
+                name=a.name or model_label(a.model),
+                description=a.description,
+                default=i == 0,
+            )
+            for i, a in enumerate(found)
+        ]
 
     def start_session(self, device: Device, params: StartSessionParams) -> StartedSession:
-        """A new session of a `remoteStart` agent, its request sent first, shared with the
+        """A new session of a `remoteStart` agent or a chat, its request sent first, shared with the
         devices once it runs (so this one can attach)."""
-        allowed = {a.id for p in self.list_agents(device).projects for a in p.agents}
+        listed = self.list_agents(device)
+        allowed = {a.id for p in listed.projects for a in p.agents} | {a.id for a in listed.chats}
         if params.agent_id not in allowed:
             raise RemoteError("agentId: not an agent you may start from a device")
         agent = self.sessions.registry.get(params.agent_id)
@@ -675,7 +809,7 @@ class Connector:
     def push_subscribe(self, device: Device, params: PushSubscribeParams) -> PushSubscription:
         endpoint = params.endpoint
         if endpoint is not None and not webpush.valid_endpoint(endpoint):
-            raise RemoteError("endpoint: an https URL")
+            raise RemoteError("endpoint: a browser push service's https URL")
         device.push_endpoint = endpoint  # None: unsubscribe
         self.save_devices()
         return PushSubscription(subscribed=endpoint is not None)
@@ -723,27 +857,10 @@ class Connector:
             )
 
     async def take_queued(self, envelope: Message) -> None:
-        device = self.devices.get(str(envelope.get("dev")))
-        if device is None or self.host_id is None:
+        taken = self.take(envelope)
+        if taken is None:
             return
-        try:
-            plain = rc.open_envelope(device.key, self.host_id, device.id, "down", envelope)
-        except rc.EnvelopeError as e:
-            log.warning("remote: dropped a queued envelope from %s: %s", device.id, e)
-            return
-        envelope_id = envelope["id"]
-        if envelope_id in self.queue_replay or envelope_id in self.replay:
-            return
-        self.queue_replay[envelope_id] = int(time.time() * 1000)
-        cutoff = time.time() * 1000 - QUEUE_KEEP * 1000
-        self.queue_replay = {k: v for k, v in self.queue_replay.items() if v > cutoff}
-        write_private(self.queue_file, self.queue_replay)
-        link = self.link(device)
-        if abs(time.time() * 1000 - plain["ts"]) > QUEUE_MAX_AGE * 1000:
-            link.rejected.append({"id": envelope_id, "reason": "expired"})
-            self.schedule_flush(link)
-            return
-        link.acks.append(envelope_id)
+        link, plain = taken
         for frame in plain.get("frames") or []:
             s, m = (frame.get("s"), frame.get("m")) if isinstance(frame, dict) else (None, None)
             if not (isinstance(s, str) and s.startswith(APP_CHANNEL) and isinstance(m, dict)):
@@ -755,8 +872,8 @@ class Connector:
                 continue
             await self.app_call(link, s, m)
         self.schedule_flush(link)
-        if device.push_endpoint:
-            self.push_to(device)
+        if link.device.push_endpoint:
+            self.push_to(link.device)
 
     def queueable(self, name: str, m: Message) -> bool:
         """Only `_handler/app/http` calls to a route the installed version declares queued."""
@@ -785,7 +902,7 @@ class Connector:
             label=self.projects.label(agent) if self.projects else agent.name,
             project_id=project.id if project else None,
             project=project.name if project else None,
-            agent=(agent.name or live.runs.harness) if project else None,
+            agent=agent.name if project else None,
             origin=rec.origin,
             harness=rec.harness,
             scope=rec.scope,
@@ -845,7 +962,7 @@ class Connector:
                 frames.append(frame)
                 size += len(json.dumps(frame))
             link.size = max(0, link.size - size)
-            plain: Message = {"ts": int(time.time() * 1000), "frames": frames}
+            plain: Message = {"expires": int(time.time() * 1000) + UP_LIFETIME, "frames": frames}
             if link.acks:
                 plain["acks"], link.acks = link.acks, []
             if link.rejected:

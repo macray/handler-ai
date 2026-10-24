@@ -44,12 +44,12 @@ handler-cli = { workspace = true }
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# built-in agents' skills: other people's code, vendored as is (data, D.18)
+# the skills of Handler's needs: other people's code, vendored as is (data, D.18)
 extend-exclude = [
     "mistral-vibe-acp",
     ".venv-py312",
     "packages/web-ui",
-    "packages/control-plane/src/handler_control/data/builtin-agents",
+    "packages/control-plane/src/handler_control/data/handler-needs",
 ]
 
 [tool.ruff.lint]
@@ -77,7 +77,7 @@ include = [
     "packages/cli",
     "tests",
 ]
-exclude = ["packages/control-plane/src/handler_control/data/builtin-agents"]
+exclude = ["packages/control-plane/src/handler_control/data/handler-needs"]
 
 [tool.ty.terminal]
 error-on-warning = true

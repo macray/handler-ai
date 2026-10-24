@@ -2,4 +2,5 @@
 # the bytes 0..31, the gateway token is derived from it, the host token is a fake.
 tests/fixtures/remote-vectors.json:generic-api-key:3
 tests/fixtures/remote-vectors.json:generic-api-key:9
-tests/remote/test_remote.py:generic-api-key:228
+tests/remote/test_remote.py:generic-api-key:229
+

@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.remote/v1/remote-agent",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "An agent a device may start sessions with (its `remoteStart` is on, D.8).",
+  "description": "An agent a device may start sessions with (its `remoteStart` is on, D.8; or one you talk to\nin Chat).",
   "properties": {
     "id": {
       "title": "Id",

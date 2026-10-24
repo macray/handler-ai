@@ -10,8 +10,12 @@ accounts/<harness>    one account per harness, named after it; fake and echo-box
                       agent names one (`create_ad_hoc("fake", …)`)
 providers/            the extra ones only (a test's own); HANDLER_DATA_DIR is the daemon's own, too
 config/folders.toml   the work folders: the scope root (Daemon.scope_root)
-bindings/browser      the repository's playwright addon: its MCP server, for P8 tests (the fake
-                      sandbox ignores the addon's image)
+bindings/browser      the fake-browser addon: its MCP server, for P8 tests (the fake sandbox
+                      ignores the addon's image)
+config/addons/        fake-browser and fake-shop, installed from the official source
+official-source/      the official source (HANDLER_OFFICIAL_SOURCE): tests/fixtures/source/
+                      (made up; `source=` another, e.g. the registry), committed in a git
+                      repository of its own
 harnesses/echo-box    curl image, tagged as ECHO_IMAGE:latest because
                       descriptors name untagged images, B.6; tries example.com, then `cat` as
                       "agent": live container connection for egress tests
@@ -33,16 +37,18 @@ from pathlib import Path
 from typing import IO, Any
 
 import httpx
+import pytest
 from websockets.sync.client import connect
 
 from handler_contracts import ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX
 from handler_control import addon_install
 from handler_control.secrets import SecretStore
-from handler_harness import addons, catalog
+from handler_harness import catalog
 
 from . import dev_env
 from .acp_client import AcpClient
 from .fake_sandbox import FAKE_IMAGE
+from .sources import TEST_SOURCE, git_repo
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_AGENT = Path(__file__).with_name("fake_agent.py")
@@ -50,10 +56,11 @@ FAKE_SANDBOX = Path(__file__).with_name("fake_sandbox.py")
 UI_ORIGIN = "http://ui.test"
 FAKE_SECRET = "s3cr3t-value-for-redaction"
 
-# the fake harness's terminal program (D.16): what it was given, then one line typed, echoed;
-# exits 3. `stty size` follows a resize when sent `resize`.
+# the fake harness's terminal program (D.16): what it was given and where it runs, then one line
+# typed, echoed; exits 3. `stty size` follows a resize when sent `resize`.
 FAKE_TERMINAL_SCRIPT = (
-    '[ -t 0 ] && echo on-a-tty; echo "size:$(stty size)"; echo "TERM=$TERM"; echo "args:$*"; '
+    '[ -t 0 ] && echo on-a-tty; echo "size:$(stty size)"; echo "TERM=$TERM"; echo "pwd:$PWD"; '
+    'echo "args:$*"; '
     'while read -r line; do [ "$line" = resize ] && echo "size:$(stty size)"; '
     '[ "$line" = quit ] && exit 3; echo "got:$line"; done; exit 4'
 )
@@ -152,6 +159,22 @@ def _tag_echo_image() -> None:
         )
 
 
+def require_echo_box() -> None:
+    """Skip unless echo-box sandboxes can run here: the image (tagged when the daemon starts, so
+    checked in the test, not at collection) and a host whose check passes (A.8)."""
+    try:
+        exists = ["podman", "image", "exists", f"{ECHO_IMAGE}:latest"]
+        if subprocess.run(exists, check=False).returncode:
+            pytest.skip("podman or the echo-box image missing")
+    except OSError:
+        pytest.skip("podman missing")
+    binary = Path(sys.executable).parent / "handler-sandbox-podman"
+    found = subprocess.run([binary, "check"], capture_output=True, text=True, check=False)
+    if found.returncode:
+        failed = [i for i in json.loads(found.stdout)["items"] if i["required"] and not i["ok"]]
+        pytest.skip("sandboxes cannot run here: " + "; ".join(i["detail"] for i in failed))
+
+
 @dataclass
 class Daemon:
     base_url: str
@@ -205,7 +228,7 @@ class Daemon:
         What it widens is confirmed (D.8; tests of that call the API themselves)."""
         model = {k: body.pop(k) for k in ("harness", "provider", "model") if k in body}
         model |= {"account": account} if account else {}
-        body = {"models": [model], "scope": str(scope), "confirmRisks": True} | body
+        body = {"model": model, "scope": str(scope), "confirmRisks": True} | body
         with self.http() as c:
             r = c.post("/v1/agents", json=body)
             r.raise_for_status()
@@ -281,13 +304,14 @@ def _accounts(directory: Path, harnesses: Path, extra: dict[str, str]) -> Path:
     return directory
 
 
-def _install_catalog_addons(config: Path, names: tuple[str, ...]) -> None:
-    """Into `config`, as `handler addon add NAME` would (G.5): the folders and their lock."""
+def _install_official_addons(config: Path, source: Path, names: tuple[str, ...]) -> None:
+    """Into `config`, as `handler addon add NAME --from official` would (G.5, D.26): the folders
+    and their lock."""
     lock = ""
     for name in names:
-        shutil.copytree(addons.CATALOG_DIR / name, config / "addons" / name)
-        digest = addon_install.catalog_digest(name)
-        lock += f'[addons.{name}]\nsource = "catalog:{name}"\ndigest = "{digest}"\n'
+        shutil.copytree(source / "addons" / name, config / "addons" / name)
+        digest = addon_install.digest(source / "addons" / name)
+        lock += f'[addons.{name}]\nsource = "source:official/{name}"\ndigest = "{digest}"\n'
         lock += 'installedAt = "2026-10-03T00:00:00+00:00"\n'
     (config / "addons.lock.toml").write_text(lock)
 
@@ -296,8 +320,11 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
     extra_env: dict[str, str] | None = None,
     extra_accounts: dict[str, str] | None = None,
     extra_providers: dict[str, str] | None = None,
+    source: Path = TEST_SOURCE,
+    addons: tuple[str, ...] = ("fake-browser", "fake-shop"),
 ) -> Iterator[Daemon]:
-    """`extra_accounts`, `extra_providers`: name → TOML."""
+    """`extra_accounts`, `extra_providers`: name → TOML; `source`: the official source's folder,
+    `addons`: those of it installed."""
     tmp = Path(tempfile.mkdtemp(prefix="handlerd-"))
     scope_root = dev_env.scope_root() / f"daemon-{uuid.uuid4().hex[:8]}"
     scope_root.mkdir(parents=True)
@@ -338,10 +365,10 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
     bindings.mkdir(parents=True)
     (tmp / "config" / "folders.toml").write_text(f"roots = {json.dumps([str(scope_root)])}\n")
     (bindings / "browser.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "playwright"\n'
+        'apiVersion = "handler.binding/v1"\naddon = "fake-browser"\n'
     )
     if "HANDLER_ADDONS_DIR" not in (extra_env or {}):  # else the test brings its own addons
-        _install_catalog_addons(tmp / "config", ("playwright", "shopify"))
+        _install_official_addons(tmp / "config", source, addons)
     port = _free_port()
     env = (
         os.environ
@@ -357,6 +384,7 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
             "HANDLER_HARNESSES_DIR": str(harnesses),
             "HANDLER_ALLOWED_ORIGINS": UI_ORIGIN,
             "HANDLER_TEST_SANDBOX": str(fake_sandbox),
+            "HANDLER_OFFICIAL_SOURCE": str(git_repo(source, tmp / "official-source")),
         }
         | (extra_env or {})
     )

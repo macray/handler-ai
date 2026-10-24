@@ -83,9 +83,9 @@ def repository(target: str) -> str:
 
 
 def built_addons() -> list[addons.Addon]:
-    """The valid addons whose image is already built: a toolbox rebuild rebuilds those. An addon
-    never built is not in use, so it is not built behind the user's back; invalid ones are
-    reported by GET /v1/addons."""
+    """The valid addons whose image is already built: a toolbox rebuild rebuilds those (an addon
+    in use is built first when it is not, image_updates); invalid ones are reported by
+    GET /v1/addons."""
     found = []
     for name in addons.names():
         with contextlib.suppress(addons.InvalidAddonError):
@@ -248,6 +248,9 @@ class _Job:
         if target == TOOLBOX_TARGET:
             recipe = images.toolbox_recipe()
             base = self.built[images.TOOLBOX] = await self.image_build("build toolbox", recipe)
+            self.update(stage="check toolbox", step=None, steps=None)
+            warnings = await image_check.check_toolbox(self.store.settings, base, self.line)
+            self.update(warnings=warnings)
             harnesses = catalog.all_harnesses()
             addon_list = await asyncio.to_thread(built_addons)
         else:

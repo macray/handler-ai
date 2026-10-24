@@ -5,9 +5,15 @@ apiKey = { secret = "key" }
 [endpoints]
 responses = "https://api.openai.com/v1"
 openai-chat = "https://api.openai.com/v1"
+transcriptions = "https://api.openai.com/v1"  # speech to text, for Voice
 
 [[models]]
 id = "gpt-5"
 name = "GPT-5"
 reasoning = true
 images = true
+
+[[models]]
+id = "gpt-4o-mini-transcribe"
+name = "GPT-4o mini Transcribe (speech to text)"
+speech = true

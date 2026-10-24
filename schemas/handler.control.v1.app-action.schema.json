@@ -1,0 +1,52 @@
+{
+  "$id": "urn:handler.control/v1/app-action",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One of an app's actions (H.12), as its page and Ask's router see it.",
+  "properties": {
+    "name": {
+      "pattern": "^[a-z][a-z0-9-]{0,29}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "examples": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Examples",
+      "type": "array"
+    },
+    "by": {
+      "enum": [
+        "code",
+        "agent"
+      ],
+      "title": "By",
+      "type": "string"
+    },
+    "fields": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fields"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "by"
+  ],
+  "title": "AppAction",
+  "type": "object"
+}

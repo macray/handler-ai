@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ..support import dev_env
-from ..support.daemon import Daemon, start_daemon
+from ..support.daemon import Daemon, require_echo_box, start_daemon
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +39,7 @@ def test_listing(daemon: Daemon, root: Path) -> None:
 def test_selection_is_checked(daemon: Daemon) -> None:
     scope = daemon.make_scope()
     with daemon.http() as c:
-        body = {"models": [{"account": "echo-box"}], "scope": str(scope), "knowledge": ["../x"]}
+        body = {"model": {"account": "echo-box"}, "scope": str(scope), "knowledge": ["../x"]}
         r = c.post("/v1/agents", json=body)
         assert r.status_code == 400 and "outside the knowledge root" in r.text
 
@@ -48,16 +48,8 @@ def test_selection_is_checked(daemon: Daemon) -> None:
     assert daemon.create_ad_hoc("echo-box", scope, name="none")["knowledge"] == []
 
 
-def podman_ok() -> bool:
-    try:
-        exists = ["podman", "image", "exists", "localhost/handler-ai-test-echo-box:latest"]
-        return subprocess.run(exists, check=False).returncode == 0
-    except OSError:
-        return False
-
-
-@pytest.mark.skipif(not podman_ok(), reason="podman or the echo-box image missing")
 def test_agent_reads_knowledge_read_only(daemon: Daemon) -> None:
+    require_echo_box()
     ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), knowledge=["me"])
     client = daemon.connect(ad_hoc["acpUrl"])  # `cat` agent: nothing to initialize
     try:
@@ -124,7 +116,7 @@ def test_configure_create_browse_read(configurable: Daemon, tmp_path: Path) -> N
 
         # the new root applies at once to agents
         scope = configurable.make_scope()
-        body = {"models": [{"account": "echo-box"}], "scope": str(scope), "knowledge": ["me"]}
+        body = {"model": {"account": "echo-box"}, "scope": str(scope), "knowledge": ["me"]}
         assert c.post("/v1/agents", json=body).status_code == 201
 
         assert c.put("/v1/knowledge/root", json={"root": None}).json()["source"] == "default"

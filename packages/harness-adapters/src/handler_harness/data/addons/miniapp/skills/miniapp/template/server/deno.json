@@ -1,7 +1,0 @@
-{
-  "tasks": {
-    "dev": "HANDLER_APP_DATA=.data deno run --watch --allow-read=.,.data --allow-write=.data --allow-net=127.0.0.1:8787 --allow-env main.ts",
-    "test": "deno test --allow-read=. --allow-env"
-  },
-  "compilerOptions": { "strict": true }
-}

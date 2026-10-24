@@ -3,14 +3,14 @@
 HANDLER_PORT                  listening port on 127.0.0.1 (default 7430)
 HANDLER_CONFIG_DIR            token file (default ~/.config/handler-ai)
 HANDLER_STATE_DIR             agents, sessions, apps (default ~/.local/state/handler-ai)
-HANDLER_DATA_DIR              the secret store, mini apps' versions, data
+HANDLER_DATA_DIR              the secret store, apps' versions, data
                               (default ~/.local/share/handler-ai)
 HANDLER_ACCOUNTS_DIR          accounts (harness logins and keys) (default <config>/accounts)
 HANDLER_PROVIDERS_DIR         providers (endpoints, keys, models) (default <config>/providers)
 HANDLER_BINDINGS_DIR          bindings (addon + instance + credentials) (default <config>/bindings)
 HANDLER_AUTOMATIONS_DIR       automations (one folder each, I.1) (default <config>/automations)
 HANDLER_CACHE_DIR             the toolbox's global caches (default ~/.cache/handler-ai)
-HANDLER_RUNTIME_DIR           mini app backends' sockets
+HANDLER_RUNTIME_DIR           app backends' sockets
                               (default $XDG_RUNTIME_DIR/handler-ai, else <state>)
 HANDLER_KNOWLEDGE_DIR         knowledge root: folders agents can be given; when unset, the root
                               set from the web UI (<config>/knowledge.toml), else ~/knowledge
@@ -20,7 +20,12 @@ HANDLER_TEMPLATES_DIR         starting points for providers (default: this packa
 HANDLER_SESSION_IDLE_TIMEOUT  seconds before an unattached, idle session is stopped (default 1800)
 HANDLER_SESSION_MAX_ATTACH    clients attached to one session at once; beyond, the oldest is
                               closed (default 8)
-HANDLER_APP_IDLE_TIMEOUT      seconds before an unused mini app's backend is stopped (default 600)
+HANDLER_APP_IDLE_TIMEOUT      seconds before an unused app's backend is stopped (default 600)
+HANDLER_RUN_WAIT_TIMEOUT      seconds a job's run waits for its agent's run in progress before it
+                              fails (default 1800)
+HANDLER_OFFICIAL_SOURCE       the official source's repository (D.26): its https:// URL, or a local
+                              git repository, to try one before it is published (default
+                              OFFICIAL_SOURCE_URL)
 HANDLER_TERMINAL              the terminal an account's login window opens in, a command line the
                               command is appended to (default: the first found of
                               terminal.TERMINALS)
@@ -34,6 +39,8 @@ from handler_contracts import DEFAULT_PORT, TOKEN_FILE_NAME
 
 HOST = "127.0.0.1"  # invariant 5: loopback only
 TEMPLATES = Path(__file__).resolve().parent / "data" / "templates"  # platform data, read-only
+# the official source (D.26): the git repository of the apps, agents and addons Handler offers
+OFFICIAL_SOURCE_URL = "https://github.com/macray/handler-ai-source"
 # the built web UI (scripts/build-web-ui.sh writes it here; the wheel ships it)
 WEB_UI = Path(__file__).resolve().parent / "web-ui"
 
@@ -60,6 +67,7 @@ class Settings:
     session_max_attach: int = 8
     data_dir: Path = Path.home() / ".local" / "share" / "handler-ai"
     app_idle_timeout: float = 600.0
+    run_wait_timeout: float = 1800.0
     knowledge_dir: Path | None = None  # forced by HANDLER_KNOWLEDGE_DIR; see knowledge.root
     templates_dir: Path = TEMPLATES
     accounts_dir: Path = Path.home() / ".config" / "handler-ai" / "accounts"
@@ -69,6 +77,7 @@ class Settings:
     cache_dir: Path = Path.home() / ".cache" / "handler-ai"  # the toolbox's global caches
     # sockets: short paths, tmpfs
     runtime_dir: Path = Path.home() / ".local" / "state" / "handler-ai"
+    official_source: str = OFFICIAL_SOURCE_URL
 
     @property
     def host(self) -> str:
@@ -122,8 +131,10 @@ class Settings:
             cache_dir=Path(os.environ.get("HANDLER_CACHE_DIR", xdg_cache / "handler-ai")),
             runtime_dir=Path(os.environ.get("HANDLER_RUNTIME_DIR", runtime_dir)),
             app_idle_timeout=float(os.environ.get("HANDLER_APP_IDLE_TIMEOUT", "600")),
+            run_wait_timeout=float(os.environ.get("HANDLER_RUN_WAIT_TIMEOUT", "1800")),
             knowledge_dir=Path(forced)
             if (forced := os.environ.get("HANDLER_KNOWLEDGE_DIR"))
             else None,
             templates_dir=Path(os.environ.get("HANDLER_TEMPLATES_DIR", TEMPLATES)),
+            official_source=os.environ.get("HANDLER_OFFICIAL_SOURCE", OFFICIAL_SOURCE_URL),
         )

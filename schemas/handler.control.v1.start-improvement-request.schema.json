@@ -1,0 +1,31 @@
+{
+  "$id": "urn:handler.control/v1/start-improvement-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "goal": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "maxAttempts": {
+      "default": 5,
+      "maximum": 10,
+      "minimum": 1,
+      "title": "Maxattempts",
+      "type": "integer"
+    },
+    "maxMinutes": {
+      "default": 15,
+      "maximum": 240,
+      "minimum": 1,
+      "title": "Maxminutes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "goal"
+  ],
+  "title": "StartImprovementRequest",
+  "type": "object"
+}

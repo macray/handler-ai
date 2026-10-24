@@ -18,7 +18,7 @@
   }: {
     projectId?: string; // none: an ad-hoc agent
     value?: string[];
-    pending?: string[]; // a built-in agent's skills, added to the library when it is saved (D.18)
+    pending?: string[]; // the skills of the definition it is set up from, added to the library when it is saved (D.18)
   } = $props();
 
   let skills = $state<SkillInfo[]>([]);
@@ -49,7 +49,7 @@
     if (keep.length !== value.length) value = keep;
   });
 
-  // a built-in agent's skills not in the library yet
+  // the definition's skills not in the library yet
   const newOnes = $derived(loaded ? pending.filter((name) => !skills.some((s) => s.name === name)) : []);
   const rows = $derived(given.length + selectable.length + newOnes.length);
   const FILTER_FROM = 8; // rows from which a filter is offered
@@ -102,7 +102,7 @@
       {#each newOnes.filter((name) => shown({ name })) as name (name)}
         <PickRow
           {name}
-          description="Comes with this built-in agent: added to your library when you save."
+          description="Comes with what you set up: added to your library when you save."
           badge="new"
           checked={value.includes(name)}
           onchange={(checked) => toggle(name, checked)}

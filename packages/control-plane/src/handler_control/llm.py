@@ -1,18 +1,24 @@
-"""The `llm/v1` service's connector, built into handlerd (I.5): one model call on a provider, with
-its key from the secret store (it never enters a sandbox).
+"""The `llm/v1` service's connector, built into handlerd (I.5): model calls on a provider, with
+its key from the secret store (it never enters a sandbox). Text in, text out: no tools are ever
+offered to the model, and an answer asking for one is refused (D.18, I.5).
 
-    complete    "provider/model" + LlmRequest → LlmResponse: the provider's `openai-chat`
-                endpoint (else its `anthropic` one); with a schema, the JSON taken from the
-                answer and checked, and asked once more with the error when it does not match
+    complete    "provider/model" + LlmRequest → LlmResponse (a script's call): the provider's
+                `openai-chat` endpoint (else its `anthropic` one); with a schema, the JSON taken
+                from the answer and checked, and asked once more with the error when it does not
+                match
+    converse    a conversation → the model's next message (an agent on the model alone, D.18)
+    check       a provider and model the model alone can run on (when an agent is saved)
 
 Errors are those of `llm/v1` (services.ServiceError): `unavailable` when the provider fails or
-cannot be reached. The caller (the router) enforces the selection and the limits.
+cannot be reached, `refused` when its answer asks for a tool. The caller (the router, the model
+agent) enforces the selection and the limits.
 """
 
 import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -32,6 +38,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 MAX_TOKENS = 8192  # an answer's, when the provider's model does not say (anthropic needs one)
 FENCED = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n```", re.S)
 ERROR_CHARS = 300  # of a provider's error told
+# an anthropic answer's blocks that are text; any other (a tool call) is refused
+ANTHROPIC_TEXT_BLOCKS = ("text", "thinking", "redacted_thinking")
+TOOL_REFUSED = "the model asked for a tool: it has none, text in and text out only"
 
 
 @dataclass(frozen=True)
@@ -50,22 +59,64 @@ class Target:
 
 
 def target(settings: Settings, model: str) -> Target:
+    """A script's "provider/model" (I.5), ready to call."""
     provider_name, _, model_id = model.partition("/")
-    loaded = providers.get(settings.providers_dir, provider_name)
-    provider: Provider | None = loaded.provider
-    if provider is None:
-        raise ServiceError("unavailable", f"provider {provider_name}: {loaded.error}")
+    return target_of(settings, provider_name, model_id)
+
+
+def target_of(settings: Settings, provider_name: str, model_id: str | None) -> Target:
+    """A provider's model (None: its first), ready to call: its endpoint and its key."""
+    provider = _provider(settings.providers_dir, provider_name)
     found = provider.endpoint_for(PROTOCOLS)
-    described = provider.model_named(model_id)
+    chat = provider.chat_models
+    described = provider.model_named(model_id) if model_id else (chat[0] if chat else None)
     if found is None or described is None:
-        raise ServiceError("unavailable", f"{model}: not a model the llm service can call")
+        raise ServiceError("unavailable", f"{provider_name}/{model_id}: not a model it can call")
     store = secrets.SecretStore(settings.data_dir)
     try:
         key = secrets.resolve(provider.api_key, store) if provider.api_key else None
     except secrets.SecretError as e:
         raise ServiceError("unavailable", f"provider {provider_name}: {e}") from None
     protocol, endpoint = found
-    return Target(protocol, from_host(endpoint), model_id, key, described.max_output or MAX_TOKENS)
+    max_tokens = described.max_output or MAX_TOKENS
+    return Target(protocol, from_host(endpoint), described.id, key, max_tokens)
+
+
+def check(providers_dir: Path, provider_name: str, model_id: str | None) -> None:
+    """ValueError unless the model alone can run on that provider's model (D.18): the provider
+    loads, speaks one of PROTOCOLS and serves the model."""
+    try:
+        provider = _provider(providers_dir, provider_name)
+    except ServiceError as e:
+        raise ValueError(e.message) from None
+    if provider.endpoint_for(PROTOCOLS) is None:
+        raise ValueError(
+            f"provider '{provider_name}' speaks {', '.join(provider.endpoints)}: the model alone "
+            f"needs {' or '.join(PROTOCOLS)}"
+        )
+    if model_id is not None and provider.model_named(model_id) is None:
+        served = ", ".join(m.id for m in provider.chat_models)
+        raise ValueError(
+            f"provider '{provider_name}' has no model '{model_id}' (it serves: {served})"
+        )
+
+
+def secret_values(settings: Settings, provider_name: str) -> list[str]:
+    """Invariant 4: the provider's key, to redact; [] when it cannot be read (no call can be
+    made either)."""
+    try:
+        provider = _provider(settings.providers_dir, provider_name)
+        store = secrets.SecretStore(settings.data_dir)
+        return [secrets.resolve(provider.api_key, store)] if provider.api_key else []
+    except (ServiceError, secrets.SecretError):
+        return []
+
+
+def _provider(providers_dir: Path, name: str) -> Provider:
+    loaded = providers.get(providers_dir, name)
+    if loaded.provider is None:
+        raise ServiceError("unavailable", f"provider {name}: {loaded.error}")
+    return loaded.provider
 
 
 def from_host(endpoint: str) -> str:
@@ -111,7 +162,8 @@ def json_in(answer: str) -> Any:
 async def chat(
     client: httpx.AsyncClient, t: Target, system: str | None, messages: list[dict[str, str]]
 ) -> tuple[str, int, int]:
-    """One request: (the answer's text, input tokens, output tokens)."""
+    """One request: (the answer's text, input tokens, output tokens). Its body offers no tools;
+    an answer calling one anyway is `refused`."""
     if t.protocol == "openai-chat":
         headers = {"Authorization": f"Bearer {t.key}"} if t.key else {}
         sent = ([{"role": "system", "content": system}] if system else []) + messages
@@ -137,9 +189,14 @@ async def chat(
     try:
         data = r.json()
         if t.protocol == "openai-chat":
-            text = data["choices"][0]["message"]["content"] or ""
+            message = data["choices"][0]["message"]
+            if message.get("tool_calls") or message.get("function_call"):
+                raise ServiceError("refused", TOOL_REFUSED)
             usage = data.get("usage") or {}
+            text = message["content"] or ""
             return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+        if any(b.get("type") not in ANTHROPIC_TEXT_BLOCKS for b in data["content"]):
+            raise ServiceError("refused", TOOL_REFUSED)
         text = "".join(b.get("text", "") for b in data["content"] if b.get("type") == "text")
         usage = data.get("usage") or {}
         return text, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
@@ -192,3 +249,29 @@ async def complete(settings: Settings, request: LlmRequest, timeout: float) -> C
         ms=int((time.monotonic() - started) * 1000),
     )
     return Completion(response, repaired)
+
+
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    usage: LlmUsage
+    ms: int
+
+
+async def converse(
+    settings: Settings,
+    provider: str,
+    model: str | None,
+    system: str | None,
+    messages: list[dict[str, str]],
+    *,
+    timeout: float,
+) -> Reply:
+    """The model's next message in a conversation (`messages`: user and assistant turns, the
+    last the user's), for an agent on the model alone (D.18)."""
+    started = time.monotonic()
+    t = target_of(settings, provider, model)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        text, tokens_in, tokens_out = await chat(client, t, system, messages)
+    usage = LlmUsage(in_tokens=tokens_in, out_tokens=tokens_out)
+    return Reply(text, usage, int((time.monotonic() - started) * 1000))

@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/addon-preview-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A source to look at (G.5): \"catalog:<name>\", an absolute folder path, an https:// URL of\na .tar.gz archive.",
+  "description": "A source to look at (G.5): \"source:<source>/<name>\" (an addon of a source, D.26), an\nabsolute folder path, an https:// URL of a .tar.gz archive.",
   "properties": {
     "source": {
       "maxLength": 2048,

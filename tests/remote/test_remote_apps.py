@@ -1,4 +1,4 @@
-"""Mini apps from paired devices (contract H.8, docs/dev/design/miniapps.md §5.2): a real gateway,
+"""Apps from paired devices (contract H.8, docs/dev/design/apps.md §5.2): a real gateway,
 devices in Python, the test app in podman. Persons and scopes: the owner's phone and a family
 member's (apps only); an app reaches the persons it is shared with, and nobody else."""
 
@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ..apps.conftest import api, copy_fixture, requires_podman
+from ..apps.conftest import add_app, api, copy_fixture, requires_podman
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
 from ..support.remote import Device, DeviceError, Gateway, start_gateway
@@ -40,8 +40,8 @@ def daemon(gateway: Gateway, data_root: Path) -> Iterator[Daemon]:
     for d in start_daemon(extra_env={"HANDLER_DATA_DIR": str(data_root)}):
         body = {"gatewayUrl": gateway.url, "hostToken": gateway.host_token}
         assert api(d, "PUT", "/v1/remote/gateway", body).status_code == 200
-        source = copy_fixture("miniapp", data_root)
-        assert api(d, "POST", "/v1/apps", {"sourceDir": str(source)}).status_code == 201
+        source = copy_fixture("app", data_root)
+        assert add_app(d, source).status_code == 201
         r = api(d, "POST", "/v1/apps/counter/deploy")
         assert r.status_code == 200, r.text
         yield d

@@ -1,7 +1,7 @@
 # Your phone: the gateway
 
 The gateway (`handler-gateway`, in [`remote-gateway/`](../../remote-gateway/README.md)) lets a phone or
-tablet control shared agent sessions and mini apps. Handler never opens a port: it polls the gateway
+tablet control shared agent sessions and apps. Handler never opens a port: it polls the gateway
 outbound, and the phone talks to the same gateway. Everything relayed is end-to-end encrypted;
 the gateway cannot read or forge it. How it is built and what a
 compromised gateway can do: [remote control design](../dev/design/remote.md).
@@ -47,7 +47,7 @@ curl http://127.0.0.1:7431/v1/health
 ```
 
 It listens on `127.0.0.1:7431` only; TLS comes in step 2. The `handler-gateway` volume holds its
-state (`/state/state.json` and `/state/state.queue.json`).
+state (`/state/state.json` and `/state/state.queue/`).
 
 To keep it running across reboots, replace the `podman run` with a Quadlet unit.
 `~/.config/containers/systemd/handler-gateway.container`:
@@ -175,20 +175,21 @@ handler-gateway remove-host h_…   # a host and all its devices
 
 In the Handler web UI (`handler ui`) on your machine:
 
-1. **Settings → Remote**: the gateway URL (`https://<gateway>`) and the host token. Saved
-   in `~/.config/handler-ai/remote.json` (0600).
-2. **Settings → Remote → Pair a device**: scan the QR code with the phone, then **Pair**. The key
-   travels in the link's `#fragment`, which never reaches a server. Devices can only be paired
-   from here, never from the gateway.
-   - **New device** is just a label (`phone`, `alice's tablet`).
-   - **For** is the *person* the device belongs to. Leave it empty for your own devices (person
-     `owner`: sessions and apps). Enter a name (`alice`; lowercase letters, digits, `-`, `_`) for a
-     family member's device: it reaches mini apps only, never a session.
+1. **Settings → Remote**: the gateway URL (`https://<gateway>`) and the host token, then
+   **Connect**. Saved in `~/.config/handler-ai/remote.json` (0600).
+2. **Settings → Remote → Pair a device**: a dialog asks who the device is for and its name, then
+   shows a QR code: scan it with the phone, then tap **Pair**. The key travels in the link's
+   `#fragment`, which never reaches a server, and the code is shown only once. Devices can only
+   be paired from here, never from the gateway.
+   - **Who is it for?** *Me* for your own devices (sessions and apps). *A family member*, with
+     their name (`alice`; lowercase letters, digits, `-`, `_`): the device reaches apps only,
+     never a session.
+   - **Device name** is just a label (`phone`, `alice-tablet`).
 3. In a session, turn on the **Remote** switch. The phone lists the session.
 
-## 5. Use a mini app from the phone
+## 5. Use an app from the phone
 
-[Mini apps](mini-apps.md) are reached through the same gateway, end-to-end encrypted like
+[Apps](apps.md) are reached through the same gateway, end-to-end encrypted like
 sessions. The app still runs only on your machine: there is no URL of its own from outside
 (`http://<name>.localhost:7430/` works on the machine itself only).
 
@@ -204,8 +205,24 @@ When your machine is off, the phone shows the last copy of the app's UI it recei
 with "host offline", except routes the app declares `queued`, which wait at the gateway (up to
 7 days) and run when the machine is back.
 
-Status lights (sidebar and each session's switch): 🟢 ok · ⚪ idle (nothing shared, Handler not
-polling) · 🔴 unreachable · 🟠 unauthorized (host token refused).
+## 6. Ask from the phone
+
+With Ask set up on the computer (its router, the first time you open Ask in the web UI) and an
+app that can be asked something (Planner), your own phone opens on **Ask**: type what you want
+("tomorrow I call the bank at 10"); Handler picks the app that does it and answers. An app's
+agent that takes a minute answers there and in your inbox (pushed, when notifications are on).
+When no app does it, **Start a chat about it** opens a new session on Chat with your words
+typed. **Home** has the rest: shared sessions, apps, your inbox, and **New session**: on an agent
+of a project that **Can be started from your phone**, or on someone you talk to in Chat (they
+have no folder, so your own phone may start them, as it asks). A family member's phone has no
+Ask and starts nothing: it runs apps' actions as you. With Voice set up (Settings → Voice), hold the
+microphone to speak, and *Dictate* in New session writes down what you say the same way. See
+[Ask](ask.md#speaking).
+
+Status lights (Settings → Remote and each session's switch): 🟢 ok · ⚪ idle (nothing shared,
+Handler not polling) · 🔴 unreachable · 🟠 unauthorized (host token refused). The menu shows a
+phone on each shared session, and says when the gateway is unreachable or refused while a session
+is shared; nothing otherwise.
 
 ## Operations
 
@@ -213,7 +230,7 @@ polling) · 🔴 unreachable · 🟠 unauthorized (host token refused).
 (or `podman rm -f` + `podman run`). Without a container: `uv tool install --reinstall
 ./remote-gateway`, rebuild the client, restart the service. A restart loses envelopes in transit
 (in memory, 10 min at most); Handler and the phones resync from the session log on their own.
-Envelopes queued for an offline host (`state.queue.json`, up to 7 days) survive.
+Envelopes queued for an offline host (`state.queue/`, up to 7 days) survive.
 
 **Back up** the state: the `handler-gateway` volume, or `~/.local/state/handler-gateway/`. It only
 holds token hashes and still-encrypted queued envelopes, nothing readable.

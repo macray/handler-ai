@@ -94,31 +94,47 @@ CONTROL = REPO / "packages" / "control-plane" / "src" / "handler_control"
 CONTROL_LAYERS: list[tuple[str, set[str]]] = [
     ("base", {"__init__", "settings", "files"}),
     ("migrations", {"migrations"}),
-    ("host", {"sandbox_process", "runtime", "display", "desktop", "shortcuts", "terminal"}),
+    ("host", {"sandbox_process", "runtime", "display", "desktop", "terminal"}),
     (
         "data",
         {
             *("accounts", "providers", "bindings", "secrets", "skills", "folders"),
-            "contexts",
+            "areas",
             "skill_sources",
             "interfaces",
-            *("skill_scan", "builtin_agents"),
-            "addon_install",
+            *("skill_scan", "definitions", "agents_files", "handler_needs"),
+            *("sources", "addon_install"),
             *("knowledge", "config_files"),
             *("automation_config", "transcript", "services"),
             *("session_files", "git_read"),
             *("agents", "projects", "agent_state", "caches"),
         },
     ),
-    ("launch", {"launcher", "access", "compose", "addons", "llm", "service_router"}),
+    (
+        "launch",
+        {
+            "launcher",
+            "access",
+            "compose",
+            "addons",
+            "llm",
+            "service_router",
+            "model_agent",
+            "transcribe",
+        },
+    ),
     (
         "features",
         {
             *("sessions", "relay", "policy", "terminals"),
-            "checks",
+            "agent_service",
+            "save_rules",
             *("builds", "image_check", "image_updates"),
-            *("apps", "app_http", "app_api", "schedules", "inbox"),
+            *("apps", "app_http", "app_api", "app_runs", "schedules", "inbox"),
+            *("agent_checks", "improvements", "uses"),
             "automations",
+            "assistant",
+            "voice",
         },
     ),
     ("remote", {"remote", "remote_crypto", "webpush", "app_remote"}),
@@ -170,3 +186,12 @@ def test_control_modules_import_only_their_layer_or_below() -> None:
         if LAYER[imported] > LAYER[name]
     ]
     assert violations == []
+
+
+def test_the_model_alone_reaches_no_sandbox_and_no_tool() -> None:
+    """An agent on the model alone is text in, text out (D.18): its agent may only call the model
+    (llm), read its knowledge and settings. Anything else (the service router, a launcher, an
+    addon, a sandbox) would be a way to a tool."""
+    modules = control_modules()
+    [path] = modules["model_agent"]
+    assert control_imports(path, set(modules)) <= {"knowledge", "llm", "services", "settings"}

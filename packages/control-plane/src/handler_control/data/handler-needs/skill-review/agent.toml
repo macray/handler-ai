@@ -1,0 +1,12 @@
+# Handler's Skill reviewer (for its need: need.toml). Its instructions: instructions.md; its
+# interface: interface.json.
+
+[agent]
+name = "Skill reviewer"
+description = "Reviews a skill: reads it, never runs it"
+# it reads text written by someone else, maybe to manipulate it: no host but its model's, the
+# skill mounted read-only; it runs unattended, so it never asks (D.18): its sandbox limits it
+network = "filtered"
+egress = "enforce"
+confinement = "strict"
+permissions = "bypass"

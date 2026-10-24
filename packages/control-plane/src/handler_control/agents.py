@@ -1,30 +1,36 @@
-"""Agents — an agent is a list of models, each a harness on an account or a provider (what, one
-per session) working in a folder (where), with its own settings: network (mode, enforcement,
-extra allowed hosts), confinement, permission mode, bindings (G.3), knowledge folders (D.5) and a
-display (A.6). A registered endpoint that starts nothing; editable, with a stable id.
+"""Agents — an agent is a model, a harness on an account or a provider (what; a session may run
+with another, for that session only) working in a folder (where), with its own settings: network
+(mode, enforcement, extra allowed hosts), confinement, permission mode, bindings (G.3), knowledge
+folders (D.5) and a display (A.6). A registered endpoint that starts nothing; editable, with a
+stable id.
 
-An agent of a project (projects.py) has a `project_id`: what it gets from its project (folder,
-caches, skills) is resolved into its record, so what launches sessions and sandboxes never needs
-to know about projects. An ad-hoc agent has none (D.1: `handler run`, `handler acp`, `handler
-terminal` outside projects, or made in the web UI); it may have no folder either: each of its
-sessions then works in a folder of its own (D.18).
+Its home, given at creation and never changed: a project (`project_id`, projects.py: what it
+gets from its project, folder, caches, skills, is resolved into its record, so what launches
+sessions and sandboxes never needs to know about projects), an app (`app`: one of its parts,
+H.14), Chat (`chat`: someone you talk to, D.1), or none: outside projects (D.1: `handler
+run`, `handler acp`, `handler terminal`, or made on the Other folders page). An agent of no
+project may have no folder: each of its sessions then works in a folder of its own (D.18).
 
 Each ACP connection to an agent gets its own sandbox (see launcher.py). The registry persists the
 definitions (agents.json) and keeps, in memory, the live connections and recent egress events.
 """
 
+import asyncio
 import json
 import secrets
+import subprocess
 from collections import deque
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 from pydantic import AwareDatetime, ConfigDict, Field
 
 from handler_contracts import (
     AbsolutePath,
+    AgentOrigin,
     AgentSettings,
     CacheSharing,
     Enforcement,
@@ -35,6 +41,8 @@ from handler_contracts import (
 from . import sandbox_process
 
 MAX_EVENTS = 500
+# a connection this young whose launcher runs may not have made its instance yet (A.4)
+LAUNCHER_START_SECONDS = 10.0
 
 
 @dataclass
@@ -48,46 +56,55 @@ class LiveConnection:
 
 
 class RunsAs(ModelAccess):
-    """One of an agent's models, checked (E1): its harness resolved."""
+    """A model an agent runs with, checked (E1): its harness resolved (None: the model alone,
+    D.18)."""
 
-    harness: HarnessName
+    harness: HarnessName | None
 
-    def same_access(self, harness: str, account: str | None, provider: str | None) -> bool:
+    def same_access(self, harness: str | None, account: str | None, provider: str | None) -> bool:
         return (self.harness, self.account, self.provider) == (harness, account, provider)
 
 
-class ModelNotListedError(ValueError):
-    """A model the agent does not list (a session or a terminal may still run with it, D.19)."""
+class NotAgentsModelError(ValueError):
+    """Another model than the agent's (a session or a terminal may still run with it, D.19)."""
 
 
 class CheckedSettings(AgentSettings):
-    """An agent's settings once checked (E1, D.13, G3, D.5, A.6, D.18): each model's harness
+    """An agent's settings once checked (E1, D.13, G3, D.5, A.6, D.18): its model's harness
     resolved, the folder it works in known (an ad-hoc agent's scope, its project's folder; None:
     a folderless agent's sessions each get their own)."""
 
-    models: list[RunsAs]
+    model: RunsAs
     scope: AbsolutePath | None
 
     def runs_as(self, given: ModelAccess | None = None) -> RunsAs:
         """The model a session runs with: `given` (its harness may be left out, an account's),
-        else the first. ModelNotListedError when the agent does not list it."""
+        else the agent's. NotAgentsModelError when `given` is not the agent's."""
+        m = self.model
         if given is None:
-            return self.models[0]
-        for m in self.models:
-            same = (given.account, given.provider, given.model) == (m.account, m.provider, m.model)
-            if same and given.harness in (None, m.harness):
-                return m
-        raise ModelNotListedError(f"the agent has no model {describe(given)}")
+            return m
+        same = (given.account, given.provider, given.model) == (m.account, m.provider, m.model)
+        if same and given.harness in (None, m.harness):
+            return m
+        raise NotAgentsModelError(f"the agent's model is not {describe(given)}")
 
     def resumes_as(
-        self, harness: str, account: str | None, provider: str | None, model: str | None
+        self,
+        harness: str | None,
+        account: str | None,
+        provider: str | None,
+        model: str | None,
+        *,
+        agents_model: bool,
     ) -> RunsAs:
-        """The model a session started with that harness, account or provider and model resumes
-        with: the agent's on the same harness and access (its model may have changed since), else
-        the session's own: a session may run with a model the agent does not list (D.19)."""
-        same = [m for m in self.models if m.same_access(harness, account, provider)]
+        """The model a session started with that harness, account or provider and model starts
+        or resumes with: the same, when it is still the agent's or when it was picked for the
+        session alone (D.19); else, started with the agent's model since changed, the agent's
+        new one when on the same harness and access (else the session's own)."""
         own = RunsAs(harness=harness, account=account, provider=provider, model=model)
-        return next((m for m in same if m.model == model), same[0] if same else own)
+        if own == self.model or not agents_model:
+            return own
+        return self.model if self.model.same_access(harness, account, provider) else own
 
 
 def describe(m: ModelAccess) -> str:
@@ -97,30 +114,23 @@ def describe(m: ModelAccess) -> str:
     return f"{harness}{access}" + (f" ({m.model})" if m.model else "")
 
 
-class AdHocOwn(NamedTuple):
-    """What an ad-hoc agent has besides its settings (an agent of a project: through it)."""
-
-    description: str | None = None
-    instructions: str | None = None
-    skills: list[str] = []
-    origin: str | None = None  # the built-in agent it is (builtin_agents.py)
-
-
 class AgentRecord(CheckedSettings):
     """A registered agent: its settings, who it is, and its live state (not persisted)."""
 
     model_config = ConfigDict(frozen=False)
 
     id: str = ""
-    name: str | None = None  # its name (ad-hoc agents: optional)
-    project_id: str | None = None  # the project it is an agent of (projects.py)
+    name: str | None = None  # its name (of no project: optional)
+    project_id: str | None = None  # its home: the project it is an agent of (projects.py)
+    app: str | None = None  # its home: the app it is one of the parts of (H.14)
+    chat: bool = False  # its home: Chat, someone you talk to (D.1)
     description: str | None = None  # an agent's: what it is for
     instructions: str | None = None  # an agent's: sent before the request starting a session
     remote_start: bool = False  # an agent's: paired devices may start sessions with it
     caches: CacheSharing = "global"  # resolved: its project's choice (caches.py)
-    context: str | None = None  # resolved: its project's context (contexts.py, D.19)
+    area: str | None = None  # resolved: its project's area (areas.py, D.19)
     skills: list[str] = []  # the skills it picked (D.17)
-    origin: str | None = None  # the built-in agent it is, at most one each (D.18)
+    origin: AgentOrigin | None = None  # what it is set up from (D.23, H.2)
     project_skills: list[str] = []  # resolved: its project's (D.17)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     last_used_at: AwareDatetime | None = None
@@ -145,6 +155,7 @@ class AgentRegistry:
     def __init__(self, state_dir: Path) -> None:
         self.file = state_dir / "agents.json"
         self.agents: dict[str, AgentRecord] = {}
+        self.listeners: list[Callable[[], None]] = []  # told after each save (image_updates)
         self._load()
 
     def _load(self) -> None:
@@ -160,29 +171,21 @@ class AgentRegistry:
         records = [r.model_dump(mode="json", by_alias=True) for r in self.agents.values()]
         tmp.write_text(json.dumps(records, indent=2))
         tmp.replace(self.file)
+        for listener in self.listeners:
+            listener()
 
-    def ad_hoc(self, scope: str | None, name: str | None) -> AgentRecord | None:
-        """The ad-hoc agent working in `scope` under `name` (None: the unnamed one; names compared
-        without case): an ad-hoc agent is its folder and its name (D.1)."""
+    def outside(self, scope: str | None, name: str | None) -> AgentRecord | None:
+        """The agent of no home working in `scope` under `name` (None: the unnamed one; names
+        compared without case): outside projects, an agent is its folder and its name (D.1)."""
         key = (name or "").strip().lower()
         for record in self.agents.values():
             same = (record.scope, (record.name or "").lower()) == (scope, key)
-            if record.project_id is None and same:
+            if record.project_id is None and record.app is None and not record.chat and same:
                 return record
         return None
 
-    def create(
-        self, settings: CheckedSettings, name: str | None = None, own: AdHocOwn | None = None
-    ) -> AgentRecord:
-        """A new ad-hoc agent; its settings already checked (scope, bindings, knowledge), its
-        folder and name not taken (`ad_hoc`)."""
-        name = (name or "").strip() or None
-        return self.add(
-            AgentRecord(**settings.model_dump(), name=name, **(own or AdHocOwn())._asdict())
-        )
-
     def add(self, record: AgentRecord) -> AgentRecord:
-        """Register it under a new id (not idempotent: agents of projects)."""
+        """Register it under a new id; its settings already checked (agent_service.py)."""
         aid = secrets.token_hex(6)
         while aid in self.agents:
             aid = secrets.token_hex(6)
@@ -191,19 +194,10 @@ class AgentRegistry:
         self.save()
         return record
 
-    def update(
-        self,
-        record: AgentRecord,
-        settings: CheckedSettings,
-        name: str | None,
-        own: AdHocOwn | None = None,
-    ) -> None:
-        """Replace its settings and name (an ad-hoc agent: and its own fields); live connections
-        keep running (the caller applies what can change live)."""
-        record.set_settings(settings)
-        record.name = (name or "").strip() or None
-        if own is not None:
-            record.description, record.instructions, record.skills, record.origin = own
+    def set_instructions(self, record: AgentRecord, instructions: str | None) -> None:
+        """Only its instructions changed (an improvement's attempt kept, D.21), already checked
+        against its form (save_rules.check_instructions)."""
+        record.instructions = instructions
         self.save()
 
     def get(self, aid: str) -> AgentRecord | None:
@@ -231,6 +225,12 @@ class AgentRegistry:
 # ── live connections (A.4) ──────────────────────────────────────────────
 
 
+def chats(agents: Iterable[AgentRecord]) -> list[AgentRecord]:
+    """Who you talk to in Chat (D.1), the one used last first."""
+    found = [a for a in agents if a.chat]
+    return sorted(found, key=lambda a: a.last_used_at or a.created_at, reverse=True)
+
+
 async def apply_network(record: AgentRecord, egress: Enforcement | None = None) -> list[str]:
     """On an agent's running filtered sandboxes: the allow-list as now set (the required
     hosts as they started, its own as now), and `egress` if given (A.4). Other changes (mode,
@@ -240,7 +240,7 @@ async def apply_network(record: AgentRecord, egress: Enforcement | None = None) 
         if conn.egress_base is None:
             continue  # not a filtered sandbox
         allow = sorted(set(conn.egress_base) | set(record.allow))
-        error = await sandbox_process.set_allow(conn.sandbox, allow)
+        error = await _on_sandbox(conn, sandbox_process.set_allow, allow)
         if error is None and egress:
             error = await sandbox_process.set_egress(conn.sandbox, egress)
         if error:
@@ -252,6 +252,25 @@ async def switch_egress(record: AgentRecord, egress: Enforcement) -> list[str]:
     """The enforcement of every live connection of the agent switched (A.4); returns failures."""
     failures = []
     for conn in list(record.connections.values()):
-        if error := await sandbox_process.set_egress(conn.sandbox, egress):
+        if error := await _on_sandbox(conn, sandbox_process.set_egress, egress):
             failures.append(f"{conn.id}: {error}")
     return failures
+
+
+async def _on_sandbox[T](
+    conn: LiveConnection, verb: Callable[[str, T], Awaitable[str | None]], arg: T
+) -> str | None:
+    """A live verb on a connection's sandbox (A.4). The sandbox waits for an instance still
+    starting once its launcher has made its folder; before that (the launcher's own start), it
+    is tried again while the launcher runs."""
+    while True:
+        error = await verb(conn.sandbox, arg)
+        young = (datetime.now(UTC) - conn.since).total_seconds() < LAUNCHER_START_SECONDS
+        if error is None or not young or not _launcher_runs(conn.process):
+            return error
+        await asyncio.sleep(0.1)
+
+
+def _launcher_runs(process: Any) -> bool:
+    """A session's or connection's launcher (asyncio), or a terminal's (subprocess.Popen)."""
+    return (process.poll() if isinstance(process, subprocess.Popen) else process.returncode) is None

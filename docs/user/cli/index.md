@@ -1,7 +1,7 @@
 # Command line
 
 `handler` is the command line client of `handlerd`, the daemon that runs your agents. The web UI
-is where you set up projects, contexts and folders; the command line runs agents from a shell, an
+is where you set up projects, areas and folders; the command line runs agents from a shell, an
 editor or a script, and manages the rest. Each command has its own page, linked below;
 `handler -h` and `handler <command> -h` print the same in short.
 
@@ -41,7 +41,7 @@ what exists.
   agent's settings (`--network open` on a filtered agent), Handler says so and asks "Save this to
   the agent?". Yes saves it, no starts nothing. Without a terminal (an editor, a script): `--save`,
   else it is refused.
-- **Contexts are enforced.** An account or provider not made for the project's context (a personal
+- **Areas are enforced.** An account or provider not made for the project's area (a personal
   account in a *Work* project) is refused. `--anyway` runs it there outside the project, after you
   type `yes`: the only thing the command line can do that the web UI cannot.
 - **What widens the sandbox is said.** `--network open`, `--log-only` and `--containers` are
@@ -62,7 +62,9 @@ what exists.
 | follow a session from my phone | [`handler session share`](session.md) |
 | use an agent in Zed | [`handler acp`](acp.md) |
 | give an agent a browser or the Shopify CLI | [`handler addon add`](addon.md), [`handler binding list`](binding.md) |
+| install from someone else's git repository | [`handler source add`](source.md) |
 | find out why an agent cannot reach a host | [`handler agent network`](agent.md) |
+| run a job's checks, or keep a run as one | [`handler agent checks`](agent.md) |
 | update Claude Code in the images | [`handler image rebuild`](image.md) |
 | run something each time a session stops | [`handler automation`](automation.md) |
 
@@ -79,8 +81,8 @@ what exists.
 **What runs**
 
 - [`session`](session.md) `list | show | stop | share`
-- [`agent`](agent.md) `list | show | rm | network`
-- [`project`](project.md) `list | show`
+- [`agent`](agent.md) `list | show | rm | network | checks`
+- [`project`](project.md) `list | show | export-agents | import-agents`
 
 **Model access**
 
@@ -90,16 +92,18 @@ what exists.
 
 **What an agent can get**
 
-- [`addon`](addon.md) `list | catalog | add | rm`
+- [`addon`](addon.md) `list | add | rm`
+- [`source`](source.md) `list | add | refresh | rm`: where apps, agents and addons come from
 - [`binding`](binding.md) `list`: addons with their settings and secrets
 - [`knowledge`](knowledge.md) `list`: knowledge folders
 
 **Images, apps, automations**
 
 - [`image`](image.md) `list | rebuild`
-- [`app`](app.md) `list | add | deploy | rollback | open | shortcut | stop | log | secret | rm`
+- [`app`](app.md) `list | add | export | show | folder | agent | deploy | rollback | open | stop | log | secret | uninstall`
 - [`automation`](automation.md) `list | examples | new | show | try | enable | disable | delete | runs | log | cancel`
 - [`inbox`](inbox.md): what Handler told you
+- [`ask`](ask.md): say what you want, Handler picks the app that does it
 
 **Handler itself**
 

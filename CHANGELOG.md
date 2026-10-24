@@ -3,6 +3,15 @@
 What each release lets you do, grouped by what you do. One release is one commit in the public
 repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+## 0.2.0
+
+- **Apps and sources**: Apps are now first-class (replacing mini apps), can be installed from git repositories (sources), run on Bun instead of Deno, and are fully managed by Handler
+- **Security**: Multiple security fixes including message expiration, HTTPS-only remote gateways, and filtered network enforcement for plain HTTP
+- **Chat**: Dedicated Chat feature for conversational agents, with voice input/output support
+- **Project management**: Improved project workflow with agent export/import (agents files), and better organization
+- **Agent improvements**: Agents now have a single model, can run as "model alone", support checks for validation, and improved session management
+- **Configuration format change**: Configuration and state format changed from 0.1.0 - start fresh with empty config directories
+
 ## 0.1.0
 
 The first public release (alpha, Linux only).

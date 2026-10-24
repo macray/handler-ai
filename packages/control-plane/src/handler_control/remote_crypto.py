@@ -8,7 +8,8 @@ exchange through the gateway, sealed with a key the gateway never has.
     seal     AES-256-GCM, random 96-bit nonce,
              AAD "handler-remote/v1|<hostId>|<deviceId>|<down|up>|<envelope id>"
     wire     {id, nonce, ct}, base64url without padding; plaintext: JSON
-             {ts: unix ms, frames: [{s: session id | null, m: JSON-RPC message}], acks?, rejected?}
+             {expires: unix ms, frames: [{s: session id | null, m: JSON-RPC message}], acks?,
+             rejected?}; `expires`: until when it may be taken (its reader takes it once, before)
 
 The remote client implements the same in WebCrypto (packages/remote-client/src/lib/crypto.ts).
 """
@@ -86,8 +87,8 @@ def open_envelope(
         plaintext = json.loads(data)
     except Exception as e:  # InvalidTag, bad base64, bad JSON, missing field: all the same
         raise EnvelopeError(type(e).__name__) from None
-    if not isinstance(plaintext, dict) or not isinstance(plaintext.get("ts"), int):
-        raise EnvelopeError("no timestamp")
+    if not isinstance(plaintext, dict) or not isinstance(plaintext.get("expires"), int):
+        raise EnvelopeError("no expiry")
     return plaintext
 
 

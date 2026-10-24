@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.remote/v1/start-session-params",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "`_handler/remote/start_session` \u2192 StartedSession: a new session of a `remoteStart` agent,\n`prompt` sent as its first turn, shared with the devices once it runs.",
+  "description": "`_handler/remote/start_session` \u2192 StartedSession: a new session of a `remoteStart` agent or\nof one you talk to in Chat, `prompt` sent as its first turn, shared with the devices once it\nruns.",
   "properties": {
     "agentId": {
       "title": "Agentid",

@@ -73,14 +73,24 @@
         "cli",
         "editor",
         "phone",
-        "automation"
+        "automation",
+        "app",
+        "check",
+        "ask"
       ],
       "title": "Origin",
       "type": "string"
     },
     "harness": {
-      "title": "Harness",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Harness"
     },
     "scope": {
       "title": "Scope",

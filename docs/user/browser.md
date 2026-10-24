@@ -12,7 +12,7 @@ handler addon add playwright
 cp examples/bindings/browser.toml ~/.config/handler-ai/bindings/   # a configuration with no login
 ```
 
-Or Settings → Addons → Available to install → playwright, then Configure (no setting needed).
+Or Library → Addons → Install an addon → playwright, then Configure (no setting needed).
 Select the configuration in the agent's settings, or:
 
 ```bash
@@ -35,7 +35,7 @@ What limits an agent on a site is the **account it logs in with**, so never give
 session: create an account for it with only the rights it needs, log in with it once, and save
 that session as a secret of a second configuration. Every session of the agent starts logged in,
 and nothing it does is saved back. The steps:
-[the addon's PROVISIONING.md](../../packages/harness-adapters/src/handler_harness/data/catalog/playwright/PROVISIONING.md).
+[the addon's PROVISIONING.md](https://github.com/macray/handler-ai-source/blob/main/addons/playwright/PROVISIONING.md).
 
 ## See also
 

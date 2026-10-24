@@ -14,7 +14,7 @@ handler binding list
 ```
 
 A binding is what an agent gets: `shopify-dev-shop` is the `shopify` addon on one store with its
-token; `browser` is the `playwright` addon. Make one in the web UI (Settings → Addons →
+token; `browser` is the `playwright` addon. Make one in the web UI (Library → Addons →
 Configure), or copy a file from `examples/bindings/` to `~/.config/handler-ai/bindings/`
 ([where things are kept](../configuration.md)).
 

@@ -1,4 +1,4 @@
-"""Contract H, A2: secrets and egress. The test app (tests/fixtures/miniapp-llm) calls a fake
+"""Contract H, A2: secrets and egress. The test app (tests/fixtures/app-llm) calls a fake
 OpenAI-compatible model server — a container on podman's network, reached by IP like a model
 server on the LAN — with its key as a secret. (A model on the host itself is reached as
 host.containers.internal:<port> through the same filtered: scripts/host-check.sh
@@ -16,7 +16,7 @@ import pytest
 from handler_contracts import RUNTIME_IMAGE
 
 from ..support.daemon import Daemon
-from .conftest import FIXTURES, AppClient, api, copy_fixture, requires_podman
+from .conftest import FIXTURES, AppClient, add_app, api, copy_fixture, requires_podman
 
 pytestmark = requires_podman
 KEY = "sk-local-" + uuid.uuid4().hex
@@ -30,8 +30,8 @@ def model() -> Iterator[str]:
     subprocess.run(
         [
             "podman", "run", "-d", "--rm", "--name", name, "--network", "podman",
-            "-v", f"{FIXTURES / 'miniapp-llm' / 'fakellm.ts'}:/fake.ts:ro",
-            RUNTIME_IMAGE, "run", "--allow-net", "/fake.ts",
+            "-v", f"{FIXTURES / 'app-llm' / 'fakellm.ts'}:/fake.ts:ro",
+            RUNTIME_IMAGE, "run", "/fake.ts",
         ],
         check=True, capture_output=True,
     )  # fmt: skip
@@ -48,21 +48,21 @@ def model() -> Iterator[str]:
 
 @pytest.fixture(scope="module")
 def source(data_root: Path, model: str) -> Path:
-    path = copy_fixture("miniapp-llm", data_root)
+    path = copy_fixture("app-llm", data_root)
     ip = model.split(":", maxsplit=1)[0]
     (path / "server" / "config.ts").write_text(
         f'export const MODEL_URL = "http://{model}/v1/chat/completions";\n'
         f'export const OTHER_URL = "http://{ip}:8001/";\n'  # not allowed
     )
     (path / "app.toml").write_text(
-        'apiVersion = "handler.miniapp/v1"\nname = "ask"\nversion = "1.0.0"\n'
+        'apiVersion = "handler.app/v1"\nname = "ask"\nversion = "1.0.0"\n'
         f'[needs]\negress = ["{model}"]\nsecrets = ["LLM_KEY"]\n'
     )
     return path
 
 
 def test_registered_with_its_needs(daemon: Daemon, source: Path, model: str) -> None:
-    app = api(daemon, "POST", "/v1/apps", {"sourceDir": str(source)}).json()
+    app = add_app(daemon, source).json()
     assert app["secrets"] == [{"name": "LLM_KEY", "set": False}]
     assert app["source"]["addedNeeds"] == [f"egress {model}", "secret LLM_KEY"]
 
@@ -103,7 +103,7 @@ def test_other_hosts_are_refused(daemon: Daemon) -> None:
     browser.login(api(daemon, "POST", "/v1/apps/ask/open").json()["url"])
     other = browser.request("GET", "/api/other").json()
     assert other["reached"] is False
-    assert "net access" in other["error"]  # Deno's own permission, before the proxy
+    assert other["status"] == 403 and "is not allowed" in other["error"]  # the sandbox's proxy
 
 
 def test_log_hides_the_secret(daemon: Daemon) -> None:

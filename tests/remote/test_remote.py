@@ -182,10 +182,8 @@ def test_hostile_gateway_is_refused(daemon: Daemon, shared: dict[str, Any]) -> N
     envelope = device.send([frame])
     device.wait_frame(lambda f: f["m"].get("id") == 77)
     assert device.post(envelope).status_code == 202
-    # held back: an envelope 10 minutes old is rejected, and the device is told
-    old = device.send(
-        [frame | {"m": frame["m"] | {"id": 78}}], ts=int(time.time() * 1000) - 600_000
-    )
+    # held back: an envelope expired by the time handler gets it is rejected, and the device told
+    old = device.send([frame | {"m": frame["m"] | {"id": 78}}], lifetime=-1)
     device.wait_until(lambda: any(r["id"] == old["id"] for r in device.rejected))
     # altered: the ciphertext changed (a byte of the tag)
     altered = device.seal([frame | {"m": frame["m"] | {"id": 79}}])
@@ -224,6 +222,9 @@ def test_pairing_needs_a_gateway_and_a_valid_token(daemon: Daemon, gateway: Gate
     with daemon.http() as c:
         bad = {"gatewayUrl": gateway.url, "hostToken": "not-a-token"}
         assert c.put("/v1/remote/gateway", json=bad).status_code == 422
+        # plain http would carry the host token in clear: only to this computer
+        clear = {"gatewayUrl": "http://gateway.example.org", "hostToken": gateway.host_token}
+        assert c.put("/v1/remote/gateway", json=clear).status_code == 422
         # a well-formed token the gateway does not know: unauthorized once something is shared
         wrong = {"gatewayUrl": gateway.url, "hostToken": "h_0123456789abcdef." + "x" * 43}
         assert c.put("/v1/remote/gateway", json=wrong).status_code == 200
@@ -255,8 +256,8 @@ def test_device_starts_a_session_of_an_allowed_agent(daemon: Daemon) -> None:
     nothing else being shared) and starts a session of one, shared with it once it runs."""
     folder = daemon.make_scope()
     agents = [
-        {"models": [{"account": "fake"}], "name": "coder", "remoteStart": True},
-        {"models": [{"account": "fake"}], "name": "dev"},
+        {"model": {"account": "fake"}, "name": "coder", "remoteStart": True},
+        {"model": {"account": "fake"}, "name": "dev"},
     ]
     with daemon.http() as c:
         body = {"folder": str(folder), "name": "shop", "agents": agents}
@@ -290,6 +291,34 @@ def test_device_starts_a_session_of_an_allowed_agent(daemon: Daemon) -> None:
     with daemon.http() as c:
         r = c.post("/v1/remote/devices", json={"name": "kid", "person": "kid", "scope": "apps"})
     kid = Device(r.json()["pairingUrl"])
-    assert kid.request(None, "_handler/remote/list_agents") == {"projects": []}
+    assert kid.request(None, "_handler/remote/list_agents") == {"projects": [], "chats": []}
     with pytest.raises(DeviceError):  # an apps-only device starts nothing
         kid.request(None, "_handler/remote/start_session", {"agentId": coder["id"]})
+
+
+def test_device_starts_a_chat(daemon: Daemon) -> None:
+    """D.7, D.1: who you talk to in Chat (an agent whose home is Chat) is listed for the owner's
+    devices with no `remoteStart`, the one used last the default, and started from them (Ask's
+    Start a chat about it); one outside projects is not."""
+    with daemon.http() as c:
+        made = c.post(
+            "/v1/agents", json={"model": {"account": "fake"}, "name": "Claude", "chat": True}
+        )
+        assert made.status_code == 201, made.text
+        chat = made.json()
+    other = daemon.create_ad_hoc("fake", daemon.make_scope(), name="Notes keeper")
+    with daemon.http() as c:
+        assert c.get(f"/v1/agents/{chat['id']}").json()["chat"]
+        assert "app" not in c.get(f"/v1/agents/{other['id']}").json()
+    wait_light(daemon, "ok")  # someone to talk to: the host polls
+    device = pair(daemon, "chatter")
+    listed = device.request(None, "_handler/remote/list_agents")
+    assert [(a["name"], a["default"]) for a in listed["chats"]] == [("Claude", True)]
+
+    started = device.request(
+        None, "_handler/remote/start_session", {"agentId": chat["id"], "prompt": "Lyon?"}
+    )
+    with daemon.http() as c:
+        assert c.get(f"/v1/sessions/{started['session']}").json()["origin"] == "phone"
+    with pytest.raises(DeviceError):  # not a chat (a folder) and not marked remoteStart
+        device.request(None, "_handler/remote/start_session", {"agentId": other["id"]})

@@ -175,6 +175,44 @@ def test_registry_is_private_and_reloaded(tmp_path: Path) -> None:
     assert r.status_code == 200
 
 
+def test_the_server_never_undoes_what_the_cli_did(tmp_path: Path) -> None:
+    """The server read the registry, the CLI adds a host, then the server registers a device
+    (without a host request in between): the new host stays."""
+    g = Setup(tmp_path)
+    host = g.host_token.split(".")[0]
+    token = Registry(tmp_path / "state.json").add_host("added by the CLI")
+    g.registry.put_device(host, "d_" + "1" * 16, "0" * 64)
+    assert token.split(".")[0] in Registry(tmp_path / "state.json").hosts
+
+
+def test_a_host_removed_by_the_cli_takes_its_devices_at_once(tmp_path: Path) -> None:
+    """No host request needs to come first (the removed host's handlerd may be off)."""
+    g = Setup(tmp_path)
+    g.register()
+    assert g.device("GET", "/v1/device/poll", params={"wait": 0}).status_code == 200
+    assert Registry(tmp_path / "state.json").remove_host(g.host_token.split(".")[0])
+    assert g.device("GET", "/v1/device/poll", params={"wait": 0}).status_code == 401
+
+
+def test_changes_from_two_processes_are_all_kept(tmp_path: Path) -> None:
+    """Two writers at once (the CLI and the server): each change kept, the file always whole."""
+    path = tmp_path / "state.json"
+    host = Registry(path).add_host("laptop").split(".")[0]
+
+    def register(prefix: str) -> None:
+        registry = Registry(path)  # its own file descriptors: its own locks, as a process
+        for i in range(100):
+            registry.put_device(host, f"d_{prefix}{i:015x}", "0" * 64)
+
+    writers = [threading.Thread(target=register, args=(p,)) for p in "ab"]
+    for w in writers:
+        w.start()
+    for w in writers:
+        w.join()
+    assert len(Registry(path).devices_of(host)) == 200
+    assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".state.json-*"))
+
+
 def test_app_frame_reaches_nothing(tmp_path: Path) -> None:
     client_dir = tmp_path / "client"
     client_dir.mkdir()
@@ -184,7 +222,11 @@ def test_app_frame_reaches_nothing(tmp_path: Path) -> None:
     policy = g.client.get("/appframe.html").headers["content-security-policy"]
     assert "connect-src 'none'" in policy and "default-src 'none'" in policy
     assert "frame-ancestors 'self'" in policy  # only the client may show it
-    assert "frame-ancestors 'none'" in g.client.get("/").headers["content-security-policy"]
+    # an opaque origin even opened alone: never the client's, which holds the device's keys
+    assert "sandbox allow-scripts allow-forms allow-modals" in policy
+    client = g.client.get("/").headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in client
+    assert "frame-src 'self'" in client  # an app's frame is not navigated out of the gateway
 
 
 def test_serves_the_client_with_a_strict_policy(tmp_path: Path) -> None:
@@ -200,22 +242,39 @@ def test_serves_the_client_with_a_strict_policy(tmp_path: Path) -> None:
 
 def test_queue_survives_a_restart_until_the_host_takes_it(tmp_path: Path) -> None:
     g = Setup(tmp_path)
-    g.state.queue = Queue(tmp_path / "state.queue.json")
+    g.state.queue = Queue(tmp_path / "state.queue")
     g.register()
+    host = g.host_token.split(".")[0]
     e = envelope()
     assert g.device("POST", "/v1/device/queue", json=e).status_code == 202
     assert g.device("POST", "/v1/device/queue", json=e).status_code == 202  # the same: once
     assert g.device("GET", "/v1/device/poll", params={"wait": 0}).json()["queued"] == [e["id"]]
-    assert (tmp_path / "state.queue.json").stat().st_mode & 0o777 == 0o600
+    file = tmp_path / "state.queue" / host / f"{e['id']}.json"
+    assert file.stat().st_mode & 0o777 == 0o600
 
-    again = Queue(tmp_path / "state.queue.json")  # a gateway restart
-    assert [x["id"] for x in again.pending(g.host_token.split(".")[0], 1 << 20)] == [e["id"]]
+    again = Queue(tmp_path / "state.queue")  # a gateway restart
+    assert [x["id"] for x in again.pending(host, 1 << 20)] == [e["id"]]
     listed = g.host("GET", "/v1/host/queue").json()["envelopes"]
     assert listed == [e | {"dev": g.dev}]
     assert g.host("DELETE", f"/v1/host/queue/{e['id']}").status_code == 204
+    assert not file.exists()
     assert g.host("DELETE", f"/v1/host/queue/{e['id']}").status_code == 404
     assert g.host("GET", "/v1/host/queue").json()["envelopes"] == []
     assert g.device("GET", "/v1/device/poll", params={"wait": 0}).json()["queued"] == []
+
+
+def test_queueing_writes_that_envelope_only(tmp_path: Path) -> None:
+    """A put costs its own envelope, not every queue again (a device could otherwise make the
+    gateway rewrite megabytes on each call); a removal never names a file from the host's word."""
+    q = Queue(tmp_path / "q")
+    q.put("h_a", "d", "a" * 16, "n" * 16, "A" * 100_000)
+    first = (tmp_path / "q" / "h_a" / f"{'a' * 16}.json").stat().st_mtime_ns
+    time.sleep(0.01)
+    q.put("h_b", "d", "b" * 16, "n" * 16, "AAAA")
+    assert (tmp_path / "q" / "h_a" / f"{'a' * 16}.json").stat().st_mtime_ns == first
+    (tmp_path / "outside.json").write_text("{}")
+    assert not q.remove("h_a", "../../outside")
+    assert (tmp_path / "outside.json").exists()
 
 
 def test_queue_is_bounded_and_expires(tmp_path: Path) -> None:

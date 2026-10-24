@@ -49,7 +49,7 @@ is and where it is kept, as users see it: [where things are kept](../../user/con
   be able to loosen the sandbox.
 - **Accounts, providers and bindings stay TOML** in `~/.config/handler-ai/`, written by the web UI's
   forms (Settings → Model access: an account from its login, a provider from a template;
-  Settings → Addons) and still readable by hand (unknown keys are errors).
+  Library → Addons) and still readable by hand (unknown keys are errors).
 - **Harness ≠ addon** in the words used everywhere: a harness is the agent program (Claude Code,
   Vibe, pi), chosen by the agent; an addon is programs and skills any agent can be given, through
   one of its configurations (a binding). Settings → Images groups them apart (agent programs,

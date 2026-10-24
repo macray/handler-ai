@@ -77,7 +77,7 @@ def test_what_the_sandbox_sees(daemon: Daemon) -> None:
     scope = daemon.make_scope()
     with daemon.http() as c:
         c.put("/v1/knowledge/root", json={"root": str(root)}).raise_for_status()
-        agent = {"models": [{"account": "fake"}], "name": "dev", "knowledge": ["notes"]}
+        agent = {"model": {"account": "fake"}, "name": "dev", "knowledge": ["notes"]}
         agent = create_project(daemon, scope, agents=[agent])["agents"][0]
         sid = c.post("/v1/sessions", json={"agentId": agent["id"]}).json()["id"]
     running(daemon, sid)

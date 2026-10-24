@@ -38,6 +38,8 @@ def items(info: dict[str, Any]) -> list[RuntimeCheckItem]:
     host = info.get("host", {})
     dev = bool(os.environ.get("HANDLER_SANDBOX_DEV_NO_KEEPID"))  # podman.userns_args
     rootless = bool(host.get("security", {}).get("rootless"))
+    # with the user's own id, 65535 map every id a container uses (0 to 65535): what a `nested`
+    # sandbox gives inner podman, whose own id is not in its range (podman.subid_file)
     ids = min(_id_range("uid"), _id_range("gid"))
     backend = host.get("networkBackend", "")
     pasta = (host.get("pasta") or {}).get("executable", "")
@@ -55,11 +57,11 @@ def items(info: dict[str, Any]) -> list[RuntimeCheckItem]:
         ),
         RuntimeCheckItem(
             name="subordinate ids",
-            ok=ids >= 65536 or dev or not rootless,
+            ok=ids >= 65535 or dev or not rootless,
             required=True,
             detail=f"{ids} in /etc/subuid and /etc/subgid"
-            if ids >= 65536
-            else f"{ids or 'none'} for your user in /etc/subuid and /etc/subgid, 65536 needed: "
+            if ids >= 65535
+            else f"{ids or 'none'} for your user in /etc/subuid and /etc/subgid, 65535 needed: "
             "sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER, then "
             "podman system migrate",
         ),

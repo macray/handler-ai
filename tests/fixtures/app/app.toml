@@ -1,0 +1,10 @@
+# A minimal app for the tests (contract H): a counter in SQLite, a plain HTML UI (no build).
+apiVersion = "handler.app/v1"
+name = "counter"
+version = "1.0.0"
+description = "Counts clicks"
+
+[actions.count]                      # H.12: done by its code
+description = "Count one more"
+examples = ["Count one"]
+route = "POST /api/actions/count"

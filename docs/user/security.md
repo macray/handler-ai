@@ -43,10 +43,10 @@ Settings → Secrets lists every secret and whether any agent can read it.
 
 Handler never opens a port. It polls the gateway you host, and everything between your phone and
 your computer is end-to-end encrypted: the gateway can neither read it nor forge it. A family
-member's phone reaches only the mini apps you share with that person, never a session. Details:
+member's phone reaches only the apps you share with that person, never a session. Details:
 [your phone](phone.md#security).
 
-## Mini apps
+## Apps
 
 Each app has its own web address, apart from Handler's web UI and from the other apps, runs in its
 own container with no network and none of your files unless its `app.toml` asks (shown before

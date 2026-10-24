@@ -11,11 +11,13 @@ from fastapi.responses import Response
 from handler_contracts import (
     CreateSessionRequest,
     RevealRequest,
+    SessionAppDraft,
     SessionInput,
+    SessionSubject,
     SetSessionRemoteRequest,
 )
 
-from .. import checks, desktop, interfaces, session_files, skills
+from .. import desktop, interfaces, save_rules, session_files, skills
 from ..agents import AgentRecord
 from ..sessions import SessionError, SessionRecord
 from .common import (
@@ -37,12 +39,16 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
     async def create_session(request: Request) -> Response:  # async: it starts on the event loop
         body = parse_body(CreateSessionRequest, await request.body())
         agent = ctx.get_agent(body.agent_id)
+        if agent.app is not None:  # H.14: its app starts it (an ask, its screen, its schedule)
+            why = f"{agent.name or agent.id} is one of the app {agent.app}'s parts: ask the app"
+            raise ProblemError(409, "started by its app only", why)
         if body.prompt is not None and body.acp_session_id is not None:
             raise ProblemError(400, "a resumed session has its conversation", "no prompt")
         with check_problems():
-            runs = checks.session_model(ctx.settings, agent, body.model)
-        run = checked_input(ctx, agent, body)
+            runs = save_rules.session_model(ctx.settings, agent, body.model)
+        run, subject = checked_input(ctx, agent, body)
         check_from_skill(ctx, agent, body.from_skill)
+        draft = app_draft(ctx, agent, body)
         record = ctx.sessions.create(
             agent,
             runs,
@@ -50,7 +56,9 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
             body.prompt,
             origin=body.origin,
             run=run,
+            subject=subject,
             from_skill=body.from_skill,
+            app_draft=draft,
         )
         return out(record, 202)
 
@@ -80,6 +88,8 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
     @app.delete("/v1/sessions/{session_id}", dependencies=authed)
     async def delete_session(session_id: str) -> Response:
         ctx.get_session(session_id)
+        if (opened := ctx.apps.preview_of(session_id)) is not None:
+            await ctx.apps.close_draft(opened)  # a draft thrown away: its opened copy too
         await ctx.sessions.delete(session_id)
         return Response(status_code=204)
 
@@ -160,20 +170,22 @@ def shown_path() -> Iterator[None]:
 
 def checked_input(
     ctx: Context, agent: AgentRecord, body: CreateSessionRequest
-) -> SessionInput | None:
-    """D.18: an agent with an interface is started with an input, never a request."""
+) -> tuple[SessionInput | None, SessionSubject | None]:
+    """D.18: an agent with an interface is started with an input, never a request; with the
+    skill its skill field names, the run's subject."""
     if agent.interface is None:
         if body.input is not None:
             raise ProblemError(400, "input invalid", "this agent has no interface")
-        return None
+        return None, None
     if body.input is None or body.prompt is not None or body.acp_session_id is not None:
         raise ProblemError(
             400, "input invalid", "an agent with an interface is started with an input only"
         )
     try:
-        return interfaces.check_input(agent.interface, body.input, ctx.settings.skills_dir)
+        subject = interfaces.check_input(agent.interface, body.input, ctx.settings.skills_dir)
     except interfaces.InterfaceError as e:
         raise ProblemError(400, "input invalid", str(e)) from None
+    return body.input, subject
 
 
 def check_from_skill(ctx: Context, agent: AgentRecord, name: str | None) -> None:
@@ -186,7 +198,29 @@ def check_from_skill(ctx: Context, agent: AgentRecord, name: str | None) -> None
         raise ProblemError(400, "skill unusable", f"{name}: {skill.error}")
 
 
+def app_draft(
+    ctx: Context, agent: AgentRecord, body: CreateSessionRequest
+) -> tuple[SessionAppDraft, Path | None] | None:
+    """H.15: a folderless agent's session may work on a draft of an app's code: a copy of an
+    app's (one draft of it at a time), or an empty folder for a new app."""
+    draft = body.app_draft
+    if draft is None:
+        return None
+    if agent.scope is not None:
+        raise ProblemError(400, "a folderless agent's only", "its sessions work in its folder")
+    if body.from_skill is not None:
+        raise ProblemError(400, "one folder", "a skill's copy or an app's draft, not both")
+    if draft.app is None:
+        return draft, None
+    if draft.app not in ctx.apps.records:
+        raise ProblemError(404, "app not found", draft.app)
+    for other in ctx.sessions.list():
+        if (other.app_draft or {}).get("app") == draft.app:
+            why = f"continue it ({other.title or other.id}), use it or throw it away"
+            raise ProblemError(409, f"a draft of {draft.app} is waiting", why)
+    return draft, ctx.apps.source(draft.app)
+
+
 def subject_of(record: SessionRecord) -> str | None:
     """ "skill:<name>": what a run worked on (D.18)."""
-    subject = (record.input or {}).get("subject")
-    return f"skill:{subject['skill']}" if subject else None
+    return f"skill:{record.subject['skill']}" if record.subject else None

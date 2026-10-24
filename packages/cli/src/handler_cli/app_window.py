@@ -1,4 +1,4 @@
-"""Opening a mini app in its own window (docs/dev/design/miniapps.md §5.1).
+"""Opening an app in its own window (docs/dev/design/apps.md §5.1).
 
 Firefox first (a dedicated profile, `handler-apps`: apps' cookies and storage stay out of normal
 browsing, and its toolbars are hidden, since Firefox has no `--app` mode), then Chromium's app
@@ -15,7 +15,7 @@ from pathlib import Path
 WINDOW_CLASS = "handler-apps"
 
 USER_JS = """\
-// handler: the profile mini apps open in (handler app open). Rewritten by handler.
+// handler: the profile apps open in (handler app open). Rewritten by handler.
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
@@ -81,5 +81,5 @@ def open_window(url: str) -> None:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,  # outlives `handler` (a keyboard shortcut runs it and returns)
+        start_new_session=True,  # outlives `handler`, which returns
     )

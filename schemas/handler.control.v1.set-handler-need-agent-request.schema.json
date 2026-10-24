@@ -1,0 +1,17 @@
+{
+  "$id": "urn:handler.control/v1/set-handler-need-agent-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The agent given for one of Handler's needs (D.18): one that fits.",
+  "properties": {
+    "agentId": {
+      "minLength": 1,
+      "title": "Agentid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agentId"
+  ],
+  "title": "SetHandlerNeedAgentRequest",
+  "type": "object"
+}

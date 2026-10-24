@@ -46,8 +46,8 @@ def events(daemon: Daemon, sid: str, want: str, timeout: float = 30) -> str:
 
 def project(daemon: Daemon, folder: Path) -> dict[str, Any]:
     agents = [
-        {"models": [{"account": "fake"}], "name": "dev"},
-        {"models": [{"account": "fake"}], "name": "review", "instructions": "Be brief."},
+        {"model": {"account": "fake"}, "name": "dev"},
+        {"model": {"account": "fake"}, "name": "review", "instructions": "Be brief."},
     ]
     with daemon.http() as c:
         r = c.post("/v1/projects", json={"folder": str(folder), "agents": agents})
@@ -95,7 +95,7 @@ def test_run_names_an_agent_of_the_project_of_the_folder(daemon: Daemon) -> None
 
 def test_the_project_s_folder_decides_the_agent(daemon: Daemon) -> None:
     """In a project's folder, `handler run` uses its agents and their settings; another account runs
-    its default agent, unless it is not made for the project's context (D.19): refused, and
+    its default agent, unless it is not made for the project's area (D.19): refused, and
     --anyway (then ad hoc, outside the project) needs it confirmed in a terminal."""
     folder = daemon.make_scope()
     p = project(daemon, folder)
@@ -111,22 +111,22 @@ def test_the_project_s_folder_decides_the_agent(daemon: Daemon) -> None:
     assert (session["agentId"], session["account"]) == (default["id"], "echo-box")
 
     with daemon.http() as c:
-        assert c.post("/v1/contexts", json={"name": "Job", "color": "blue"}).status_code == 201
-        body = {"name": "fake", "harness": "fake", "contexts": ["Job"]}
+        assert c.post("/v1/areas", json={"name": "Job", "color": "blue"}).status_code == 201
+        body = {"name": "fake", "harness": "fake", "areas": ["Job"]}
         assert c.put("/v1/accounts/fake", json=body).status_code == 200
-        work = {"folder": str(folder), "context": "Job"}
+        work = {"folder": str(folder), "area": "Job"}
         assert c.put(f"/v1/projects/{p['id']}", json=work).status_code == 200
     try:
         for command in ("run", "terminal"):
             r = handler(daemon, command, "echo-box", cwd=folder)
             assert r.returncode != 0, r.stderr
-            assert f"echo-box is for no context; {p['name']} is a Job project" in r.stderr
+            assert f"echo-box is for no area; {p['name']} is a Job project" in r.stderr
             assert f"handler {command} echo-box --anyway" in r.stderr
         r = handler(daemon, "run", "echo-box", "--anyway", "--detach", cwd=folder)
         assert r.returncode != 0 and "confirm it in a terminal" in r.stderr  # no terminal here
 
         r = handler(daemon, "run", "fake", "--anyway", "--network", "none", "--detach", cwd=folder)
-        assert r.returncode == 0, r.stderr  # made for the project's context: nothing to confirm
+        assert r.returncode == 0, r.stderr  # made for the project's area: nothing to confirm
         sid = session_id(r.stdout)
         assert next(s for s in sessions(daemon) if s["id"] == sid).get("projectId") is None
     finally:
@@ -165,17 +165,26 @@ def test_a_flag_that_differs_from_the_project_s_agent_is_saved_never_ignored(
     assert r.returncode != 0 and "name one of its agents: handler run AGENT" in r.stderr
 
 
-def test_an_account_picks_the_agent_listing_it_and_that_model(daemon: Daemon) -> None:
-    """One agent, two models (D.1): naming the second account runs that agent with it."""
+def test_an_account_picks_the_agent_whose_model_it_is(daemon: Daemon) -> None:
+    """D.1: naming an account runs the project's agent on it, the default agent first."""
     folder = daemon.make_scope()
-    agents = [{"name": "dev", "models": [{"account": "fake"}, {"account": "echo-box"}]}]
+    agents = [
+        {"name": "dev", "model": {"account": "fake"}, "default": True},
+        {"name": "review", "model": {"account": "echo-box"}},
+    ]
     with daemon.http() as c:
         r = c.post("/v1/projects", json={"folder": str(folder), "agents": agents})
         assert r.status_code == 201, r.text
-    for name, harness in ((None, "fake"), ("echo-box", "echo-box"), ("dev", "fake")):
+    ids = {a["name"]: a["id"] for a in r.json()["agents"]}
+    for name, agent, harness in (
+        (None, "dev", "fake"),
+        ("echo-box", "review", "echo-box"),
+        ("review", "review", "echo-box"),
+    ):
         r = handler(daemon, "run", *([name] if name else []), "--detach", cwd=folder)
         assert r.returncode == 0, r.stderr
         session = next(s for s in sessions(daemon) if s["id"] == session_id(r.stdout))
+        assert session["agentId"] == ids[agent], name
         assert (session["harness"], session.get("account")) == (harness, harness), name
 
 
@@ -283,20 +292,20 @@ def test_attach_stdio_and_acp_agent_bridge_a_session(daemon: Daemon) -> None:
     assert next(s for s in sessions(daemon) if s["id"] == sid)["state"] == "running"
 
 
-def test_anyway_with_an_account_not_for_the_context_is_typed_yes(monkeypatch: Any) -> None:
+def test_anyway_with_an_account_not_for_the_area_is_typed_yes(monkeypatch: Any) -> None:
     """D.19: --anyway in a Work project's folder with a Personal account: the person types yes in
     a terminal; anything else, and no terminal at all, does not start it."""
 
     class FakeDaemon:
         def call(self, _method: str, path: str) -> list[dict[str, Any]]:
-            found = {"/v1/accounts": [{"name": "perso", "contexts": ["Personal"]}]}
+            found = {"/v1/accounts": [{"name": "perso", "areas": ["Personal"]}]}
             return found.get(path, [])
 
     class Terminal(io.StringIO):
         def isatty(self) -> bool:
             return True
 
-    project = {"name": "acme", "folder": "/code/acme", "context": "Work"}
+    project = {"name": "acme", "folder": "/code/acme", "area": "Work"}
     args = argparse.Namespace(cmd="run")
     d: Any = FakeDaemon()
     monkeypatch.setattr("sys.stdin", Terminal())
@@ -308,7 +317,7 @@ def test_anyway_with_an_account_not_for_the_context_is_typed_yes(monkeypatch: An
     monkeypatch.setattr("sys.stdin", io.StringIO())
     with pytest.raises(ClientError, match="confirm it in a terminal"):
         acknowledge_outside(d, project, "perso", args)
-    acknowledge_outside(d, project | {"context": "Personal"}, "perso", args)  # nothing to confirm
+    acknowledge_outside(d, project | {"area": "Personal"}, "perso", args)  # nothing to confirm
 
 
 def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any) -> None:
@@ -326,8 +335,8 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
             return True
 
     agent = {
-        "id": "a1", "name": "tests", "scope": "/code/x", "models": [{"account": "fake",
-        "harness": "fake", "requiredHosts": []}], "network": "filtered", "egress": "enforce",
+        "id": "a1", "name": "tests", "scope": "/code/x", "model": {"account": "fake",
+        "harness": "fake", "requiredHosts": []}, "network": "filtered", "egress": "enforce",
         "allow": ["a.test:443"], "confinement": "strict", "permissions": "bypass",
         "bindings": [], "knowledge": [], "display": False, "skills": ["s"],
         "acpUrl": "ws://x", "connections": [],
@@ -347,7 +356,7 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
     [(call, body)] = saved
     assert call == "PUT /v1/agents/a1"
     assert (body["egress"], body["allow"]) == ("log-only", ["a.test:443", "b.test:443"])
-    assert body["models"] == [{"account": "fake", "harness": "fake"}]
+    assert body["model"] == {"account": "fake", "harness": "fake"}
     assert (body["name"], body["scope"], body["skills"]) == ("tests", "/code/x", ["s"])
     saved.clear()
     same = argparse.Namespace(**flags | {"log_only": False}, knowledge=None, save=False)

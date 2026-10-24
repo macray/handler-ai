@@ -1,0 +1,229 @@
+{
+  "$id": "urn:handler.control/v1/agent-checks",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Check": {
+      "description": "A run of a job kept with its right answer (D.20): run again with its input, it passes when\nevery field of `compare` comes back as in `answer`.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Input",
+          "type": "object"
+        },
+        "answer": {
+          "additionalProperties": true,
+          "title": "Answer",
+          "type": "object"
+        },
+        "compare": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Compare",
+          "type": "array"
+        },
+        "fromRun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fromrun"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Problem"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "answer",
+        "compare",
+        "createdAt"
+      ],
+      "title": "Check",
+      "type": "object"
+    },
+    "CheckResult": {
+      "description": "One check in a check run (D.20).",
+      "properties": {
+        "checkId": {
+          "title": "Checkid",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "passed",
+            "failed",
+            "error"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "got": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Got"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        }
+      },
+      "required": [
+        "checkId",
+        "name",
+        "state"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "CheckRun": {
+      "description": "An agent's checks run once, one after another (D.20).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "title": "Startedat",
+          "type": "string"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/CheckResult"
+          },
+          "title": "Results",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "startedAt",
+        "results"
+      ],
+      "title": "CheckRun",
+      "type": "object"
+    }
+  },
+  "description": "An agent's checks, its last check run, and what changed in it since (D.20).",
+  "properties": {
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/Check"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "comparable": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Comparable",
+      "type": "array"
+    },
+    "last": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CheckRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "changed": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed",
+      "type": "array"
+    }
+  },
+  "required": [
+    "checks"
+  ],
+  "title": "AgentChecks",
+  "type": "object"
+}

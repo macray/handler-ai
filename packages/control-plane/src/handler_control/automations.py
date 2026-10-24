@@ -2,10 +2,9 @@
 fires run, one at a time for the whole daemon. A run is the automation's script in a sandbox (on
 the new part of the conversation, for a stop; once it succeeded, handlerd appends what it wrote to
 the declared knowledge notes), a run of an agent with an interface (its result goes to the inbox),
-or a call to a mini app's route.
+or a call to an app's route.
 
     pending_stop         pure: the stop of a log that fires an automation past its cursor (I.2)
-    result_problems      pure: why an interface's result cannot make an inbox message (I.3)
     Automations          the runner: stops and schedules checked, the queue, runs and their
                          records, on and off (I.7), tries (I.8), what the API shows (I.9)
 
@@ -44,20 +43,20 @@ from handler_contracts import (
     AutomationLlmUsage,
     AutomationRun,
     AutomationView,
-    InboxStatus,
     SessionInput,
     SessionOutput,
+    SessionSubject,
 )
 from handler_harness import catalog, images
 
 from . import automation_config as config
 from . import (
-    checks,
     compose,
     interfaces,
     knowledge,
     runtime,
     sandbox_process,
+    save_rules,
     schedules,
     secrets,
     service_router,
@@ -65,8 +64,8 @@ from . import (
 )
 from .agents import AgentRecord, AgentRegistry
 from .apps import AppError, AppStore
-from .inbox import Inbox
-from .projects import ProjectRegistry
+from .inbox import Inbox, told_result
+from .projects import NamedAgentError, ProjectRegistry
 from .sessions import SessionRecord, SessionStore
 from .settings import Settings
 
@@ -84,7 +83,6 @@ LINE_LIMIT = 1024 * 1024  # one line of a run's output
 SCHEDULE_TICK = 20.0  # schedules are checked this often (seconds)
 DELETE_WAIT = 30.0  # a deleted one's run in progress is given this long to stop (seconds)
 SESSION_POLL = 1.0  # an agent run's session is looked at this often (seconds)
-STATUSES = ("ok", "attention", "failed")
 
 
 class AutomationError(ValueError):
@@ -124,22 +122,6 @@ def pending_stop(
         and (since is None or datetime.fromisoformat(e["t"]) >= since)
     ]
     return stops[-1] if stops else None
-
-
-def result_problems(schema: dict[str, Any]) -> list[str]:
-    """An agent run by an automation gives a result its inbox message is made of (I.3):
-    required `status` (some of ok, attention, failed) and `summary` (a string)."""
-    props = schema.get("properties") or {}
-    required = set(schema.get("required") or [])
-    found = []
-    status = props.get("status") or {}
-    if "status" not in required or not status.get("enum"):
-        found.append("its result has no required 'status' enum (ok, attention, failed)")
-    elif unknown := [v for v in status["enum"] if v not in STATUSES]:
-        found.append(f"its result's status has {unknown}: only ok, attention, failed")
-    if "summary" not in required or (props.get("summary") or {}).get("type") != "string":
-        found.append("its result has no required 'summary' string")
-    return found
 
 
 @dataclass
@@ -304,12 +286,12 @@ class Automations:
         return found
 
     def matches(self, loaded: config.Loaded, rec: SessionRecord) -> bool:
-        only = loaded.definition.only if loaded.definition else None
-        if only is None:
-            return True
-        agent, project = self.names(rec)
-        return (only.project is None or project in only.project) and (
-            only.agent is None or agent in only.agent
+        """The session is one `only` names: its agent, its agent's project, by what their names
+        were bound to (I.1)."""
+        agents, projects, _ = self.watched(loaded)
+        agent = self.registry.get(rec.agent_id)
+        return (agents is None or rec.agent_id in agents) and (
+            projects is None or (agent is not None and agent.project_id in projects)
         )
 
     def names(self, rec: SessionRecord) -> tuple[str | None, str | None]:
@@ -332,46 +314,132 @@ class Automations:
             config.write_state(self.settings.state_dir, name, state)
             return state
 
-    def find_agent(self, run: AutomationAgentRun) -> AgentRecord:
+    def named_agent(self, run: AutomationAgentRun) -> AgentRecord:
         """The agent an agent run names: by its name, in its project (none: of no project)."""
-        project = None
-        if run.project is not None:
-            found = [p for p in self.projects.projects.values() if p.name == run.project]
-            if not found:
-                raise AutomationError(f"run.project: no project named {run.project}")
-            project = found[0].id
-        agents = [
-            a
-            for a in self.registry.agents.values()
-            if a.name == run.agent and a.project_id == project
-        ]
-        where = f"in project {run.project}" if run.project else "of no project"
-        if not agents:
-            raise AutomationError(f"run.agent: no agent named {run.agent} {where}")
-        if len(agents) > 1:
-            raise AutomationError(f"run.agent: {len(agents)} agents named {run.agent} {where}")
-        return agents[0]
+        try:
+            return self.projects.named_agent(run.agent, run.project)
+        except NamedAgentError as e:
+            raise AutomationError(f"run.{e.field}: {e}") from None
 
-    def agent_problems(self, run: AutomationAgentRun) -> tuple[list[str], list[str]]:
+    def find_agent(
+        self, loaded: config.Loaded, run: AutomationAgentRun, pinned: AgentRecord | None = None
+    ) -> AgentRecord:
+        """The agent the run runs (I.1): `pinned` (the form's choice); else the one its names were
+        bound to when first read, whatever it is called now (a rename changes nothing); read again
+        by its names when the file names another one (edited by hand), or none was bound yet. A
+        definition not saved yet (a check) is read by its names."""
+        if pinned is not None:
+            return pinned
+        if not loaded.name:
+            return self.named_agent(run)
+        kept = config.read_state(self.settings.state_dir, loaded.name).agent
+        if kept is not None and (kept.get("name"), kept.get("project")) == (run.agent, run.project):
+            agent = self.registry.get(str(kept.get("id")))
+            if agent is None:
+                raise AutomationError(
+                    f"run.agent: the agent it ran ({run.agent}) was deleted: choose another"
+                )
+            return agent
+        agent = self.named_agent(run)
+        self.bind_agent(loaded.name, agent, run)
+        return agent
+
+    def bind_agent(self, name: str, agent: AgentRecord, run: AutomationAgentRun) -> None:
+        def bound(state: config.State) -> None:
+            state.agent = {"id": agent.id, "name": run.agent, "project": run.project}
+
+        self.update_state(name, bound)
+
+    def watched(self, loaded: config.Loaded) -> tuple[set[str] | None, set[str] | None, list[str]]:
+        """The ids of the agents and projects `only` names (None: any), bound as the run's agent
+        is (a name: every agent so named when first read, I.1), and what is wrong with them."""
+        only = loaded.definition.only if loaded.definition else None
+        if only is None:
+            return None, None, []
+        state = config.read_state(self.settings.state_dir, loaded.name) if loaded.name else None
+        kept_agents = {n: v for n, v in (state.only_agents if state else {}).items()}
+        kept_projects = {n: v for n, v in (state.only_projects if state else {}).items()}
+        problems: list[str] = []
+        agents = (
+            None if only.agent is None else self._watched_agents(only.agent, kept_agents, problems)
+        )
+        projects = (
+            None
+            if only.project is None
+            else self._watched_projects(only.project, kept_projects, problems)
+        )
+        kept_agents = {n: v for n, v in kept_agents.items() if n in (only.agent or [])}
+        kept_projects = {n: v for n, v in kept_projects.items() if n in (only.project or [])}
+        if state is not None and (kept_agents, kept_projects) != (
+            state.only_agents,
+            state.only_projects,
+        ):
+
+            def bound(s: config.State) -> None:
+                s.only_agents, s.only_projects = kept_agents, kept_projects
+
+            self.update_state(loaded.name, bound)
+        return agents, projects, problems
+
+    def _watched_agents(
+        self, names: list[str], kept: dict[str, list[str]], problems: list[str]
+    ) -> set[str]:
+        found: set[str] = set()
+        for n in names:
+            ids = kept.get(n)
+            if ids is None:
+                ids = [a.id for a in self.registry.agents.values() if a.name == n]
+                if ids:
+                    kept[n] = ids
+            if not ids:
+                problems.append(f"only.agent: no agent named {n}")
+            elif not (alive := {i for i in ids if self.registry.get(i)}):
+                problems.append(f"only.agent: the agent {n} was deleted")
+            else:
+                found |= alive
+        return found
+
+    def _watched_projects(
+        self, names: list[str], kept: dict[str, str], problems: list[str]
+    ) -> set[str]:
+        found: set[str] = set()
+        for n in names:
+            pid = kept.get(n)
+            if pid is None:
+                named = [p.id for p in self.projects.projects.values() if p.name == n]
+                if named:
+                    pid = kept[n] = named[0]
+            if pid is None:
+                problems.append(f"only.project: no project named {n}")
+            elif self.projects.get(pid) is None:
+                problems.append(f"only.project: the project {n} was deleted")
+            else:
+                found.add(pid)
+        return found
+
+    def agent_problems(
+        self, loaded: config.Loaded, run: AutomationAgentRun, pinned: AgentRecord | None = None
+    ) -> tuple[list[str], list[str]]:
         """(problems, warnings) of an agent run: the agent, its interface and input, its model
         and the terms of its account's subscription (I.7)."""
         try:
-            agent = self.find_agent(run)
+            agent = self.find_agent(loaded, run, pinned)
         except AutomationError as e:
             return [str(e)], []
-        if agent.interface is None:
-            return [f"agent {run.agent} has no interface: only those run unattended (D.18)"], []
-        found = result_problems(agent.interface.result)
+        if agent.interface is None or agent.interface.result is None:
+            return [f"agent {run.agent} is not a job: only jobs run unattended (D.18)"], []
+        found = interfaces.result_problems(agent.interface.result)
         try:
             self.agent_input(agent, run)
         except AutomationError as e:
             found.append(str(e))
         warnings: list[str] = []
         try:
-            runs = checks.session_model(self.settings, agent, None)
-        except checks.CheckError as e:
+            runs = save_rules.session_model(self.settings, agent, None)
+        except save_rules.CheckError as e:
             return [*found, f"agent {run.agent}'s model: {e}"], warnings
         if runs.account is not None:
+            assert runs.harness is not None  # an account's harness, resolved
             login = catalog.get(runs.harness).descriptor.login
             assert login is not None  # an account's harness has one
             read = f", read on {login.checked}" if login.checked else ", not read yet"
@@ -390,15 +458,20 @@ class Automations:
                 )
         return found, warnings
 
-    def agent_input(self, agent: AgentRecord, run: AutomationAgentRun) -> SessionInput:
+    def agent_input(
+        self, agent: AgentRecord, run: AutomationAgentRun
+    ) -> tuple[SessionInput, SessionSubject | None]:
+        """The run's input, checked, and the skill it works on (D.18)."""
         assert agent.interface is not None
         given = SessionInput.model_validate(run.input.model_dump(by_alias=True))
         try:
-            return interfaces.check_input(agent.interface, given, self.settings.skills_dir)
+            return given, interfaces.check_input(agent.interface, given, self.settings.skills_dir)
         except interfaces.InterfaceError as e:
             raise AutomationError(f"run.input: {e}") from None
 
-    def checked(self, loaded: config.Loaded) -> tuple[list[str], list[str]]:
+    def checked(
+        self, loaded: config.Loaded, pinned: AgentRecord | None = None
+    ) -> tuple[list[str], list[str]]:
         """(problems, warnings): what keeps it from running (I.1), what to know first (I.7)."""
         root, _ = knowledge.root(self.settings)
         found = config.problems(
@@ -406,23 +479,26 @@ class Automations:
             providers_dir=self.settings.providers_dir,
             store=secrets.SecretStore(self.settings.data_dir),
             knowledge_root=root,
-            projects={p.name for p in self.projects.projects.values()},
-            agents={a.name for a in self.registry.agents.values() if a.name},
         )
+        found += self.watched(loaded)[2]
         definition, warnings = loaded.definition, []
         if definition is not None and (run := definition.agent_run) is not None:
-            more, warnings = self.agent_problems(run)
+            more, warnings = self.agent_problems(loaded, run, pinned)
             found += more
         call = definition.app_call if definition is not None else None
         if call is not None and call.app not in self.apps.records:
             found.append(f"run.app: no app named {call.app}")
+        if definition is not None and definition.app and definition.app not in self.apps.records:
+            found.append(f"app: no app named {definition.app}")
         return found, warnings
 
     def problems(self, loaded: config.Loaded) -> list[str]:
         return self.checked(loaded)[0]
 
-    def permissions(self, definition: Automation) -> list[str]:
+    def permissions(self, loaded: config.Loaded, pinned: AgentRecord | None = None) -> list[str]:
         """What it may touch and what starts it, in sentences (I.7)."""
+        definition = loaded.definition
+        assert definition is not None
         if (schedule := definition.schedule) is not None:
             days = f" on {', '.join(schedule.days)}" if schedule.days else ""
             when = (
@@ -458,23 +534,23 @@ class Automations:
             found.append("Tells your inbox when a run fails.")
         elif (run := definition.agent_run) is not None:
             where = f"of project {run.project}" if run.project else "of no project"
-            found.append(f"Runs the agent {run.agent} {where} unattended, without asking you.")
+            named = run.agent
             with contextlib.suppress(AutomationError):
-                agent = self.find_agent(run)
+                named = self.find_agent(loaded, run, pinned).name or run.agent
+            found.append(f"Runs the agent {named} {where} unattended, without asking you.")
+            with contextlib.suppress(AutomationError):
+                agent = self.find_agent(loaded, run, pinned)
                 folder = agent.scope or "a folder of its own for each run"
-                runs = agent.models[0] if agent.models else None
-                model = (
-                    " · ".join(
-                        x for x in (runs.harness, runs.account or runs.provider, runs.model) if x
-                    )
-                    if runs
-                    else "none"
+                runs = agent.model
+                model = " · ".join(
+                    x for x in (runs.harness, runs.account or runs.provider, runs.model) if x
                 )
                 found.append(
                     f"It works in {folder} (read-write), network {agent.network}, "
                     f"confinement {agent.confinement}, on {model}."
                 )
-            found.append("Sends its result to your inbox.")
+            opens = f", which opens the app {definition.app}" if definition.app else ""
+            found.append(f"Sends its result to your inbox{opens}.")
         elif (call := definition.app_call) is not None:
             found.append(f"Calls {call.call} of the app {call.app}, as you.")
             found.append("Tells your inbox when a call fails.")
@@ -499,6 +575,11 @@ class Automations:
                 next_at = schedules.next_slot(definition.schedule, last, now())
         pending = sum(1 for i in self.queue.values() if i.automation == name and not i.trial)
         busy = self.running.record.automation if self.running else None
+        agent_id = None
+        if definition is not None and (run := definition.agent_run) is not None:
+            with contextlib.suppress(AutomationError):
+                agent_id = self.find_agent(loaded, run).id
+        agents, projects, _ = self.watched(loaded)
         return AutomationView(
             name=name,
             description=definition.description if definition else None,
@@ -507,8 +588,11 @@ class Automations:
             files=config.files(loaded.path),
             problems=problems,
             enabled=state.enabled,
-            permissions=self.permissions(definition) if definition else [],
+            permissions=self.permissions(loaded) if definition else [],
             warnings=warnings,
+            agent_id=agent_id,
+            only_agents=sorted(agents or []),
+            only_projects=sorted(projects or []),
             next_at=next_at,
             pending=pending,
             behind=busy if pending and busy != name else None,
@@ -550,14 +634,19 @@ class Automations:
         *,
         example: str | None = None,
         definition: Automation | None = None,
+        agent_id: str | None = None,
         enable: bool = False,
     ) -> AutomationView:
-        """A new one, off: an example copied, or `definition` written (I.1); `enable`: then
-        turned on, when it has no problems (409 else, and it stays, off)."""
+        """A new one, off: an example copied, or `definition` written (I.1), its agent run's agent
+        `agent_id` when given (`pinned`); `enable`: then turned on, when it has no problems (409
+        else, and it stays, off)."""
         directory = self.settings.automations_dir
         try:
             if definition is not None:
+                definition, agent = self.pinned(definition, agent_id)
                 config.write_new(directory, name, definition)
+                if agent is not None and (run := definition.agent_run) is not None:
+                    self.bind_agent(name, agent, run)
             else:
                 assert example is not None
                 config.copy_example(directory, name, example)
@@ -567,20 +656,48 @@ class Automations:
             raise AutomationNotFoundError(str(e)) from None
         return self.enable(name) if enable else self.view(name)
 
-    def update(self, name: str, definition: Automation) -> AutomationView:
+    def update(
+        self, name: str, definition: Automation, agent_id: str | None = None
+    ) -> AutomationView:
         """`definition` written over its automation.toml (the owner's edit, as in an editor: on,
-        it stays on and the edit applies at its next run, I.7)."""
-        config.write_definition(self.get(name).path, definition)
+        it stays on and the edit applies at its next run, I.7), its agent run's agent `agent_id`
+        when given."""
+        path = self.get(name).path
+        definition, agent = self.pinned(definition, agent_id)
+        config.write_definition(path, definition)
+        if agent is not None and (run := definition.agent_run) is not None:
+            self.bind_agent(name, agent, run)
         return self.view(name)
 
-    def preview(self, definition: Automation) -> AutomationCheck:
+    def pinned(
+        self, definition: Automation, agent_id: str | None
+    ) -> tuple[Automation, AgentRecord | None]:
+        """The definition with the names of agent `agent_id` (its name, its project's) in its
+        agent run, and that agent: the form's choice, bound by id (I.1)."""
+        if agent_id is None:
+            return definition, None
+        run = definition.agent_run
+        agent = self.registry.get(agent_id)
+        if run is None or agent is None:
+            raise AutomationNotFoundError(f"agentId {agent_id}: no such agent, or no agent run")
+        if not agent.name:
+            raise AutomationError("agentId: an automation names its agent: give it a name")
+        project = self.projects.get(agent.project_id) if agent.project_id else None
+        named = run.model_copy(
+            update={"agent": agent.name, "project": project.name if project else None}
+        )
+        return definition.model_copy(update={"run": named}), agent
+
+    def preview(self, definition: Automation, agent_id: str | None = None) -> AutomationCheck:
         """What `definition` would do, its problems and warnings, before it is saved."""
-        problems, warnings = self.checked(config.Loaded("", Path(), definition))
+        definition, agent = self.pinned(definition, agent_id)
+        loaded = config.Loaded("", Path(), definition)
+        problems, warnings = self.checked(loaded, agent)
         at, schedule = now(), definition.schedule
         return AutomationCheck(
             problems=problems,
             warnings=warnings,
-            permissions=self.permissions(definition),
+            permissions=self.permissions(loaded, agent),
             next_at=schedules.next_slot(schedule, at, at) if schedule is not None else None,
         )
 
@@ -786,16 +903,16 @@ class Automations:
         loop = asyncio.get_running_loop()
         started = loop.time()
         try:
-            agent = self.find_agent(run)
-            given = self.agent_input(agent, run)
-            runs = checks.session_model(self.settings, agent, None)
-        except (AutomationError, checks.CheckError) as e:
+            agent = self.find_agent(loaded, run)
+            given, subject = self.agent_input(agent, run)
+            runs = save_rules.session_model(self.settings, agent, None)
+        except (AutomationError, save_rules.CheckError) as e:
             self.end(running.record, "failed", error=str(e))
             return
         if running.cancelled:  # before its session: nothing to stop, nothing to start
             self.end(running.record, "cancelled")
             return
-        session = self.sessions.create(agent, runs, origin="automation", run=given)
+        session = self.sessions.create(agent, runs, origin="automation", run=given, subject=subject)
         running.record = running.record.model_copy(update={"agent_session_id": session.id})
         self.write_record(running.record)
         while True:
@@ -984,7 +1101,7 @@ class Automations:
         session["agent"] = settings
         model = " · ".join(x for x in (rec.harness, rec.account or rec.provider, rec.model) if x)
         header = [
-            ("Agent", agent_name or rec.harness),
+            ("Agent", agent_name or rec.harness or "the model alone"),
             ("Project", project_name or "none (an ad-hoc agent)"),
             ("Model", model),
             ("Folder", rec.scope),
@@ -1078,20 +1195,24 @@ class Automations:
         loaded = config.get(self.settings.automations_dir, record.automation)
         run = loaded.definition.agent_run if loaded and loaded.definition else None
         title = record.automation + (" (try)" if record.trial else "")
+        definition = loaded.definition if loaded else None
+        call = definition.app_call if definition else None
+        agent = None
+        if loaded is not None and run is not None:
+            with contextlib.suppress(AutomationError):
+                agent = self.find_agent(loaded, run).name
         fields: dict[str, Any] = {
             "source": "automation",
             "name": record.automation,
-            "agent": run.agent if run else None,
+            "agent": (agent or run.agent) if run else None,
+            "app": call.app if call else definition.app if definition else None,
             "person": "owner",
             "title": title,
             "run_id": record.id,
             "session_id": record.agent_session_id,
         }
         if result is not None:
-            status: InboxStatus = result["status"] if result.get("status") in STATUSES else "ok"
-            summary = result.get("summary")
-            summary = summary if isinstance(summary, str) else None
-            self.inbox.add(**fields, status=status, summary=summary, data=result)
+            self.inbox.add(**fields, **told_result(result))
         elif record.state == "failed" and (run is not None or not record.trial):
             self.inbox.add(**fields, status="failed", summary=record.error)
 

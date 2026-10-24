@@ -1,0 +1,15 @@
+{
+  "$id": "urn:handler.control/v1/transcription",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "Transcription",
+  "type": "object"
+}

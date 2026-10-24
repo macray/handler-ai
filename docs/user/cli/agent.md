@@ -17,20 +17,22 @@ Agents of projects are created and edited in the web UI. Agents outside projects
 ```
 handler agent list
 handler agent show ID
-handler agent rm ID
+handler agent rm ID [--yes]
 handler agent network ID [log-only|enforce]
+handler agent checks ID [--run]
 ```
 
 ## Subcommands
 
 | Subcommand | |
 |---|---|
-| `list` | every agent, most recently used first: id, project (`(ad hoc)` outside projects), name, what it runs on, its settings (what differs from the defaults), live sandboxes, folder |
-| `show ID` | its settings in full: folder, models, network and hosts, permissions, bindings, knowledge, skills, containers, display, live sandboxes |
-| `rm ID` | delete an agent outside projects and stop its sandboxes. The next `handler run` in that folder starts from the preset again. A project's agents are removed in the web UI |
+| `list` | every agent, most recently used first: id, home (`project NAME`, `app NAME`, `Chat` or `outside projects`), name (and what it was set up from), what it runs on, its settings (what differs from the defaults), live sandboxes, folder |
+| `show ID` | its settings in full: folder, model, network and hosts, permissions, bindings, knowledge, skills, containers, display, live sandboxes, and the [apps](../apps.md) you gave it to |
+| `rm ID` | delete an agent outside projects and stop its sandboxes. The next `handler run` in that folder starts from the preset again. When an app uses it, says so and asks first (`--yes`: does not ask): the app stops running it until you give it another. A project's agents are removed in the web UI |
 | `network ID` | its network mode, its own hosts, and its recent connections |
 | `network ID log-only` | a filtered agent: every host goes through and is logged, live, while it works |
 | `network ID enforce` | back to blocking what is not allowed |
+| `checks ID` | a job's checks: kept runs with their right answer; `--run` runs them all |
 
 ## Connections
 

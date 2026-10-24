@@ -1,10 +1,32 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/inter/opsz.css"; /* optical sizes: titles get the display cut */
+@import "@fontsource-variable/jetbrains-mono";
 @import "@handler/acp-view/theme.css"; /* tokens, markdown, the terminal surface */
 
 @custom-variant dark (&:is(.dark *));
 
 /* the shared components are compiled here: let Tailwind see their classes */
 @source "../../acp-view/src";
+
+/* Settings → Appearance → Menu: Liquid (lib/theme.svelte.ts). A calm backdrop, small variations
+   only, seen through the menu, which blurs it; the pages stay solid. */
+.liquid body {
+  background:
+    radial-gradient(120% 70% at 0% 100%, #efdfcb 0%, transparent 70%),
+    radial-gradient(90% 50% at 0% 0%, #e4e6e6 0%, transparent 70%),
+    linear-gradient(170deg, #f2efea 0%, #ebe5dd 100%);
+  background-attachment: fixed;
+}
+.dark.liquid body {
+  background:
+    radial-gradient(120% 70% at 0% 100%, #3a2a1d 0%, transparent 70%),
+    radial-gradient(90% 50% at 0% 0%, #23272a 0%, transparent 70%),
+    linear-gradient(170deg, #211f1c 0%, #171513 100%);
+  background-attachment: fixed;
+}
+.liquid [data-slot="sidebar-inner"] {
+  background: color-mix(in srgb, var(--sidebar) 50%, transparent);
+  backdrop-filter: blur(28px) saturate(150%);
+}

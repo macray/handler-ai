@@ -15,7 +15,7 @@ status: ("ready" | "incomplete" | "invalid")
 problems?: string[]
 error?: (string | null)
 connectors?: boolean
-contexts?: string[]
+areas?: string[]
 agents?: string[]
 sessions?: number
 lastUsedAt?: (string | null)
@@ -48,67 +48,40 @@ harness: string
 description?: (string | null)
 plan?: (string | null)
 connectors?: boolean
-contexts?: string[]
+areas?: string[]
 }
 
-export interface AdHocAgentRequest {
-/**
- * @minItems 1
- */
-models: [ModelAccess, ...(ModelAccess)[]]
-network?: ("none" | "filtered" | "open")
-egress?: ("enforce" | "log-only")
-allow?: string[]
-confinement?: ("strict" | "nested" | "privileged")
-permissions?: ("ask" | "accept-edits" | "bypass")
-bindings?: string[]
-knowledge?: string[]
-display?: boolean
-interface?: (AgentInterface | null)
-scope?: (string | null)
-name?: (string | null)
-description?: (string | null)
-instructions?: (string | null)
-skills?: string[]
-origin?: (string | null)
-confirmRisks?: boolean
-}
-/**
- * What an agent runs as (E): a harness and the account or the provider its model calls use
- * (exactly one), and the model. An agent has one or more (D.1); a session runs with one.
- */
-
-export interface ModelAccess {
-harness?: (string | null)
-account?: (string | null)
-provider?: (string | null)
-model?: (string | null)
-}
-/**
- * What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and
- * the result its final message holds. An agent with one runs unattended, so in permission mode
- * `bypass`: no one is there to answer its requests.
- */
-
-export interface AgentInterface {
-fields?: ({
-[k: string]: unknown
-} | null)
-subject?: ("skill" | null)
-result: {
+export interface ActionRequest {
+fields?: {
 [k: string]: unknown
 }
-timeoutSec?: number
 }
 
-export interface AddAppRequest {
-sourceDir: string
+export interface ActionRun {
+app: string
+action: string
+state: ("running" | "succeeded" | "failed")
+result?: (ActionResult | null)
+error?: (string | null)
+runId?: (string | null)
+sessionId?: (string | null)
+}
+/**
+ * What an action gives (H.12): how it went, one or two sentences readable aloud, and what else
+ * the app wants to show. A route answers it; an agent's run gives it from its result (its
+ * `status` and `summary`, I.3's rule).
+ */
+
+export interface ActionResult {
+status: ("ok" | "attention" | "failed")
+summary: string
+data?: {
+[k: string]: unknown
+}
 }
 
-export interface AddonCatalogEntry {
-name: string
-description?: (string | null)
-installed?: boolean
+export interface AddSourceRequest {
+url: string
 }
 
 export interface AddonInfo {
@@ -163,6 +136,7 @@ steps?: (number | null)
 versions?: {
 [k: string]: string
 }
+warnings?: string[]
 error?: (string | null)
 startedAt: string
 endedAt?: (string | null)
@@ -191,11 +165,61 @@ replaces?: (("builtin" | "installed" | "own") | null)
  * A setting or secret slot of an addon (G.1), for the binding form.
  */
 
-export interface AgentRequest {
+export interface AgentChecks {
+checks: Check[]
+comparable?: string[]
+last?: (CheckRun | null)
+changed?: string[]
+}
+/**
+ * A run of a job kept with its right answer (D.20): run again with its input, it passes when
+ * every field of `compare` comes back as in `answer`.
+ */
+
+export interface Check {
+id: string
+name: string
+input?: {
+[k: string]: unknown
+}
+answer: {
+[k: string]: unknown
+}
 /**
  * @minItems 1
  */
-models: [ModelAccess, ...(ModelAccess)[]]
+compare: [string, ...(string)[]]
+fromRun?: (string | null)
+createdAt: string
+problem?: (string | null)
+}
+/**
+ * An agent's checks run once, one after another (D.20).
+ */
+
+export interface CheckRun {
+id: string
+startedAt: string
+endedAt?: (string | null)
+results: CheckResult[]
+}
+/**
+ * One check in a check run (D.20).
+ */
+
+export interface CheckResult {
+checkId: string
+name: string
+state: ("waiting" | "running" | "passed" | "failed" | "error")
+sessionId?: (string | null)
+got?: ({
+[k: string]: unknown
+} | null)
+why?: (string | null)
+}
+
+export interface AgentRequest {
+model: ModelAccess
 network?: ("none" | "filtered" | "open")
 egress?: ("enforce" | "log-only")
 allow?: string[]
@@ -205,21 +229,64 @@ bindings?: string[]
 knowledge?: string[]
 display?: boolean
 interface?: (AgentInterface | null)
-name: string
+modelAlone?: boolean
+projectId?: (string | null)
+app?: (string | null)
+chat?: boolean
+scope?: (string | null)
+name?: (string | null)
 description?: (string | null)
 instructions?: (string | null)
+skills?: string[]
+origin?: (AgentOrigin | null)
 default?: boolean
 remoteStart?: boolean
-skills?: string[]
 confirmRisks?: boolean
 }
 /**
  * What an agent runs as (E): a harness and the account or the provider its model calls use
- * (exactly one), and the model. An agent has one or more (D.1); a session runs with one.
+ * (exactly one), and the model. An agent has one (D.1); a session runs with it or another picked
+ * for that session (D.19). An agent on the model alone (D.18) has no harness: a provider only
+ * (AgentSettings checks it).
  */
 
+export interface ModelAccess {
+harness?: (string | null)
+account?: (string | null)
+provider?: (string | null)
+model?: (string | null)
+}
+/**
+ * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
+ * skill of the library to work on, its subject), and maybe the result its final message holds.
+ * With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
+ * to answer its requests). Without, a brief: the form starts a session you then work in.
+ */
+
+export interface AgentInterface {
+fields?: ({
+[k: string]: unknown
+} | null)
+result?: ({
+[k: string]: unknown
+} | null)
+timeoutSec?: (number | null)
+}
+/**
+ * What an agent was set up from, kept for good: the definition of an app's need (H.2), an
+ * agents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it
+ * came from: where the agent lives is its home (`projectId`, `app`, `chat`).
+ */
+
+export interface AgentOrigin {
+kind: ("app" | "agents-file" | "handler-need")
+name: string
+agent?: (string | null)
+version?: (number | null)
+}
+
 export interface Agent {
-models: AgentModel[]
+model: AgentModel
 network: ("none" | "filtered" | "open")
 egress?: (("enforce" | "log-only") | null)
 allow?: string[]
@@ -229,28 +296,31 @@ bindings?: string[]
 knowledge?: string[]
 display?: boolean
 interface?: (AgentInterface | null)
+modelAlone?: boolean
 scope?: (string | null)
 id: string
 name?: (string | null)
 projectId?: (string | null)
 description?: (string | null)
 instructions?: (string | null)
-origin?: (string | null)
+app?: (string | null)
+chat?: boolean
+origin?: (AgentOrigin | null)
 remoteStart?: boolean
 skills?: string[]
 projectSkills?: string[]
-context?: (string | null)
+area?: (string | null)
 acpUrl: string
 connections: Connection[]
 createdAt: string
 lastUsedAt?: (string | null)
 }
 /**
- * One of an agent's models (D.1): its harness resolved, and what it needs now.
+ * An agent's model (D.1): its harness resolved, and what it needs now.
  */
 
 export interface AgentModel {
-harness: string
+harness: (string | null)
 account?: (string | null)
 provider?: (string | null)
 model?: (string | null)
@@ -266,9 +336,10 @@ host: string
 by: string
 }
 /**
- * What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and
- * the result its final message holds. An agent with one runs unattended, so in permission mode
- * `bypass`: no one is there to answer its requests.
+ * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
+ * skill of the library to work on, its subject), and maybe the result its final message holds.
+ * With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
+ * to answer its requests). Without, a brief: the form starts a session you then work in.
  */
 
 export interface Connection {
@@ -279,8 +350,93 @@ terminal?: (ModelAccess | null)
 }
 /**
  * What an agent runs as (E): a harness and the account or the provider its model calls use
- * (exactly one), and the model. An agent has one or more (D.1); a session runs with one.
+ * (exactly one), and the model. An agent has one (D.1); a session runs with it or another picked
+ * for that session (D.19). An agent on the model alone (D.18) has no harness: a provider only
+ * (AgentSettings checks it).
  */
+
+export interface AgentsExport {
+file: AgentsFile
+replaced?: string[]
+}
+/**
+ * Agents written so they can be set up again in another project (D.23): their definitions
+ * without what is yours (the models they run as, their folder, the addon configurations and
+ * knowledge folders they were given), with what they need instead.
+ */
+
+export interface AgentsFile {
+name: string
+description?: (string | null)
+version: number
+place?: ("project" | "outside")
+/**
+ * @minItems 1
+ */
+agents: [AgentsFileAgent, ...(AgentsFileAgent)[]]
+}
+/**
+ * One of an agents file's agents (D.23): its definition and the checks that come with it.
+ */
+
+export interface AgentsFileAgent {
+part: string
+definition: AgentDefinition
+checks?: AgentsFileCheck[]
+}
+/**
+ * What an agent set up from it starts with (D.18): everything but what it runs as and where
+ * it works, its defaults; `skills` come with it, installed in the library when it is set up.
+ * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
+ * and those Handler ships for its needs (D.18).
+ */
+
+export interface AgentDefinition {
+agentName: string
+agentDescription?: (string | null)
+instructions?: (string | null)
+network?: ("none" | "filtered" | "open")
+egress?: ("enforce" | "log-only")
+allow?: string[]
+confinement?: ("strict" | "nested" | "privileged")
+permissions?: ("ask" | "accept-edits" | "bypass")
+skills?: string[]
+interface?: (AgentInterface | null)
+addons?: string[]
+knowledge?: string[]
+display?: boolean
+modelAlone?: boolean
+}
+/**
+ * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
+ * skill of the library to work on, its subject), and maybe the result its final message holds.
+ * With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
+ * to answer its requests). Without, a brief: the form starts a session you then work in.
+ */
+
+export interface AgentsFileCheck {
+name: string
+input?: {
+[k: string]: unknown
+}
+answer: {
+[k: string]: unknown
+}
+/**
+ * @minItems 1
+ */
+compare: [string, ...(string)[]]
+}
+
+export interface AppAction {
+name: string
+description: string
+examples?: string[]
+by: ("code" | "agent")
+fields?: ({
+[k: string]: unknown
+} | null)
+}
 
 export interface AppLink {
 url: string
@@ -293,7 +449,6 @@ text: string
 export interface App {
 name: string
 description?: (string | null)
-sourceDir: string
 url: string
 state: ("stopped" | "starting" | "running" | "failed")
 error?: (string | null)
@@ -301,39 +456,67 @@ current?: (AppDeployment | null)
 previous?: (AppDeployment | null)
 source: AppSource
 secrets?: AppSecret[]
-shortcut?: (string | null)
+files?: AppFileNeed[]
+agents?: AppAgentNeed[]
+suggests?: AppManifestSuggestedAutomation[]
 persons?: string[]
 lastUsedAt?: (string | null)
+fromSource?: (string | null)
+actions?: AppAction[]
+askable?: boolean
 }
 /**
- * One installed version of a mini app (H.6).
+ * One installed version of an app (H.6).
  */
 
 export interface AppDeployment {
 version: string
 deployedAt: string
-needs: MiniAppNeeds
+needs: AppManifestNeeds
 }
 /**
  * What the app may reach (H.2). Shown when it is deployed; more than before is flagged.
  */
 
-export interface MiniAppNeeds {
+export interface AppManifestNeeds {
 egress?: string[]
 secrets?: string[]
+files?: {
+[k: string]: AppManifestFileNeed
+}
+notify?: boolean
+agents?: {
+[k: string]: AppManifestAgentNeed
+}
+}
+/**
+ * A folder (or a file) of the person's the backend reads (or writes), H.9: which one is the
+ * person's choice at install, mounted at the same path.
+ * 
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
+ */
+
+export interface AppManifestFileNeed {
+description?: (string | null)
+mode?: ("ro" | "rw")
 /**
  * @maxItems 10
  */
-files?: []|[MiniAppFile]|[MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]|[MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile, MiniAppFile]
-notify?: boolean
+init?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string, string]
 }
 /**
- * A file or folder of the host the backend may read (or write): mounted at the same path.
+ * A job the app starts runs of (H.11): which agent is the person's choice at install, one of
+ * theirs that fits or one set up from the definition the app ships.
+ * 
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
  */
 
-export interface MiniAppFile {
-path: string
-mode?: ("ro" | "rw")
+export interface AppManifestAgentNeed {
+description?: (string | null)
+from: string
+worksIn?: (string | null)
 }
 /**
  * The app's source folder as it is now: what Deploy would install (H.6).
@@ -344,6 +527,7 @@ version?: (string | null)
 description?: (string | null)
 error?: (string | null)
 addedNeeds?: string[]
+needs?: (AppManifestNeeds | null)
 }
 /**
  * A secret an app declares (current or source version): whether it has a value. The value
@@ -353,6 +537,127 @@ addedNeeds?: string[]
 export interface AppSecret {
 name: string
 set: boolean
+}
+/**
+ * A folder an app needs (current or source version, H.2), and the one given for it.
+ */
+
+export interface AppFileNeed {
+name: string
+description?: (string | null)
+mode: ("ro" | "rw")
+path?: (string | null)
+}
+/**
+ * An agent an app needs (current or source version, H.2), the one given for it, and the
+ * person's agents that fit it (D.18: its form takes what the app sends, its result gives what
+ * the app reads; it works in the folder given for `worksIn`).
+ */
+
+export interface AppAgentNeed {
+name: string
+description?: (string | null)
+worksIn?: (string | null)
+definition?: (AgentDefinition | null)
+origin: AgentOrigin
+agentId?: (string | null)
+problem?: (string | null)
+fits?: string[]
+}
+/**
+ * What an agent set up from it starts with (D.18): everything but what it runs as and where
+ * it works, its defaults; `skills` come with it, installed in the library when it is set up.
+ * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
+ * and those Handler ships for its needs (D.18).
+ */
+
+export interface AppManifestSuggestedAutomation {
+description: string
+when: Schedule
+run: AppManifestSuggestedRun
+}
+/**
+ * A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.
+ */
+
+export interface Schedule {
+every?: (string | null)
+at?: (string | null)
+days?: (("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[] | null)
+}
+/**
+ * What a suggested automation runs: the agent given for one of the app's needs.
+ */
+
+export interface AppManifestSuggestedRun {
+agent: string
+input?: AutomationAgentInput
+}
+/**
+ * What the agent's run is started with (D.18 `SessionInput`).
+ */
+
+export interface AutomationAgentInput {
+fields?: {
+[k: string]: unknown
+}
+}
+/**
+ * One of an app's actions (H.12), as its page and Ask's router see it.
+ */
+
+export interface AreaInfo {
+name: string
+color: ("blue" | "violet" | "cyan" | "pink" | "slate")
+projects?: string[]
+accounts?: string[]
+providers?: string[]
+}
+
+export interface AreaRequest {
+name: string
+color: ("blue" | "violet" | "cyan" | "pink" | "slate")
+}
+
+export interface AssistantAnswer {
+kind: ("pick" | "needs" | "none")
+summary: string
+app?: (string | null)
+action?: (string | null)
+why?: (string | null)
+fields?: ({
+[k: string]: unknown
+} | null)
+run?: (ActionRun | null)
+question?: (string | null)
+actions?: ActionOption[]
+routerRun?: (string | null)
+}
+/**
+ * An action, done or under way (H.12).
+ */
+
+export interface ActionOption {
+app: string
+action: string
+description: string
+}
+
+export interface AssistantRequest {
+/**
+ * @minItems 1
+ * @maxItems 20
+ */
+turns: [AskTurn]|[AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]
+timezone?: (string | null)
+}
+/**
+ * One turn of an exchange with Ask: the person's words, or what Handler answered.
+ */
+
+export interface AskTurn {
+who: ("you" | "handler")
+text: string
 }
 
 export interface AutomationCheck {
@@ -364,6 +669,7 @@ nextAt?: (string | null)
 
 export interface AutomationDefinitionRequest {
 definition: Automation
+agentId?: (string | null)
 }
 /**
  * automation.toml (I.1).
@@ -378,18 +684,10 @@ run: (string | AutomationAgentRun | AutomationAppCall)
 timeoutSec?: (number | null)
 services?: (AutomationServices | null)
 append?: AutomationAppend[]
+app?: (string | null)
 }
 /**
  * A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.
- */
-
-export interface Schedule {
-every?: (string | null)
-at?: (string | null)
-days?: (("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[] | null)
-}
-/**
- * The sessions an automation is for: by their project's name, their agent's; absent: any.
  */
 
 export interface AutomationOnly {
@@ -397,7 +695,7 @@ project?: (string[] | null)
 agent?: (string[] | null)
 }
 /**
- * `run = { agent, project?, input? }`: a run of an agent with an interface (I.3, D.18).
+ * `run = { agent, project?, input? }`: a run of a job, an agent with a result (I.3, D.18).
  */
 
 export interface AutomationAgentRun {
@@ -407,20 +705,6 @@ input?: AutomationAgentInput
 }
 /**
  * What the agent's run is started with (D.18 `SessionInput`).
- */
-
-export interface AutomationAgentInput {
-fields?: {
-[k: string]: unknown
-}
-subject?: (AutomationSubject | null)
-}
-
-export interface AutomationSubject {
-skill: string
-}
-/**
- * `run = { app, call }`: a call to a mini app's route, as the owner (I.3, H.9).
  */
 
 export interface AutomationAppCall {
@@ -493,6 +777,9 @@ pending?: number
 behind?: (string | null)
 capped?: boolean
 lastRun?: (AutomationRun | null)
+agentId?: (string | null)
+onlyAgents?: string[]
+onlyProjects?: string[]
 }
 /**
  * automation.toml (I.1).
@@ -537,27 +824,6 @@ text: string
 nextOffset: number
 complete: boolean
 }
-
-export interface BuiltinAgent {
-name: string
-description: string
-agentName: string
-agentDescription?: (string | null)
-instructions?: (string | null)
-network?: ("none" | "filtered" | "open")
-egress?: ("enforce" | "log-only")
-allow?: string[]
-confinement?: ("strict" | "nested" | "privileged")
-permissions?: ("ask" | "accept-edits" | "bypass")
-skills?: string[]
-interface?: (AgentInterface | null)
-agentId?: (string | null)
-}
-/**
- * What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and
- * the result its final message holds. An agent with one runs unattended, so in permission mode
- * `bypass`: no one is there to answer its requests.
- */
 
 export interface CacheSizes {
 sizes: {
@@ -630,23 +896,19 @@ about?: string
 general?: boolean
 }
 
-export interface ContextInfo {
+export interface CheckUpdateRequest {
 name: string
-color: ("blue" | "violet" | "cyan" | "pink" | "slate")
-projects?: string[]
-accounts?: string[]
-providers?: string[]
-}
-
-export interface ContextRequest {
-name: string
-color: ("blue" | "violet" | "cyan" | "pink" | "slate")
+/**
+ * @minItems 1
+ */
+compare: [string, ...(string)[]]
 }
 
 export interface CreateAutomationRequest {
 name: string
 from?: (string | null)
 definition?: (Automation | null)
+agentId?: (string | null)
 enable?: boolean
 }
 /**
@@ -668,16 +930,18 @@ description?: (string | null)
 folder: string
 defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
-context?: (string | null)
+area?: (string | null)
+skills?: string[]
 /**
  * @minItems 1
  */
 agents: [AgentRequest, ...(AgentRequest)[]]
 }
 /**
- * An agent of a project: its settings (all its own, never followed from its project; it
- * works in its project's folder) and what it is in the project. The body of create (POST) and
- * of a full update (PUT).
+ * An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a
+ * project (`projectId`: it works in the project's folder), an app (`app`: one of its parts,
+ * H.14), Chat (`chat`: someone you talk to, with no folder), or none (outside projects, in its
+ * own folder or a folder per session). The home is given at creation and never changes.
  */
 
 export interface CreateSessionRequest {
@@ -686,30 +950,34 @@ acpSessionId?: (string | null)
 prompt?: (string | null)
 input?: (SessionInput | null)
 fromSkill?: (string | null)
+appDraft?: (SessionAppDraft | null)
 model?: (ModelAccess | null)
-origin?: ("ui" | "cli" | "editor" | "phone" | "automation")
+origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask")
 }
 /**
- * What a run of an agent with an interface is started with (D.18).
+ * What a session of an agent with an interface is started with (D.18): a job's run, a
+ * brief's session.
  */
 
 export interface SessionInput {
 fields?: {
 [k: string]: unknown
 }
-subject?: (SessionSubject | null)
 }
 /**
- * The handler object a run works on (D.18).
+ * A session working on a draft of an app's code (H.15): its folder, kept by Handler, starts
+ * as a copy of `app`'s code, or empty for a new app (none). Used (`POST
+ * /v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app.
  */
 
-export interface SessionSubject {
-skill: string
-digest?: (string | null)
+export interface SessionAppDraft {
+app?: (string | null)
 }
 /**
  * What an agent runs as (E): a harness and the account or the provider its model calls use
- * (exactly one), and the model. An agent has one or more (D.1); a session runs with one.
+ * (exactly one), and the model. An agent has one (D.1); a session runs with it or another picked
+ * for that session (D.19). An agent on the model alone (D.18) has no harness: a provider only
+ * (AgentSettings checks it).
  */
 
 export interface CreateSkillRequest {
@@ -729,6 +997,22 @@ name: string
 path: string
 }
 
+export interface DraftPreview {
+app: string
+url: string
+copies: DraftCopy[]
+}
+/**
+ * What an opened draft works on instead of the real thing (H.16).
+ */
+
+export interface DraftCopy {
+what: string
+path?: (string | null)
+how: ("copy" | "read-only" | "empty")
+size?: (number | null)
+}
+
 export interface EgressEvent {
 t: string
 connection: string
@@ -737,6 +1021,32 @@ host: string
 secret?: (string | null)
 }
 
+export interface ExportAgentsRequest {
+name: string
+description?: (string | null)
+projectId: string
+/**
+ * @minItems 1
+ */
+agentIds: [string, ...(string)[]]
+dryRun?: boolean
+}
+
+export interface HandlerNeed {
+name: string
+description: string
+version: number
+definition: AgentDefinition
+agentId?: (string | null)
+fits?: string[]
+}
+/**
+ * What an agent set up from it starts with (D.18): everything but what it runs as and where
+ * it works, its defaults; `skills` come with it, installed in the library when it is set up.
+ * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
+ * and those Handler ships for its needs (D.18).
+ */
+
 export interface HarnessInfo {
 name: string
 product: string
@@ -744,7 +1054,7 @@ image: string
 imagePresent: boolean
 version?: (string | null)
 builtAt?: (string | null)
-providerProtocols?: ("anthropic" | "openai-chat" | "responses")[]
+providerProtocols?: ("anthropic" | "openai-chat" | "responses" | "transcriptions")[]
 login?: (LoginRecipe | null)
 loginFile?: (string | null)
 permissions?: ("ask" | "accept-edits" | "bypass")[]
@@ -808,6 +1118,38 @@ nextRun?: (string | null)
 lastFailed?: string[]
 }
 
+export interface Improvement {
+id: string
+agentId: string
+goal: string
+maxAttempts: number
+maxMinutes: number
+state: ("running" | "done" | "stopped" | "failed")
+why?: (string | null)
+attempts: Attempt[]
+best?: number
+kept?: (number | null)
+startedAt: string
+endedAt?: (string | null)
+}
+/**
+ * One version of a job's instructions in an improvement, and how its checks went (D.21).
+ */
+
+export interface Attempt {
+n: number
+instructions: string
+change?: (string | null)
+state: ("writing" | "checking" | "done" | "error")
+why?: (string | null)
+writerRun?: (string | null)
+results?: CheckResult[]
+passed?: number
+}
+/**
+ * One check in a check run (D.20).
+ */
+
 export interface InboxMessage {
 id: string
 source: ("app" | "automation")
@@ -822,8 +1164,19 @@ data?: {
 }
 runId?: (string | null)
 sessionId?: (string | null)
+app?: (string | null)
 at: string
 read?: boolean
+}
+
+export interface KeepAttemptRequest {
+attempt: number
+}
+
+export interface KeepCheckRequest {
+fromRun: string
+name?: (string | null)
+compare?: (string[] | null)
 }
 
 export interface KnowledgeFolderView {
@@ -880,7 +1233,8 @@ description?: (string | null)
 folder: string
 defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
-context?: (string | null)
+area?: (string | null)
+skills?: string[]
 }
 
 export interface Project {
@@ -890,16 +1244,20 @@ description?: (string | null)
 folder: string
 defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
-context?: (string | null)
+area?: (string | null)
+skills?: string[]
+apps?: string[]
+pinned: boolean
 agents: Agent[]
 createdAt: string
 lastUsedAt?: (string | null)
 }
 /**
- * What sessions are opened on: a harness on an account or a provider (what, one of its
- * models) working in a folder (where), with its settings. An agent of a project has a
- * `projectId` (its settings all its own; its folder, caches and skills its project's); an
- * ad-hoc one has none (`handler run`, `handler acp` and `handler terminal` outside projects).
+ * What sessions are opened on: a harness on an account or a provider (what, its model)
+ * working in a folder (where), with its settings. Its home: a project (`projectId`: its
+ * settings all its own; its folder, caches and skills its project's), an app (`app`: one of its
+ * parts), Chat (`chat`: someone you talk to), or none (outside projects: made on the Other
+ * folders page, or by `handler run`, `handler acp` and `handler terminal`).
  */
 
 export interface ProviderInfo {
@@ -915,8 +1273,9 @@ problems?: string[]
 error?: (string | null)
 agents?: string[]
 harnesses?: string[]
+modelAlone?: boolean
 files?: string[]
-contexts?: string[]
+areas?: string[]
 }
 
 export interface ProviderModel {
@@ -926,6 +1285,7 @@ contextWindow?: (number | null)
 maxOutput?: (number | null)
 reasoning?: boolean
 images?: boolean
+speech?: boolean
 temperature?: (number | null)
 native?: ({
 [k: string]: {
@@ -951,7 +1311,7 @@ files?: ({
 [k: string]: FileSecret | EnvSecret | FileContent
 }
 } | null)
-contexts?: string[]
+areas?: string[]
 }
 
 export interface FileContent {
@@ -1112,7 +1472,7 @@ export interface Session {
 id: string
 agentId: string
 projectId?: (string | null)
-harness: string
+harness: (string | null)
 account?: (string | null)
 provider?: (string | null)
 model?: (string | null)
@@ -1126,18 +1486,33 @@ attached?: number
 remote?: boolean
 canResume?: boolean
 error?: (string | null)
+missingImage?: (string | null)
 harnessVersion?: (string | null)
-origin?: ("ui" | "cli" | "editor" | "phone" | "automation")
+origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask")
+app?: (string | null)
+waitingFor?: (string | null)
 lastStopReason?: (string | null)
 answer?: (string | null)
 input?: (SessionInput | null)
+unattended?: boolean
+subject?: (SessionSubject | null)
 output?: (SessionOutput | null)
+appDraft?: (SessionAppDraft | null)
 createdAt: string
 lastActivityAt: string
 acpUrl: string
 }
 /**
- * What a run of an agent with an interface is started with (D.18).
+ * What a session of an agent with an interface is started with (D.18): a job's run, a
+ * brief's session.
+ */
+
+export interface SessionSubject {
+skill: string
+digest: string
+}
+/**
+ * A run's result (D.18), taken from its final message once its turn ended.
  */
 
 export interface SessionOutput {
@@ -1146,6 +1521,20 @@ value?: {
 [k: string]: unknown
 }
 error?: (string | null)
+}
+/**
+ * A session working on a draft of an app's code (H.15): its folder, kept by Handler, starts
+ * as a copy of `app`'s code, or empty for a new app (none). Used (`POST
+ * /v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app.
+ */
+
+export interface SetAppAgentRequest {
+agentId: string
+}
+
+export interface SetAppFileRequest {
+path: string
+create?: boolean
 }
 
 export interface SetAppPersonsRequest {
@@ -1159,13 +1548,17 @@ export interface SetAppSecretRequest {
 value: string
 }
 
-export interface SetAppShortcutRequest {
-shortcut: (string | null)
+export interface SetHandlerNeedAgentRequest {
+agentId: string
 }
 
 export interface SetKnowledgeRootRequest {
 root: (string | null)
 create?: boolean
+}
+
+export interface SetProjectPinnedRequest {
+pinned: boolean
 }
 
 export interface SetRemoteGatewayRequest {
@@ -1232,6 +1625,126 @@ export interface SkillUrlRequest {
 url: string
 }
 
+export interface SourceItemDetail {
+source: Source
+item: SourceItem
+readme?: (string | null)
+app?: (AppManifest | null)
+agents?: (AgentsFile | null)
+addon?: (AddonPreview | null)
+}
+/**
+ * A git repository Handler reads to offer things to install (D.26). The official one is
+ * Handler's; any other was added by the person, who trusts it.
+ */
+
+export interface Source {
+id: string
+url: string
+official?: boolean
+name?: (string | null)
+description?: (string | null)
+commit?: (string | null)
+fetchedAt?: (string | null)
+error?: (string | null)
+items?: SourceItem[]
+}
+/**
+ * Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an
+ * agents file's content) or an addon (`addons/<name>/`).
+ */
+
+export interface SourceItem {
+kind: ("app" | "agents" | "addon")
+name: string
+description?: (string | null)
+version?: (string | null)
+installed?: boolean
+update?: boolean
+error?: (string | null)
+notes?: SourceNote[]
+}
+/**
+ * One thing a source's item does, in a few words, for its card (D.26): "uses 1 folder of
+ * yours", "reaches 2 sites".
+ */
+
+export interface SourceNote {
+text: string
+weakens?: boolean
+}
+
+export interface AppManifest {
+apiVersion: "handler.app/v1"
+name: string
+version: string
+description?: (string | null)
+server?: AppManifestServer
+ui?: AppManifestUi
+needs?: AppManifestNeeds
+routes?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^(POST|PUT|PATCH|DELETE) /api/[A-Za-z0-9/_.-]*$".
+ */
+[k: string]: "sync" | "queued"
+}
+/**
+ * @maxItems 5
+ */
+automations?: []|[AppManifestSuggestedAutomation]|[AppManifestSuggestedAutomation, AppManifestSuggestedAutomation]|[AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation]|[AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation]|[AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation, AppManifestSuggestedAutomation]
+actions?: {
+[k: string]: AppManifestAction
+}
+resources?: (Resources | null)
+}
+
+export interface AppManifestServer {
+entry?: string
+}
+
+export interface AppManifestUi {
+dir?: string
+}
+/**
+ * What the app may reach (H.2). Shown when it is deployed; more than before is flagged.
+ */
+
+export interface AppManifestAction {
+description: string
+/**
+ * @maxItems 5
+ */
+examples?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]
+route?: (string | null)
+agent?: (string | null)
+fields?: ({
+[k: string]: unknown
+} | null)
+}
+
+export interface Resources {
+memory?: (string | null)
+cpus?: (string | null)
+}
+/**
+ * Agents written so they can be set up again in another project (D.23): their definitions
+ * without what is yours (the models they run as, their folder, the addon configurations and
+ * knowledge folders they were given), with what they need instead.
+ */
+
+export interface SpeechRequest {
+audio: string
+format: ("webm" | "ogg" | "mp4" | "wav" | "mp3")
+language?: (string | null)
+}
+
+export interface StartImprovementRequest {
+goal: string
+maxAttempts?: number
+maxMinutes?: number
+}
+
 export interface ToolboxContainerfileUpdate {
 content: string
 }
@@ -1248,8 +1761,51 @@ builtAt?: (string | null)
 directory: string
 }
 
+export interface Transcription {
+text: string
+}
+
 export interface TryAutomationRequest {
 sessionId?: (string | null)
+}
+
+export interface Uses {
+uses?: UseRef[]
+usedBy?: UseRef[]
+}
+/**
+ * A thing at the other end of a use (D.22), and how it is used, in words.
+ */
+
+export interface UseRef {
+kind: ("agent" | "skill" | "knowledge" | "addon" | "account" | "provider" | "automation" | "app" | "project" | "handler")
+id: string
+label: string
+how: string
+}
+
+export interface VoiceSettings {
+model?: (string | null)
+readAloudSpoken?: boolean
+readAloudTyped?: boolean
+}
+
+export interface Voice {
+model?: (string | null)
+readAloudSpoken?: boolean
+readAloudTyped?: boolean
+models: SpeechModelInfo[]
+problem?: (string | null)
+}
+/**
+ * A provider's speech model (`speech = true`), one Voice can use.
+ */
+
+export interface SpeechModelInfo {
+model: string
+name: string
+provider: string
+local: boolean
 }
 
 export interface WorkFolderInfo {

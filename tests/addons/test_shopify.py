@@ -6,7 +6,8 @@ themes. Proves the addon's egress list is complete (docs/dev/design/addons.md).
     HANDLER_TEST_SHOPIFY_THEME_TOKEN=shptka_…  (Theme Access, addons/shopify/PROVISIONING.md)
 
 Needs the claude-code and shopify addon images (`handler image rebuild addon:shopify`); no Claude
-login (the agent is only started, the CLI runs next to it).
+login (the agent is only started, the CLI runs next to it). The addon is the registry's:
+HANDLER_TEST_REGISTRY, a checkout of it.
 """
 
 import os
@@ -20,11 +21,13 @@ from handler_control import runtime
 
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
+from ..support.sources import REGISTRY, requires_registry
 
 STORE = os.environ.get("HANDLER_TEST_SHOPIFY_STORE")
 TOKEN = os.environ.get("HANDLER_TEST_SHOPIFY_THEME_TOKEN")
 
 pytestmark = [
+    requires_registry,
     pytest.mark.skipif(
         not (STORE and TOKEN), reason="HANDLER_TEST_SHOPIFY_STORE/_THEME_TOKEN not set"
     ),
@@ -42,7 +45,8 @@ pytestmark = [
 @pytest.fixture(scope="module")
 def daemon() -> Iterator[Daemon]:
     env = {"HANDLER_TEST_SHOPIFY_THEME_TOKEN": TOKEN or ""}
-    yield from start_daemon(extra_env=env)
+    assert REGISTRY is not None
+    yield from start_daemon(extra_env=env, source=REGISTRY, addons=("shopify",))
 
 
 def test_theme_list_with_enforced_egress(daemon: Daemon) -> None:

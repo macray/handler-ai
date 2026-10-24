@@ -10,6 +10,7 @@
   // skill for, and "Save as a new skill" keeps the change to a copy (with its other files). Below: what handler found in its
   // files, its reviews and "Edit with an agent" (SkillReview, D.18). Just imported (already in the
   // library): a panel says so first, with the next steps, checking it and choosing who gets it.
+  import UsesPanel from "../components/UsesPanel.svelte";
   import CircleCheck from "@lucide/svelte/icons/circle-check";
   import Download from "@lucide/svelte/icons/download";
   import Trash from "@lucide/svelte/icons/trash-2";
@@ -30,7 +31,7 @@
   import { api } from "../lib/api";
   import type { SkillInfo } from "../lib/contracts.gen";
   import { projects } from "../lib/projects.svelte";
-  import { who } from "../lib/skills";
+  import { scanFindings, who } from "../lib/skills";
   import { href, leaving, navigate, type Imported } from "../lib/router.svelte";
   import { NEW_SKILL, readSkill, writeSkill, type SkillDoc } from "../lib/skillmd";
 
@@ -131,16 +132,8 @@
 
   /** What handler's scan found in its files, in a line (the details: SkillReview). */
   function found(s: SkillInfo): string {
-    const scan = s.scan;
-    if (!scan) return "nothing yet.";
-    const n = (count: number, one: string, many: string) => (count === 1 ? `1 ${one}` : `${count} ${many}`);
-    const parts = [
-      scan.executables?.length && n(scan.executables.length, "script that runs", "scripts that run"),
-      scan.binaries?.length && n(scan.binaries.length, "binary file", "binary files"),
-      scan.hosts?.length && n(new Set(scan.hosts.map((h) => h.text)).size, "host it names", "hosts it names"),
-      scan.hiddenText?.length && n(scan.hiddenText.length, "line with hidden characters", "lines with hidden characters"),
-      scan.blobs?.length && n(scan.blobs.length, "long encoded run", "long encoded runs"),
-    ].filter(Boolean);
+    if (!s.scan) return "nothing yet.";
+    const parts = scanFindings(s.scan);
     return parts.length ? `${parts.join(", ")}.` : "no script, binary file, URL, hidden character or encoded blob.";
   }
 
@@ -300,6 +293,7 @@
           <div class="text-xs font-medium text-muted-foreground">Who gets it</div>
           {@render placement(skill)}
         </div>
+        <UsesPanel kind="skill" id={skill.name} />
       {/if}
     </div>
     {#if skill && imported}

@@ -1,16 +1,17 @@
-// The sections of Settings, one page each, grouped as the settings nav shows them: what agents
+// The sections of Settings, one page each, grouped as the Settings page lists them: what agents
 // run on and are given (model access first: nothing runs without it), then this computer.
 
-export type SettingsSection = "models" | "contexts" | "secrets" | "folders" | "caches" | "addons" | "remote" | "images" | "appearance";
+export type SettingsSection = "models" | "areas" | "secrets" | "helpers" | "voice" | "folders" | "caches" | "remote" | "images" | "sources" | "appearance";
 
 export const SETTINGS_GROUPS: { label: string; sections: { id: SettingsSection; label: string }[] }[] = [
   {
     label: "Agents",
     sections: [
       { id: "models", label: "Model access" },
-      { id: "contexts", label: "Contexts" },
-      { id: "addons", label: "Addons" },
+      { id: "areas", label: "Areas" },
       { id: "secrets", label: "Secrets" },
+      { id: "helpers", label: "Helpers" },
+      { id: "voice", label: "Voice" },
     ],
   },
   {
@@ -20,6 +21,7 @@ export const SETTINGS_GROUPS: { label: string; sections: { id: SettingsSection; 
       { id: "caches", label: "Caches" },
       { id: "remote", label: "Remote" },
       { id: "images", label: "Images" },
+      { id: "sources", label: "Sources" },
       { id: "appearance", label: "Appearance" },
     ],
   },

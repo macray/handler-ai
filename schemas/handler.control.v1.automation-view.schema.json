@@ -93,6 +93,19 @@
           },
           "title": "Append",
           "type": "array"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App"
         }
       },
       "required": [
@@ -112,17 +125,6 @@
           "default": {},
           "title": "Fields",
           "type": "object"
-        },
-        "subject": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AutomationSubject"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "title": "AutomationAgentInput",
@@ -130,7 +132,7 @@
     },
     "AutomationAgentRun": {
       "additionalProperties": false,
-      "description": "`run = { agent, project?, input? }`: a run of an agent with an interface (I.3, D.18).",
+      "description": "`run = { agent, project?, input? }`: a run of a job, an agent with a result (I.3, D.18).",
       "properties": {
         "agent": {
           "minLength": 1,
@@ -152,8 +154,7 @@
         "input": {
           "$ref": "#/$defs/AutomationAgentInput",
           "default": {
-            "fields": {},
-            "subject": null
+            "fields": {}
           }
         }
       },
@@ -165,7 +166,7 @@
     },
     "AutomationAppCall": {
       "additionalProperties": false,
-      "description": "`run = { app, call }`: a call to a mini app's route, as the owner (I.3, H.9).",
+      "description": "`run = { app, call }`: a call to an app's route, as the owner (I.3, H.9).",
       "properties": {
         "app": {
           "pattern": "^[a-z][a-z0-9-]{0,29}$",
@@ -486,21 +487,6 @@
       "title": "AutomationServices",
       "type": "object"
     },
-    "AutomationSubject": {
-      "additionalProperties": false,
-      "properties": {
-        "skill": {
-          "minLength": 1,
-          "title": "Skill",
-          "type": "string"
-        }
-      },
-      "required": [
-        "skill"
-      ],
-      "title": "AutomationSubject",
-      "type": "object"
-    },
     "Schedule": {
       "additionalProperties": false,
       "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
@@ -676,6 +662,34 @@
         }
       ],
       "default": null
+    },
+    "agentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    },
+    "onlyAgents": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Onlyagents",
+      "type": "array"
+    },
+    "onlyProjects": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Onlyprojects",
+      "type": "array"
     }
   },
   "required": [

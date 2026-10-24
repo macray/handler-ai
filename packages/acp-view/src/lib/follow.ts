@@ -1,9 +1,11 @@
 // Keeps a scrolling timeline at its end while the user is there, like a terminal: on new output
 // (`toEnd()`), and when the box shrinks (the composer growing a line would otherwise cover the
 // last lines). Scrolling up stops it; scrolling back to the end, or sending (`resume()`), resumes.
+// `onchange` hears when it stops or resumes (the page offers a way back to the end).
 export class FollowEnd {
   private el: HTMLElement | null = null;
   private following = true;
+  onchange: ((following: boolean) => void) | null = null;
   private lastTop = 0;
 
   /** `{@attach follow.attach}` on the scrolling element. */
@@ -24,8 +26,14 @@ export class FollowEnd {
   }
 
   resume(): void {
-    this.following = true;
+    this.follow(true);
     this.toEnd();
+  }
+
+  private follow(on: boolean): void {
+    if (on === this.following) return;
+    this.following = on;
+    this.onchange?.(on);
   }
 
   // Only a scroll up stops following: the event of our own scrollTo arrives a frame later, when
@@ -33,8 +41,8 @@ export class FollowEnd {
   private scrolled = (): void => {
     if (!this.el) return;
     const top = this.el.scrollTop;
-    if (this.el.scrollHeight - top - this.el.clientHeight < 40) this.following = true;
-    else if (top < this.lastTop) this.following = false;
+    if (this.el.scrollHeight - top - this.el.clientHeight < 40) this.follow(true);
+    else if (top < this.lastTop) this.follow(false);
     this.lastTop = top;
   };
 }

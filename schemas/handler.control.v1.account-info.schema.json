@@ -145,12 +145,12 @@
       "title": "Connectors",
       "type": "boolean"
     },
-    "contexts": {
+    "areas": {
       "default": [],
       "items": {
         "type": "string"
       },
-      "title": "Contexts",
+      "title": "Areas",
       "type": "array"
     },
     "agents": {

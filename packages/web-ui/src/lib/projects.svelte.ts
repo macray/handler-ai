@@ -6,9 +6,9 @@
 //
 // The one place that knows how projects and agents are described, saved and ordered. Views go
 // through this module, ProjectEditor.svelte and AgentEditor.svelte.
-import { modelsOf, noAccess, requested, type ModelAccess } from "./access";
+import { accessOf, noAccess, requested, type ModelAccess } from "./access";
 import { api } from "./api";
-import type { AdHocAgentRequest, Agent, AgentInterface, AgentRequest, Project, ProjectSettingsRequest } from "./contracts.gen";
+import type { Agent, AgentInterface, AgentOrigin, AgentRequest, Project, ProjectSettingsRequest } from "./contracts.gen";
 import { folderName } from "./agents";
 
 /** How an agent is contained: its own, never inherited (D.8). */
@@ -53,7 +53,7 @@ export function presetOf(s: { network?: string | null; egress?: string | null; c
 
 /** What an agent is set to: the body of create and of a full update. */
 export type AgentSpec = Sandbox & {
-  models: ModelAccess[]; // what it runs as, the first by default (D.1)
+  model: ModelAccess; // what it runs as (D.1); a session may run with another (D.19)
   name: string;
   description: string;
   instructions: string;
@@ -65,11 +65,22 @@ export type AgentSpec = Sandbox & {
   remoteStart: boolean; // your paired devices may start sessions with it
   skills: string[]; // the skills it picks, not those its project gives (D.17)
   interface: string; // D.18, as JSON text: what its runs take and give back; "": none
+  modelAlone: boolean; // no program: the model alone, on a provider, with no sandbox (D.18)
+  origin: AgentOrigin | null; // the definition it was set up from, kept for good (D.18, H.2)
 };
 
-export function emptyAgent(models: ModelAccess[] = [noAccess()]): AgentSpec {
+/** Where an agent lives, given when it is made and never changed (D.1): its project, its app
+ *  (one of its parts, or Chat), or none: then its folder (null: a folder per session). */
+export type Home = Pick<AgentRequest, "projectId" | "app" | "chat" | "scope">;
+
+/** An agent's home, to save it again. */
+export function homeOf(agent: Agent): Home {
+  return agent.projectId ? { projectId: agent.projectId } : { app: agent.app ?? null, chat: agent.chat ?? false, scope: agent.scope ?? null };
+}
+
+export function emptyAgent(model: ModelAccess = noAccess()): AgentSpec {
   return {
-    models: models.map((m) => ({ ...m })),
+    model: { ...model },
     name: "",
     description: "",
     instructions: "",
@@ -82,13 +93,33 @@ export function emptyAgent(models: ModelAccess[] = [noAccess()]): AgentSpec {
     remoteStart: false,
     skills: [],
     interface: "",
+    modelAlone: false,
+    origin: null,
+  };
+}
+
+/** Who works, switched (D.18). The model alone has no sandbox: its settings go back to the
+ *  defaults of new agents (Guarded, which the daemon expects of it), with no addons, skills or
+ *  display, and its model kept when on a provider, without a program; an agent program starts from
+ *  those defaults too, its model to choose again. */
+export function withModelAlone(spec: AgentSpec, alone: boolean): AgentSpec {
+  const kept = spec.model.provider ? { ...spec.model, harness: null } : noAccess();
+  return {
+    ...spec,
+    ...PRESETS[1]!.sandbox,
+    modelAlone: alone,
+    allow: [],
+    bindings: alone ? [] : spec.bindings,
+    skills: alone ? [] : spec.skills,
+    display: false,
+    model: alone ? kept : noAccess(),
   };
 }
 
 /** The settings of an existing agent, to edit them. */
 export function agentSpec(agent: Agent, project: Pick<Project, "defaultAgent">): AgentSpec {
   return {
-    models: modelsOf(agent),
+    model: accessOf(agent.model),
     name: agent.name ?? "",
     description: agent.description ?? "",
     instructions: agent.instructions ?? "",
@@ -104,6 +135,8 @@ export function agentSpec(agent: Agent, project: Pick<Project, "defaultAgent">):
     remoteStart: agent.remoteStart ?? false,
     skills: [...(agent.skills ?? [])],
     interface: agent.interface ? JSON.stringify(agent.interface, null, 2) : "",
+    modelAlone: agent.modelAlone ?? false,
+    origin: agent.origin ?? null,
   };
 }
 
@@ -117,25 +150,24 @@ export function parseInterface(text: string): AgentInterface | null {
   }
 }
 
-export function agentBody(spec: AgentSpec, confirmRisks = false): AgentRequest {
+/** The body that creates or replaces an agent in its home (D.2). Of a project, its name is its
+ *  goal (required, D.8), and it may be its default or be started from a phone; elsewhere neither. */
+export function agentBody(spec: AgentSpec, home: Home, confirmRisks = false): AgentRequest {
   const text = (value: string) => value.trim() || null;
-  const { models, ...rest } = spec;
+  const { model, default: isDefault, remoteStart, ...rest } = spec;
+  const ofProject = !!home.projectId;
   return {
     ...rest,
-    models: models.map(requested) as AgentRequest["models"],
-    name: spec.name.trim(), // an agent of a project's goal: required (D.8)
+    ...home,
+    model: requested(model),
+    name: text(spec.name),
     description: text(spec.description),
     instructions: text(spec.instructions),
     interface: parseInterface(spec.interface),
+    default: ofProject && isDefault,
+    remoteStart: ofProject && remoteStart,
     confirmRisks,
   };
-}
-
-/** An ad-hoc agent's body (D.2): no project, so no default or phone start; `folder` null:
- *  folderless, a folder per session; `origin`: the built-in agent it is (D.18). */
-export function adHocBody(spec: AgentSpec, folder: string | null, origin: string | null = null, confirmRisks = false): AdHocAgentRequest {
-  const { default: _default, remoteStart: _remote, ...body } = agentBody(spec, confirmRisks);
-  return { ...body, name: body.name || null, scope: folder, origin };
 }
 
 /** What a project is set to: the body of a full update. */
@@ -145,11 +177,12 @@ export type ProjectSpec = {
   folder: string;
   defaultAgent: string | null;
   caches: NonNullable<ProjectSettingsRequest["caches"]>; // the toolbox's caches for its agents
-  context: string | null; // its context (D.19): the accounts and providers it runs
+  area: string | null; // its area (D.19): the accounts and providers it runs
+  skills: string[]; // the skills it gives to all its agents (D.17)
 };
 
 export function emptyProject(folder = ""): ProjectSpec {
-  return { name: "", description: "", folder, defaultAgent: null, caches: "project", context: null };
+  return { name: "", description: "", folder, defaultAgent: null, caches: "project", area: null, skills: [] };
 }
 
 /** A copy of an agent's settings for a new agent of the same project ("Duplicate"): nothing stays
@@ -159,7 +192,7 @@ export function duplicateAgent(agent: Agent, taken: string[]): AgentSpec {
   const base = `${agentLabel(agent)}-copy`;
   let name = base;
   for (let i = 2; taken.some((t) => t.toLowerCase() === name.toLowerCase()); i++) name = `${base}-${i}`;
-  return { ...spec, models: spec.models.map((m) => ({ ...m })), name };
+  return { ...spec, model: { ...spec.model }, name, origin: null }; // a copy is set up from nothing
 }
 
 export function projectSpec(p: Project): ProjectSpec {
@@ -169,7 +202,8 @@ export function projectSpec(p: Project): ProjectSpec {
     folder: p.folder,
     defaultAgent: p.defaultAgent ?? null,
     caches: p.caches ?? "project",
-    context: p.context ?? null,
+    area: p.area ?? null,
+    skills: p.skills ?? [],
   };
 }
 
@@ -178,23 +212,25 @@ export function projectBody(spec: ProjectSpec): ProjectSettingsRequest {
 }
 
 /** The hosts an agent's sandboxes allow on top of the required ones: its own (D.8). */
-export async function saveHosts(agent: Agent, allow: string[]): Promise<void> {
-  const project = await api.project(agent.projectId ?? "");
-  await api.updateAgent(project.id, agent.id, agentBody({ ...agentSpec(agent, project), allow }));
-  await projects.refresh();
+export async function saveHosts(agent: Agent, allow: string[]): Promise<Agent> {
+  const project = agent.projectId ? await api.project(agent.projectId) : { defaultAgent: null };
+  const saved = await api.updateAgent(agent.id, agentBody({ ...agentSpec(agent, project), allow }, homeOf(agent)));
+  if (agent.projectId) await projects.refresh();
+  return saved;
 }
 
-/** How an agent is named in lists: its name (its first model's account or provider by default). */
-export function agentLabel(agent: Pick<Agent, "name" | "models">): string {
-  const first = agent.models[0];
-  return agent.name || first?.account || first?.provider || first?.harness || "agent";
+/** How an agent is named in lists: its name; else its folder's (one made by the command line
+ *  outside projects), else its model's account or provider. */
+export function agentLabel(agent: Pick<Agent, "name" | "model"> & { scope?: string | null }): string {
+  const m = agent.model;
+  return agent.name || (agent.scope ? folderName(agent.scope) : null) || m.account || m.provider || m.harness || "agent";
 }
 
-/** Another agent of the project set up like `spec` but for its models: the place to add a model
- *  to, rather than a new agent (one goal, one agent). */
+/** Another agent of the project set up like `spec` but for its model: the one to start with
+ *  that model instead, rather than a new agent (one goal, one agent). */
 export function sameSetup(spec: AgentSpec, others: Agent[], project: Pick<Project, "defaultAgent">): Agent | undefined {
   const setup = (s: AgentSpec) => {
-    const { models: _m, name: _n, default: _d, remoteStart: _r, ...rest } = s;
+    const { model: _m, name: _n, default: _d, remoteStart: _r, ...rest } = s;
     return JSON.stringify({ ...rest, description: rest.description.trim(), instructions: rest.instructions.trim() });
   };
   const mine = setup(spec);
@@ -207,9 +243,14 @@ export function byRecentUse(list: Project[]): Project[] {
   return [...list].sort((a, b) => key(b).localeCompare(key(a)));
 }
 
+/** By name: a list where each project keeps its place (the Projects page, the menu's pinned). */
+export function byName(list: Project[]): Project[] {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Search: every word of `query` in its name, folder, description or agents. */
 export function matches(p: Project, query: string): boolean {
-  const agents = p.agents.flatMap((a) => [a.name, ...a.models.flatMap((m) => [m.account, m.provider, m.harness])]);
+  const agents = p.agents.flatMap((a) => [a.name, a.model.account, a.model.provider, a.model.harness]);
   const text = [p.name, p.folder, p.description, ...agents].join(" ").toLowerCase();
   return query
     .toLowerCase()
@@ -254,6 +295,12 @@ class ProjectStore {
     }
   }
 
+  /** Pin a project to the menu, or take it off. */
+  async setPinned(id: string, pinned: boolean): Promise<void> {
+    const changed = await api.pinProject(id, pinned);
+    this.list = this.list.map((p) => (p.id === id ? changed : p));
+  }
+
   get(id: string | null | undefined): Project | undefined {
     return id ? this.list.find((p) => p.id === id) : undefined;
   }
@@ -268,7 +315,7 @@ class ProjectStore {
   /** "shop · review" for a session's agent; its name or folder for an ad-hoc one. */
   label(agent: Agent): string {
     const found = this.of(agent);
-    return found ? `${found.project.name} · ${agentLabel(found.agent)}` : agent.name || (agent.scope ? folderName(agent.scope) : agentLabel(agent));
+    return found ? `${found.project.name} · ${agentLabel(found.agent)}` : agentLabel(agent);
   }
 }
 

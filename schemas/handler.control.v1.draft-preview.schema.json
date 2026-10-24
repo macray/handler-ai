@@ -1,0 +1,80 @@
+{
+  "$id": "urn:handler.control/v1/draft-preview",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "DraftCopy": {
+      "description": "What an opened draft works on instead of the real thing (H.16).",
+      "properties": {
+        "what": {
+          "title": "What",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "how": {
+          "enum": [
+            "copy",
+            "read-only",
+            "empty"
+          ],
+          "title": "How",
+          "type": "string"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        }
+      },
+      "required": [
+        "what",
+        "how"
+      ],
+      "title": "DraftCopy",
+      "type": "object"
+    }
+  },
+  "description": "`POST /v1/apps/from-draft/{session}/open`: the draft's code running at its own address\n(`<app>--draft.localhost`), on copies, until it is used, thrown away or closed (H.16).",
+  "properties": {
+    "app": {
+      "pattern": "^[a-z][a-z0-9-]{0,29}$",
+      "title": "App",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    },
+    "copies": {
+      "items": {
+        "$ref": "#/$defs/DraftCopy"
+      },
+      "title": "Copies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "app",
+    "url",
+    "copies"
+  ],
+  "title": "DraftPreview",
+  "type": "object"
+}

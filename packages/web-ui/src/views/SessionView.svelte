@@ -1,9 +1,8 @@
 <script lang="ts">
   // One chat session of the sidebar. The agent lives in the daemon and the attachment in the
   // session store, so leaving this view (to watch another agent) or reloading does not stop it.
-  import ContextTag from "../components/ContextTag.svelte";
+  import AreaTag from "../components/AreaTag.svelte";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
-  import Globe from "@lucide/svelte/icons/globe";
   import Smartphone from "@lucide/svelte/icons/smartphone";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Library from "@lucide/svelte/icons/library-big";
@@ -14,7 +13,20 @@
   import Plus from "@lucide/svelte/icons/plus";
   import Workflow from "@lucide/svelte/icons/workflow";
   import Square from "@lucide/svelte/icons/square";
+  import ShieldAlert from "@lucide/svelte/icons/shield-alert";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import AppWindow from "@lucide/svelte/icons/app-window";
+  import SquareArrowOutUpRight from "@lucide/svelte/icons/square-arrow-out-up-right";
+  import StartSteps from "../components/StartSteps.svelte";
+  import MissingImage from "../components/MissingImage.svelte";
+  import OutputView from "../components/OutputView.svelte";
+  import type { Schema } from "../lib/runs";
   import { Button } from "$lib/components/ui/button";
+  import * as SidebarUI from "$lib/components/ui/sidebar";
+  import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
+  import { fade, fly, type TransitionConfig } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { dragSheet, flungDown } from "@handler/acp-view/lib/sheet";
   import Composer from "@handler/acp-view/components/Composer.svelte";
   import { FollowEnd } from "@handler/acp-view/lib/follow";
   import PageHeader from "../components/PageHeader.svelte";
@@ -25,14 +37,19 @@
   import PermissionPrompt from "@handler/acp-view/components/PermissionPrompt.svelte";
   import SessionControls from "../components/SessionControls.svelte";
   import SessionStatus from "../components/SessionStatus.svelte";
+  import Plan from "@handler/acp-view/components/Plan.svelte";
   import Timeline from "@handler/acp-view/components/Timeline.svelte";
+  import { activity } from "@handler/acp-view/lib/tools";
   import { accessLabel, sessionModel } from "../lib/access";
+  import { productName } from "../lib/harnesses.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { LIGHT_LABEL, lightTone, remote } from "../lib/remote.svelte";
-  import { agentLabel, projects } from "../lib/projects.svelte";
+  import { agentLabel, presetOf, projects } from "../lib/projects.svelte";
   import { sessions } from "../lib/sessions.svelte";
+  import { sessionCard } from "../lib/sessioncard.svelte";
   import { api } from "../lib/api";
   import type { AutomationRun, SessionChanges } from "../lib/contracts.gen";
+  import { openDraft, useDraft } from "../lib/drafts";
 
   let { key }: { key: string } = $props();
 
@@ -40,16 +57,56 @@
   const found = $derived(session ? projects.of(session.agent) : undefined); // its project and agent
   const FILES_OPEN = "handler.files-open"; // the files pane stays open from a session to the next
   const FILES_WIDTH = "handler.files-width";
-  let panel = $state<"files" | "network" | "save" | "automations" | null>(
+  let panel = $state<"card" | "files" | "network" | "save" | "automations" | null>(
     localStorage.getItem(FILES_OPEN) ? "files" : null,
   ); // the side panel shown
   let automationRuns = $state<AutomationRun[]>([]); // what ran on it when it stopped (I)
-  const isRun = $derived(Boolean(session?.info.input)); // a run (D.18): unattended, no prompt
+  const isRun = $derived(Boolean(session?.info.unattended)); // a job's run (D.18): no prompt
   const folderless = $derived(Boolean(session && !session.agent.scope)); // its own folder (D.18)
+  // its folder is a draft of an app's code (H.15): Use it makes it the app's next version, or a
+  // new app, and the session goes with it
+  const draft = $derived(session?.info.appDraft ?? null);
+  let using = $state(false);
+  let drafted = $state<{ what: string; why: string } | null>(null); // why Open or Use it failed
+  async function useIt(id: string): Promise<void> {
+    using = true;
+    drafted = null;
+    try {
+      await useDraft(id);
+    } catch (e) {
+      drafted = { what: draft?.app ? "Use it" : "Install it", why: (e as Error).message };
+    } finally {
+      using = false;
+    }
+  }
+  function openIt(id: string): void {
+    drafted = null;
+    openDraft(id).catch((e: Error) => (drafted = { what: "Open the draft", why: e.message }));
+  }
+  /** The failure, in the input for the App creator (not sent: the person may add to it). */
+  function askToFix(): void {
+    if (!session || !drafted) return;
+    const told = `${drafted.what} failed: ${drafted.why}\nFix it.`;
+    session.draft = session.draft.trim() ? `${session.draft.trim()}\n\n${told}` : told;
+    drafted = null;
+  }
   const showNetwork = $derived(panel === "network");
-  // The terminal while the agent starts or runs; stopped, failed or attached elsewhere: what
-  // happened and how to go on, centred on the page.
-  const running = $derived(session ? session.status !== "stopped" && session.status !== "elsewhere" : false);
+  const label = $derived(session ? (found ? agentLabel(found.agent) : projects.label(session.agent)) : "");
+  const where = $derived(found ? `${found.project.name} · ${label}` : session?.title ? label : "");
+
+  // Its card goes to the menu's open sessions; with the menu hidden (a narrow window, or closed),
+  // it is a panel here, a tap on the session's name away.
+  const menu = useSidebar();
+  const menuHidden = $derived(menu.isMobile ? !menu.openMobile : !menu.open);
+  $effect(() => {
+    if (session) return sessionCard.show(session.key, card);
+  });
+  $effect(() => {
+    if (!menuHidden && panel === "card") panel = null;
+  });
+  // The terminal whatever the state, its conversation kept: stopped, failed or attached
+  // elsewhere, what happened and how to go on takes the prompt's place.
+  const running = $derived(session ? !["stopped", "failed", "elsewhere"].includes(session.status) : false);
   const failed = $derived(session?.info.state === "failed");
 
   // a session started elsewhere, or opened from a link: shown, and attached while it runs
@@ -126,6 +183,62 @@
     else localStorage.removeItem(FILES_OPEN);
   }
 
+  // The frame says what the agent's sandbox lets it do: its safety preset, or its own settings
+  // in words; amber when it weakens the sandbox (an open network, a filter that only logs, more
+  // than a plain container), as everywhere else.
+  const NETWORK: Record<string, string> = { none: "no network", filtered: "filtered network", open: "open network" };
+  const CONFINEMENT: Record<string, string> = { nested: "runs containers", privileged: "privileged", display: "shows windows" };
+  // what it runs on, the account or provider by its name alone (its kind is said where it is made)
+  const runsOn = $derived.by(() => {
+    const i = session?.info;
+    return i ? [i.harness ? productName(i.harness) : "?", i.account ?? i.provider ?? "?", ...(i.model ? [i.model] : [])].join(" · ") : "";
+  });
+
+  const sandbox = $derived.by(() => {
+    const a = session?.agent;
+    if (!a) return { label: "", hint: "", weak: false };
+    const network = NETWORK[a.network ?? "filtered"] ?? a.network ?? "";
+    const confined = a.confinement && a.confinement !== "strict" ? CONFINEMENT[a.confinement] ?? a.confinement : null;
+    const weak = a.network === "open" || a.egress === "log-only" || confined !== null;
+    const preset = presetOf(a);
+    if (preset) return { label: preset.label, hint: preset.hint, weak };
+    const words = [network, a.egress === "log-only" ? "only logged" : null, confined].filter(Boolean).join(" · ");
+    return { label: words, hint: `its own settings: ${words}`, weak };
+  });
+
+  // a narrow screen shows the panel as a sheet: it leaves downwards, from where it is (a drag
+  // may have moved it); beside the session it just goes
+  const narrow = matchMedia("(max-width: 900px)");
+  function sheetOut(node: Element): TransitionConfig {
+    if (!narrow.matches) return { duration: 0 };
+    return fly(node, { y: node.getBoundingClientRect().height, duration: 260, easing: cubicOut, opacity: 1 });
+  }
+  // the scrim only shows behind a sheet: beside the session it takes no time either, or the
+  // panel would stay (below the session, its column gone) until it has faded
+  function scrimFade(node: Element): TransitionConfig {
+    return narrow.matches ? fade(node, { duration: 220 }) : { duration: 0 };
+  }
+  function released(dy: number, velocity: number): boolean {
+    if (!flungDown(dy, velocity)) return false;
+    panel = null;
+    return true;
+  }
+  $effect(() => {
+    if (!panel) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && narrow.matches && !e.defaultPrevented) panel = null;
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+
+  // a path clicked in the conversation: shown in the files pane
+  let fileRequest = $state<{ path: string; n: number } | null>(null);
+  function openFile(path: string): void {
+    if (panel !== "files") togglePanel("files");
+    fileRequest = { path, n: (fileRequest?.n ?? 0) + 1 };
+  }
+
   // the files pane's left edge, dragged
   function resize(event: PointerEvent): void {
     const pane = (event.currentTarget as HTMLElement).parentElement!;
@@ -139,12 +252,22 @@
     window.addEventListener("pointerup", up, { once: true });
   }
 
-  // Follow new output (streamed text too) while the view is at its end.
+  // Follow new output (streamed text too) while the view is at its end; scrolled up, a button
+  // goes back there, with how many entries came since.
   const follow = new FollowEnd();
+  let away = $state<number | null>(null); // entries when the view left the end; null: following
+  follow.onchange = (following) => (away = following ? null : (session?.conn?.session.entries.length ?? 0));
+  const since = $derived(away === null ? 0 : Math.max(0, (session?.conn?.session.entries.length ?? 0) - away));
+  const plan = $derived(session?.conn?.session.plan ?? []);
+  const planLeft = $derived(plan.some((e) => e.status !== "completed"));
+  $effect(() => {
+    void key; // another session: at its end
+    follow.resume();
+  });
   $effect(() => {
     const conn = session?.conn;
     const last = conn?.session.entries.at(-1);
-    void [conn?.session.entries.length, last && "text" in last ? last.text.length : 0, conn?.permissions.length];
+    void [conn?.session.entries.length, last && "text" in last ? last.text.length : 0, conn?.permissions.length, conn?.session.lastStop, session?.status];
     follow.toEnd();
   });
 
@@ -192,6 +315,115 @@
   }
 </script>
 
+<!-- Its card (lib/sessioncard.svelte.ts): under its row in the menu's open sessions, or a panel
+     here when the menu is hidden. What it runs on, what it can reach (its sandbox, its folder), and
+     what can be done with it. -->
+{#snippet card()}
+  {#if session}
+    <div class="card-body">
+      <p class="fact" title={session.info.harnessVersion ? `Installed in its image: ${session.info.harnessVersion}` : undefined}>{runsOn}</p>
+      <div class="actions">
+        <Button
+          variant={panel === "files" ? "secondary" : "ghost"}
+          size="icon-sm"
+          class="badged"
+          onclick={() => togglePanel("files")}
+          aria-pressed={panel === "files"}
+          title={changes?.files?.length
+            ? `The session's folder: ${changes.files.length} file${changes.files.length === 1 ? "" : "s"} changed since it started`
+            : "The session's folder: its files, and what changed since it started"}
+          aria-label="Files"
+          data-testid="files-toggle"
+        >
+          <FolderOpen />
+          {#if changes?.files?.length}<span class="count tabular-nums" class:unseen data-testid="files-count">{changes.files.length}</span>
+          {:else if unseen}<span class="dot bg-primary" aria-label="new changes"></span>{/if}
+        </Button>
+        <Button
+          variant={showNetwork ? "secondary" : "ghost"}
+          size="icon-sm"
+          class={sandbox.weak ? "text-warn hover:text-warn" : ""}
+          onclick={() => togglePanel("network")}
+          aria-pressed={showNetwork}
+          title="Its sandbox: {sandbox.label} ({sandbox.hint}). Its network: what it reached, what was refused."
+          aria-label="Sandbox and network"
+          data-testid="session-sandbox"
+        >
+          {#if sandbox.weak}<ShieldAlert />{:else}<ShieldCheck />{/if}
+        </Button>
+        {#if session.live && !remoteReady}
+          <Button variant="ghost" size="icon-sm" href={href({ view: "settings", section: "remote" })} title={remoteTitle} aria-label="Remote" data-testid="remote-toggle">
+            <Smartphone />
+          </Button>
+        {:else if session.live}
+          <Button variant={shared ? "secondary" : "ghost"} size="icon-sm" class="badged" onclick={toggleRemote} aria-pressed={shared} title={remoteTitle} aria-label="Remote" data-testid="remote-toggle">
+            <Smartphone />{#if shared}<span class="dot {lightTone(remote.light)}" aria-hidden="true"></span>{/if}
+          </Button>
+        {/if}
+        {#if automationRuns.length}
+          <Button
+            variant={panel === "automations" ? "secondary" : "ghost"}
+            size="icon-sm"
+            onclick={() => togglePanel("automations")}
+            aria-pressed={panel === "automations"}
+            title="The automations that ran on this conversation"
+            aria-label="Automations"
+            data-testid="session-automations-toggle"
+          >
+            <Workflow />
+          </Button>
+        {/if}
+        {#if isRun}
+          <Button variant="ghost" size="icon-sm" href={href({ view: "run", id: session.key })} title="What it was given and what it gave back" aria-label="Run" data-testid="session-run">
+            <ListChecks />
+          </Button>
+        {/if}
+        {#if !draft && folderless && !isRun}
+          <Button
+            variant={panel === "save" ? "secondary" : "ghost"}
+            size="icon-sm"
+            onclick={() => togglePanel("save")}
+            aria-pressed={panel === "save"}
+            title="The skill in this session's folder, into your library"
+            aria-label="Save to library"
+            data-testid="save-skill-toggle"
+          >
+            <Library />
+          </Button>
+        {/if}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          href={found ? href({ view: "edit-agent", project: found.project.id, id: found.agent.id }) : href({ view: "agent", id: session.agent.id })}
+          title={found ? "The agent's settings" : "The agent's page"}
+          aria-label="Agent"
+        >
+          <Pencil />
+        </Button>
+        {#if !isRun}
+          <Button variant="ghost" size="icon-sm" onclick={another} title="Another session with the same agent (its own sandbox)" aria-label="New session here">
+            <Plus />
+          </Button>
+        {/if}
+        <Button variant="ghost" size="icon-sm" class="end" onclick={end} title="End the session and stop its sandbox" aria-label="End session" data-testid="end-session">
+          <Square />
+        </Button>
+      </div>
+    </div>
+  {/if}
+{/snippet}
+
+<!-- what a session started from its agent's form was given: the form filled in, not the request
+     the agent read (its instructions, the input as JSON) -->
+{#snippet started()}
+  {#if session?.info.input}
+    <div class="started" data-testid="session-brief">
+      <p class="started-label">{isRun ? "Its form" : "The brief"}</p>
+      <OutputView schema={session.agent.interface?.fields as Schema | undefined} value={session.info.input.fields ?? {}} />
+    </div>
+  {/if}
+{/snippet}
+
 {#if !session && !sessions.restored}
   <PageHeader title="Session" />
   <p class="p-6 text-sm text-muted-foreground">Loading…</p>
@@ -204,236 +436,343 @@
     </div>
   </div>
 {:else}
-  <PageHeader
-    title={found ? agentLabel(found.agent) : projects.label(session.agent)}
-    parent={found ? { label: found.project.name, href: href({ view: "project", id: found.project.id }) } : undefined}
-  >
-    {#snippet meta()}
-      {#if found?.project.context}<ContextTag name={found.project.context} />{/if}
-      <SessionStatus status={session.status} label />
-      {#if session.info.harnessVersion}<span class="truncate text-xs text-muted-foreground max-md:hidden">{session.info.harnessVersion}</span>{/if}
-    {/snippet}
-    {#snippet actions()}
-      {#if session.live && !remoteReady}
-        <Button variant="ghost" size="sm" href={href({ view: "settings", section: "remote" })} title={remoteTitle} data-testid="remote-toggle">
-          <Smartphone /><span class="max-md:sr-only">Remote</span>
-        </Button>
-      {:else if session.live}
-        <Button
-          variant={shared ? "secondary" : "ghost"}
-          size="sm"
-          onclick={toggleRemote}
-          aria-pressed={shared}
-          title={remoteTitle}
-          data-testid="remote-toggle"
-        >
-          <Smartphone /><span class="max-md:sr-only">Remote</span>
-          {#if shared}<span class="size-2 rounded-full {lightTone(remote.light)}" aria-hidden="true"></span>{/if}
-        </Button>
-      {/if}
-      <Button
-        variant={panel === "files" ? "secondary" : "ghost"}
-        size="sm"
-        onclick={() => togglePanel("files")}
-        aria-pressed={panel === "files"}
-        title={changes?.files?.length
-          ? `The session's folder: ${changes.files.length} file${changes.files.length === 1 ? "" : "s"} changed since it started`
-          : "The session's folder: its files, and what changed since it started"}
-        data-testid="files-toggle"
-      >
-        <FolderOpen /><span class="max-md:sr-only">Files</span>
-        {#if changes?.files?.length}<span class="text-xs text-muted-foreground tabular-nums" data-testid="files-count">{changes.files.length}</span>{/if}
-        {#if unseen}<span class="size-2 rounded-full bg-primary" aria-label="new changes"></span>{/if}
-      </Button>
-      <Button variant={showNetwork ? "secondary" : "ghost"} size="sm" onclick={() => togglePanel("network")} aria-pressed={showNetwork}>
-        <Globe /><span class="max-md:sr-only">Network</span>
-      </Button>
-      {#if automationRuns.length}
-        <Button
-          variant={panel === "automations" ? "secondary" : "ghost"}
-          size="sm"
-          onclick={() => togglePanel("automations")}
-          aria-pressed={panel === "automations"}
-          title="The automations that ran on this conversation"
-          data-testid="session-automations-toggle"
-        >
-          <Workflow /><span class="max-md:sr-only">Automations</span>
-        </Button>
-      {/if}
-      {#if isRun}
-        <Button variant="ghost" size="sm" href={href({ view: "run", id: session.key })} title="What it was given and what it gave back" data-testid="session-run">
-          <ListChecks /><span class="max-md:sr-only">Run</span>
-        </Button>
-      {/if}
-      {#if folderless && !isRun}
-        <Button
-          variant={panel === "save" ? "secondary" : "ghost"}
-          size="sm"
-          onclick={() => togglePanel("save")}
-          aria-pressed={panel === "save"}
-          title="The skill in this session's folder, into your library"
-          data-testid="save-skill-toggle"
-        >
-          <Library /><span class="max-md:sr-only">Save to library</span>
-        </Button>
-      {/if}
-      {#if found}
-        <Button variant="ghost" size="sm" href={href({ view: "edit-agent", project: found.project.id, id: found.agent.id })} title="The agent's settings">
-          <Pencil /><span class="max-md:sr-only">Agent</span>
-        </Button>
+  <div class="room term-surface">
+    <header class="caption" data-testid="session-header">
+      <SidebarUI.Trigger class="text-muted-foreground" />
+      {#if menuHidden}
+        <!-- the menu hidden, the session's card is a tap on its name -->
+        <button type="button" class="title" onclick={() => togglePanel("card")} aria-pressed={panel === "card"} title="Its folder, sandbox and actions" data-testid="session-caption">
+          <h1>{session.title ?? label}</h1><span class="where">{where}</span>{#if found?.project.area}<AreaTag name={found.project.area} />{/if}
+        </button>
       {:else}
-        <Button variant="ghost" size="sm" href={href({ view: "agent", id: session.agent.id })} title="The agent's page">
-          <Pencil /><span class="max-md:sr-only">Agent</span>
-        </Button>
+        <div class="title"><h1>{session.title ?? label}</h1><span class="where">{where}</span>{#if found?.project.area}<AreaTag name={found.project.area} />{/if}</div>
       {/if}
-      {#if !isRun}
-        <Button variant="ghost" size="sm" onclick={another} title="Another session with the same agent (its own sandbox)">
-          <Plus /><span class="max-md:sr-only">New session here</span>
-        </Button>
-      {/if}
-      <Button variant="ghost" size="sm" onclick={end} title="End the session and stop its sandbox" data-testid="end-session">
-        <Square /><span class="max-md:sr-only">End session</span>
-      </Button>
-    {/snippet}
-  </PageHeader>
+      <SessionStatus status={session.status} label />
+    </header>
+    {#if draft}
+      <!-- what an App creator's session is for: its draft, tried and used from here -->
+      <div class="draft-bar" data-testid="session-draft">
+        <AppWindow class="size-4 flex-none text-muted-foreground" />
+        <p class="draft-what">
+          {draft.app ? `Draft of ${draft.app}` : "A new app"}
+          <span class="text-muted-foreground">· {draft.app ? "opened on copies of its data and folders" : "its code is kept by Handler until you install it"}</span>
+        </p>
+        <div class="draft-actions">
+          <Button
+            size="sm"
+            variant="outline"
+            title="The app as this draft makes it, in a new tab, on copies of its data and folders"
+            onclick={() => session && openIt(session.key)}
+            data-testid="draft-open">Open the draft<SquareArrowOutUpRight /></Button
+          >
+          <Button
+            size="sm"
+            disabled={using}
+            title={draft.app ? `This draft becomes ${draft.app}'s next version, deployed; this session ends` : "This draft becomes a new app (its install page); this session ends"}
+            onclick={() => session && useIt(session.key)}
+            data-testid="draft-use">{using ? "Using it…" : draft.app ? `Use it for ${draft.app}` : "Install it"}</Button
+          >
+        </div>
+        {#if drafted}
+          <div class="draft-problem" role="alert" data-testid="draft-error">
+            <p><b>{drafted.what} failed.</b> <code>{drafted.why}</code></p>
+            {#if !isRun}
+              <button type="button" class="cursor-pointer text-link hover:underline" onclick={askToFix} data-testid="draft-fix">Ask the App creator to fix it</button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
   <div
     class="session"
     class:with-network={panel !== null && panel !== "files"}
     class:with-files={panel === "files"}
     style:--files-width={filesWidth ? `${filesWidth}px` : null}
   >
-    {#if running}
-      <div class="term term-surface">
-        <header class="titlebar">
-          <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="name" title={session.agent.scope}>{session.title ?? session.agent.scope}</span>
-        </header>
-
+    <div class="term">
+      <div class="screen-box">
         <div class="screen" {@attach follow.attach}>
           {#if session.conn}
-            <Timeline session={session.conn.session} />
+            <Timeline
+              session={session.conn.session}
+              root={session.info.scope}
+              onopen={openFile}
+              pinPlan
+              busy={session.conn.busy}
+              asking={session.conn.permissions.map((p) => p.request.toolCall.toolCallId)}
+              first={session.info.input ? started : undefined}
+            >
+              {#snippet empty()}
+                {@const preset = presetOf(session.agent)}
+                <!-- what it is ready with; stopped before its first turn, the footer says why -->
+                {#if running}
+                  <div class="start" data-testid="session-start">
+                    <p class="start-title">{found ? agentLabel(found.agent) : projects.label(session.agent)} is ready</p>
+                    <dl>
+                      <dt>Folder</dt><dd>{session.info.scope}</dd>
+                      <dt>Model</dt><dd>{accessLabel(session.info)}</dd>
+                      <dt>Safety</dt><dd>{preset ? `${preset.label}: ${preset.hint}` : "its own settings (see Agent)"}</dd>
+                    </dl>
+                    {#if !isRun && session.conn?.session.commands.length}
+                      <div class="commands">
+                        {#each session.conn.session.commands.slice(0, 8) as c (c.name)}
+                          <button type="button" title={c.description} onclick={() => (session.draft = `/${c.name} `)}>/{c.name}</button>
+                        {/each}
+                      </div>
+                    {/if}
+                    {#if !isRun}<p class="hint">Type <kbd>@</kbd> to name a file of its folder, <kbd>/</kbd> for its commands.</p>{/if}
+                  </div>
+                {/if}
+              {/snippet}
+            </Timeline>
+          {:else if running}
+            {#if session.startup}<StartSteps startup={session.startup} access={accessLabel(session.info)} />{:else}<p class="text-muted-foreground">Starting a sandbox for {accessLabel(session.info)}…</p>{/if}
           {:else}
-            <p class="text-muted-foreground">Starting a sandbox for {accessLabel(session.info)}…</p>
+            <p class="text-muted-foreground">The conversation is shown again once the agent runs.</p>
           {/if}
 
-          {#if session.lastStop}<p class="text-muted-foreground">── turn ended: {session.lastStop} ──</p>{/if}
-          {#if session.error}<p class="text-danger" data-testid="error">✗ {session.error}</p>{/if}
+          {#if session.error && running}<p class="text-danger" data-testid="error">✗ {session.error}</p>{/if}
         </div>
-
-        {#if session.conn?.permissions.length}
-          <div class="asks" data-testid="pinned-permissions">
-            {#each session.conn.permissions as pending (pending.request.toolCall.toolCallId)}
-              <PermissionPrompt {pending} />
-            {/each}
-          </div>
-        {/if}
-
-        {#if session.live && session.conn && isRun}
-          <footer>
-            <p class="text-sm text-muted-foreground" data-testid="run-note">
-              An unattended run: it takes no prompt. <a class="text-link hover:underline" href={href({ view: "run", id: session.key })}>Its result</a>
-            </p>
-          </footer>
-        {:else if session.live && session.conn}
-          <footer>
-            <Composer
-              autofocus
-              bind:text={session.draft}
-              bind:images={session.draftImages}
-              takesImages={session.conn.takesImages}
-              busy={session.conn.busy}
-              commands={session.conn.session.commands}
-              onsend={(prompt) => {
-                follow.resume();
-                void sessions.send(session, prompt);
-              }}
-              oncancel={() => session.conn?.cancel()}
-              turnStartedAt={session.conn.turnStartedAt}
-              interrupting={session.conn.interrupting}
-              waiting={session.conn.permissions.length > 0}
-              queued={session.queued}
-              onqueue={(prompt) => sessions.queue(session, prompt)}
-              onsendnow={() => {
-                follow.resume();
-                void sessions.sendNow(session);
-              }}
-              ondeletequeued={() => (session.queued = null)}
-              findFiles={async (q) => (await api.sessionFind(session.key, q)).paths}
-            />
-            <SessionControls conn={session.conn} harness={session.info.harness} />
-          </footer>
+        {#if away !== null}
+          <button type="button" class="latest" onclick={() => follow.resume()} data-testid="to-latest">
+            ↓ Latest{#if since}&nbsp;<span class="tabular-nums">· {since} new</span>{/if}
+          </button>
         {/if}
       </div>
-    {:else}
-      <div class="grid min-h-0 place-items-center overflow-y-auto p-6" data-testid="closed">
-        <div class="flex w-full max-w-lg flex-col items-center gap-4 text-center">
-          <span class="grid size-11 place-items-center rounded-full {session.error || failed ? 'bg-danger/10 text-danger' : 'bg-accent-soft text-accent-soft-foreground'}">
-            {#if session.error || failed}<TriangleAlert class="size-5" />{:else if session.status === "elsewhere"}<PlugZap class="size-5" />{:else}<Play class="size-5" />{/if}
-          </span>
-          {#if session.status === "elsewhere"}
-            <div class="space-y-1.5">
-              <h2 class="text-base font-semibold">Open in other tabs</h2>
-              <p class="text-sm text-muted-foreground">
-                Too many clients were attached to this session, so this tab was detached. The agent keeps running.
-              </p>
+
+      {#if session.live && planLeft}<Plan entries={plan} />{/if}
+
+      {#if session.live && session.conn?.permissions.length}
+        <div class="asks" data-testid="pinned-permissions">
+          {#each session.conn.permissions as pending (pending.request.toolCall.toolCallId)}
+            <PermissionPrompt {pending} root={session.info.scope} />
+          {/each}
+        </div>
+      {/if}
+
+      {#if session.live && session.conn && isRun}
+        <footer>
+          <p class="text-sm text-muted-foreground" data-testid="run-note">
+            An unattended run: it takes no prompt. <a class="text-link hover:underline" href={href({ view: "run", id: session.key })}>Its result</a>
+          </p>
+        </footer>
+      {:else if session.live && session.conn}
+        <footer>
+          <Composer
+            autofocus
+            bind:text={session.draft}
+            bind:images={session.draftImages}
+            takesImages={session.conn.takesImages}
+            busy={session.conn.busy}
+            commands={session.conn.session.commands}
+            onsend={(prompt) => {
+              follow.resume();
+              void sessions.send(session, prompt);
+            }}
+            oncancel={() => session.conn?.cancel()}
+            turnStartedAt={session.conn.turnStartedAt}
+            interrupting={session.conn.interrupting}
+            waiting={session.conn.permissions.length > 0}
+            queued={session.queued}
+            onqueue={(prompt) => sessions.queue(session, prompt)}
+            onsendnow={() => {
+              follow.resume();
+              void sessions.sendNow(session);
+            }}
+            ondeletequeued={() => (session.queued = null)}
+            findFiles={async (q) => (await api.sessionFind(session.key, q)).paths}
+            activity={activity(session.conn.session.entries, session.info.scope)}
+          >
+            {#snippet tools()}<SessionControls conn={session.conn!} harness={session.info.harness} />{/snippet}
+          </Composer>
+        </footer>
+      {:else if session.conn && session.status === "starting"}
+        <footer>
+          <div class="text-sm" data-testid="starting">
+            {#if session.startup}<StartSteps startup={session.startup} access={accessLabel(session.info)} />{:else}<p class="text-muted-foreground">Starting a sandbox for {accessLabel(session.info)}…</p>{/if}
+          </div>
+        </footer>
+      {:else if !running && session.status !== "elsewhere" && session.info.missingImage}
+        <!-- its start refused: an image it needs is not built yet (F.1); prepared from here -->
+        <footer class="ended" data-testid="closed">
+          <MissingImage target={session.info.missingImage} agent={label} refused={session.info.lastActivityAt} error={session.info.error ?? session.error} onstart={() => sessions.connect(session)} />
+        </footer>
+      {:else if !running}
+        <!-- stopped, failed or attached elsewhere: what happened and how to go on, in place of the prompt -->
+        <footer class="ended" data-testid="closed">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+            <span class="grid size-8 shrink-0 place-items-center rounded-full {session.error || failed ? 'bg-danger/10 text-danger' : 'bg-muted text-foreground'}">
+              {#if session.error || failed}<TriangleAlert class="size-4" />{:else if session.status === "elsewhere"}<PlugZap class="size-4" />{:else}<Play class="size-4" />{/if}
+            </span>
+            <div class="min-w-0 flex-1 basis-64 space-y-0.5">
+              {#if session.status === "elsewhere"}
+                <h2 class="text-sm font-semibold">Open in other tabs</h2>
+                <p class="text-sm text-muted-foreground">
+                  Too many clients were attached to this session, so this tab was detached. The agent keeps running.
+                </p>
+              {:else if failed}
+                <h2 class="text-sm font-semibold">The session failed</h2>
+                <p class="text-sm text-muted-foreground">Its agent stopped with an error. Start a new session with it, or stop this one.</p>
+              {:else}
+                <h2 class="text-sm font-semibold">The agent is stopped</h2>
+                <p class="text-sm text-muted-foreground">
+                  {session.conn?.closed?.reason ? `${session.conn.closed.reason}. ` : ""}Resuming restarts it in a new sandbox and continues this
+                  conversation.
+                </p>
+              {/if}
+              {#if session.draft.trim() || session.draftImages.length}
+                <p class="text-sm text-muted-foreground" data-testid="draft-kept">Your unsent message is kept: it is back in the input when the agent runs.</p>
+              {/if}
             </div>
-          {:else if failed}
-            <div class="space-y-1.5">
-              <h2 class="text-base font-semibold">The session failed</h2>
-              <p class="text-sm text-muted-foreground">Its agent stopped with an error. Start a new session with it, or stop this one.</p>
-            </div>
-          {:else}
-            <div class="space-y-1.5">
-              <h2 class="text-base font-semibold">The agent is stopped</h2>
-              <p class="text-sm text-muted-foreground">
-                {session.conn?.closed?.reason ? `${session.conn.closed.reason}. ` : ""}Resuming restarts it in a new sandbox and continues this
-                conversation.
-              </p>
-            </div>
-          {/if}
+            {#if session.status === "elsewhere"}
+              <Button onclick={() => sessions.connect(session)} data-testid="reconnect">Reattach</Button>
+            {:else if failed}
+              <Button onclick={another}><Plus />New session</Button>
+            {:else}
+              <Button onclick={() => sessions.connect(session)} data-testid="reconnect"><Play />Resume</Button>
+            {/if}
+          </div>
           {#if session.error}
             <pre
               class="w-full rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-left text-xs whitespace-pre-wrap text-danger [overflow-wrap:anywhere]"
               data-testid="error">{session.error}</pre>
           {/if}
-          {#if session.status === "elsewhere"}
-            <Button onclick={() => sessions.connect(session)} data-testid="reconnect">Reattach</Button>
-          {:else if failed}
-            <Button onclick={another}><Plus />New session</Button>
-          {:else}
-            <Button onclick={() => sessions.connect(session)} data-testid="reconnect"><Play />Resume</Button>
-          {/if}
-        </div>
-      </div>
-    {/if}
+        </footer>
+      {/if}
+    </div>
 
-    {#if panel === "files"}
-      <aside class="files">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="grip" onpointerdown={resize} title="Drag to resize"></div>
-        <SessionFiles sessionId={session.key} folder={session.info.scope} {changes} onclose={() => togglePanel("files")} />
+    {#if panel}
+      <!-- beside the session on a wide screen; a sheet over it on a narrow one (dragged down,
+           Escape or a tap on the session closes it) -->
+      <button type="button" class="scrim" aria-label="close the panel" onclick={() => (panel = null)} transition:scrimFade></button>
+      <aside class:files={panel === "files"} data-sheet out:sheetOut>
+        <div class="handle" aria-hidden="true" {@attach dragSheet(released)}></div>
+        {#if panel === "card"}
+          {@render card()}
+        {:else if panel === "files"}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="grip" onpointerdown={resize} title="Drag to resize"></div>
+          <SessionFiles sessionId={session.key} folder={session.info.scope} {changes} request={fileRequest} onclose={() => togglePanel("files")} />
+        {:else if showNetwork}
+          <NetworkPanel agent={session.agent} session={session.info} onchange={(r) => sessions.updateAgent(r)} />
+        {:else if panel === "save"}
+          <SaveSkillPanel sessionId={session.key} />
+        {:else if panel === "automations"}
+          <SessionAutomationRuns runs={automationRuns} />
+        {/if}
       </aside>
-    {:else if showNetwork}
-      <aside><NetworkPanel agent={session.agent} session={session.info} onchange={(r) => sessions.updateAgent(r)} /></aside>
-    {:else if panel === "save"}
-      <aside><SaveSkillPanel sessionId={session.key} /></aside>
-    {:else if panel === "automations"}
-      <aside><SessionAutomationRuns runs={automationRuns} /></aside>
     {/if}
+  </div>
   </div>
 {/if}
 
 <style>
+  /* The session is one dark room from the menu's edge to the window's: its caption, the terminal,
+     and the panel it opens (Files, Network…) beside it, divided by a line, never a card. */
+  .room {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .caption {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 3rem;
+    flex: none;
+    padding: 0 1rem 0 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--sans);
+    font-size: 0.875rem;
+  }
+  .draft-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    flex: none;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--muted);
+    font-family: var(--sans);
+    font-size: 0.875rem;
+  }
+  .draft-what {
+    flex: 1;
+    min-width: 12rem;
+  }
+  .draft-actions {
+    display: flex;
+    gap: 0.375rem;
+  }
+  .draft-problem {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.75rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    font-size: 0.8rem;
+  }
+  .draft-problem p {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .draft-problem b {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .draft-problem code {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+  .draft-problem button {
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .title {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 8px;
+    text-align: left;
+    font-size: inherit;
+  }
+  button.title:hover,
+  button.title[aria-pressed="true"] {
+    background: var(--muted);
+  }
+  .title h1 {
+    min-width: 0;
+    flex: none;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .where {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted-foreground);
+  }
   .session {
     flex: 1;
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 0.75rem;
-    padding: 0.75rem;
   }
   .session.with-network {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) 320px;
   }
   .session.with-files {
     grid-template-columns: minmax(0, 1fr) var(--files-width, min(42%, 720px));
@@ -442,46 +781,64 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
   }
-  .titlebar {
-    position: relative;
+  /* the card: in the menu (light or dark, the app's theme) or here (the terminal's) */
+  .card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-family: var(--sans);
+    font-size: 0.8125rem;
+  }
+  .card-body .fact {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
+  }
+  .actions {
     display: flex;
     align-items: center;
-    justify-content: center;
-    height: 2.1rem;
-    padding: 0 0.75rem;
-    background: var(--card);
-    border-bottom: 1px solid var(--border);
-    min-width: 0;
-  }
-  .lights {
-    position: absolute;
-    left: 0.75rem;
-    display: flex;
-    gap: 6px;
-  }
-  .lights i {
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: #ff5f57;
-  }
-  .lights i:nth-child(2) {
-    background: #febc2e;
-  }
-  .lights i:nth-child(3) {
-    background: #28c840;
-  }
-  .name {
+    gap: 0.125rem;
+    margin: 0 -0.25rem;
     color: var(--muted-foreground);
-    font-size: 0.85em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: calc(100% - 10rem);
+  }
+  .actions :global(.end) {
+    margin-left: auto;
+  }
+  /* what an action has to tell (files changed, shared) sits on its corner: every action keeps one
+     size, the row never moves */
+  .actions :global(.badged) {
+    position: relative;
+  }
+  .actions .count {
+    position: absolute;
+    top: -0.2rem;
+    right: -0.2rem;
+    min-width: 0.9rem;
+    height: 0.9rem;
+    padding: 0 0.2rem;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--foreground);
+    font-size: 0.625rem;
+    line-height: 0.9rem;
+    text-align: center;
+  }
+  .actions .count.unseen {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+  .actions .dot {
+    position: absolute;
+    top: 0.2rem;
+    right: 0.2rem;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+  }
+  aside > .card-body {
+    font-size: 0.875rem;
   }
   .screen {
     flex: 1;
@@ -494,6 +851,88 @@
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
   }
+  .started {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    font-family: var(--sans);
+    color: var(--foreground);
+  }
+  .started-label {
+    margin: 0 0 0.5rem;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+  .start {
+    padding: 1rem 0 1.5rem;
+    max-width: 44rem;
+    color: var(--muted-foreground);
+  }
+  .start-title {
+    margin: 0 0 0.6rem;
+    color: var(--foreground);
+    font-family: var(--sans);
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+  .start dl {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.15rem 2ch;
+    margin: 0 0 0.9rem;
+  }
+  .start dd {
+    margin: 0;
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+  }
+  .commands {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.7rem;
+  }
+  .commands button {
+    padding: 0.1rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--link);
+  }
+  .commands button:hover {
+    border-color: var(--primary);
+  }
+  .hint {
+    margin: 0;
+  }
+  .hint kbd {
+    font: inherit;
+    color: var(--foreground);
+  }
+  .screen-box {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .latest {
+    position: absolute;
+    bottom: 0.75rem;
+    left: 50%;
+    translate: -50% 0;
+    padding: 0.2rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow: 0 6px 20px -4px rgb(0 0 0 / 0.5);
+    animation: rise var(--dur-3) var(--ease-spring) backwards;
+    transition: border-color var(--dur-1);
+  }
+  .latest:hover {
+    border-color: var(--primary);
+  }
   .asks {
     padding: 0 1rem;
     max-height: 50%;
@@ -501,23 +940,34 @@
     flex: none;
   }
   footer {
-    padding: 0.6rem 1rem 0.5rem;
-    border-top: 1px solid var(--border);
+    padding: 0.6rem 1rem 0.75rem;
     background: var(--background);
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
   }
-  footer :global(.controls) {
-    font-size: max(0.9em, 12px);
-    color: var(--muted-foreground);
+  footer.ended {
+    padding: 0.75rem 1rem;
+    gap: 0.6rem;
   }
   aside {
     overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    border-left: 1px solid var(--border);
     padding: 1rem;
     background: var(--card);
+    font-family: var(--sans);
+    font-size: 0.875rem;
+    animation: panel-in var(--dur-3) var(--ease) backwards;
+  }
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+  }
+  .scrim,
+  .handle {
+    display: none;
   }
   aside.files {
     position: relative;
@@ -534,21 +984,76 @@
   .grip:hover {
     background: var(--border);
   }
+  /* A narrow screen: the panel is a sheet from the bottom over the session, which recedes
+     behind it (depth: it is still there, a tap on it comes back). */
   @media (max-width: 900px) {
-    .session.with-network {
-      grid-template-columns: 1fr;
-    }
+    .session.with-network,
     .session.with-files {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .term {
+      transition:
+        scale var(--dur-3) var(--ease),
+        opacity var(--dur-3) var(--ease);
+    }
+    .session.with-network .term,
+    .session.with-files .term {
+      scale: 0.96;
+      opacity: 0.6;
+    }
+    .scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 39;
+      background: rgb(0 0 0 / 0.25);
+      border: 0;
+      cursor: default;
+    }
+    aside {
+      position: fixed;
+      inset: auto 0 0 0;
+      z-index: 40;
+      max-height: 88svh;
+      padding-top: 1.75rem;
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -12px 40px -12px rgb(0 0 0 / 0.35);
+      transition: transform var(--dur-3) var(--ease);
+      animation: sheet-in var(--dur-3) var(--ease) backwards;
     }
     aside.files {
       position: fixed;
-      inset: 0;
-      z-index: 40;
-      border-radius: 0;
+      height: 92svh;
+      max-height: none;
+      padding-top: 1.25rem;
+    }
+    .handle {
+      display: block;
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1.5rem;
+      z-index: 2;
+      touch-action: none;
+      cursor: grab;
+    }
+    .handle::after {
+      content: "";
+      position: absolute;
+      top: 0.5rem;
+      left: 50%;
+      translate: -50% 0;
+      width: 2.5rem;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--border);
     }
     .grip {
       display: none;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
     }
   }
 </style>

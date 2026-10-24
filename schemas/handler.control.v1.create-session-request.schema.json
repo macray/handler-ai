@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "ModelAccess": {
-      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one or more (D.1); a session runs with one.",
+      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one (D.1); a session runs with it or another picked\nfor that session (D.19). An agent on the model alone (D.18) has no harness: a provider only\n(AgentSettings checks it).",
       "properties": {
         "harness": {
           "anyOf": [
@@ -64,43 +64,13 @@
       "title": "ModelAccess",
       "type": "object"
     },
-    "SessionInput": {
-      "description": "What a run of an agent with an interface is started with (D.18).",
+    "SessionAppDraft": {
+      "description": "A session working on a draft of an app's code (H.15): its folder, kept by Handler, starts\nas a copy of `app`'s code, or empty for a new app (none). Used (`POST\n/v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app.",
       "properties": {
-        "fields": {
-          "additionalProperties": true,
-          "default": {},
-          "title": "Fields",
-          "type": "object"
-        },
-        "subject": {
+        "app": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SessionSubject"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "title": "SessionInput",
-      "type": "object"
-    },
-    "SessionSubject": {
-      "description": "The handler object a run works on (D.18).",
-      "properties": {
-        "skill": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-          "title": "Skill",
-          "type": "string"
-        },
-        "digest": {
-          "anyOf": [
-            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
               "type": "string"
             },
             {
@@ -108,13 +78,23 @@
             }
           ],
           "default": null,
-          "title": "Digest"
+          "title": "App"
         }
       },
-      "required": [
-        "skill"
-      ],
-      "title": "SessionSubject",
+      "title": "SessionAppDraft",
+      "type": "object"
+    },
+    "SessionInput": {
+      "description": "What a session of an agent with an interface is started with (D.18): a job's run, a\nbrief's session.",
+      "properties": {
+        "fields": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "title": "SessionInput",
       "type": "object"
     }
   },
@@ -177,6 +157,17 @@
       "default": null,
       "title": "Fromskill"
     },
+    "appDraft": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionAppDraft"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "model": {
       "anyOf": [
         {
@@ -195,7 +186,10 @@
         "cli",
         "editor",
         "phone",
-        "automation"
+        "automation",
+        "app",
+        "check",
+        "ask"
       ],
       "title": "Origin",
       "type": "string"

@@ -10,12 +10,15 @@ from typing import Any
 
 import pytest
 
-from handler_contracts import AutomationRun
+from handler_contracts import AgentInterface, Automation, AutomationRun
 from handler_control import automation_config as config
-from handler_control.agents import AgentRegistry
+from handler_control import save_rules
+from handler_control.agents import AgentRecord, AgentRegistry, CheckedSettings, RunsAs
+from handler_control.app_runs import AppRuns
 from handler_control.apps import AppStore
-from handler_control.automations import AutomationError, Automations, pending_stop, result_problems
+from handler_control.automations import AutomationError, Automations, pending_stop
 from handler_control.inbox import Inbox
+from handler_control.interfaces import result_problems
 from handler_control.projects import ProjectRegistry
 from handler_control.sessions import SessionStore
 from handler_control.settings import Settings
@@ -86,12 +89,13 @@ def runner(tmp_path: Path) -> Automations:
     )
     registry = AgentRegistry(settings.state_dir)
     inbox = Inbox(settings)
+    sessions, projects = SessionStore(settings, registry), ProjectRegistry(tmp_path, registry)
     return Automations(
         settings,
-        SessionStore(settings, registry),
+        sessions,
         registry,
-        ProjectRegistry(tmp_path, registry),
-        apps=AppStore(settings, "t0ken", inbox),
+        projects,
+        apps=AppStore(settings, "t0ken", inbox, AppRuns(settings, sessions, projects, inbox)),
         inbox=inbox,
     )
 
@@ -190,7 +194,7 @@ def test_the_inbox_is_told_results_and_failures(runner: Automations) -> None:
     review = runner.settings.automations_dir / "review"
     review.mkdir()
     (review / "automation.toml").write_text(
-        'apiVersion = "handler.automation/v1"\nwhen = { every = "1h" }\n'
+        'apiVersion = "handler.automation/v1"\nwhen = { every = "1h" }\napp = "planner"\n'
         'run = { agent = "reviewer" }\n'
     )
     result = {"status": "attention", "summary": "2 issues", "issues": ["a", "b"]}
@@ -204,6 +208,7 @@ def test_the_inbox_is_told_results_and_failures(runner: Automations) -> None:
     assert (message.name, message.agent, message.status) == ("review", "reviewer", "attention")
     assert message.summary == "2 issues" and message.data == result
     assert message.session_id == "s_2" and loaded.definition is not None
+    assert message.app == "planner" and failed.app is None  # the app its automation names
 
 
 def test_a_schedule_queues_the_latest_slot_once(runner: Automations) -> None:
@@ -242,3 +247,110 @@ def test_what_an_agent_run_says_it_does(runner: Automations) -> None:
         "Runs the agent reviewer of project handler unattended, without asking you.",
         "Sends its result to your inbox.",
     ]
+
+
+def test_an_agent_run_s_messages_may_open_an_app(runner: Automations) -> None:
+    folder = runner.settings.automations_dir / "plan"
+    folder.mkdir(parents=True)
+    (folder / "automation.toml").write_text(
+        'apiVersion = "handler.automation/v1"\nwhen = { every = "5h" }\napp = "planner"\n'
+        'run = { agent = "Planner" }\n'
+    )
+    view = runner.view("plan")
+    assert "app: no app named planner" in view.problems
+    assert view.permissions[-1] == "Sends its result to your inbox, which opens the app planner."
+    with pytest.raises(ValueError, match="'app' goes with an agent run"):
+        Automation.model_validate(
+            {"apiVersion": "handler.automation/v1", "when": {"every": "1h"}, "run": "true"}
+            | {"app": "planner"}
+        )
+
+
+# ── what its names are bound to (I.1) ───────────────────────────────────
+
+JOB = {
+    "result": {
+        "type": "object",
+        "required": ["status", "summary"],
+        "properties": {
+            "status": {"enum": ["ok", "attention", "failed"]},
+            "summary": {"type": "string"},
+        },
+    }
+}
+
+
+def job(runner: Automations, name: str, folder: str = "/code/x") -> Any:
+    settings = CheckedSettings(
+        scope=folder,
+        model=RunsAs(harness="fake", account="fake"),
+        interface=AgentInterface.model_validate(JOB),
+    )
+    return runner.registry.add(AgentRecord(**settings.model_dump(), name=name))
+
+
+@pytest.fixture(autouse=True)
+def any_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its agents run on a provider (no account terms to read): their model is not the test's."""
+    runs = RunsAs(harness="fake", provider="local")
+    monkeypatch.setattr(save_rules, "session_model", lambda *_: runs)
+
+
+def write(runner: Automations, name: str, text: str) -> None:
+    folder = runner.settings.automations_dir / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "automation.toml").write_text('apiVersion = "handler.automation/v1"\n' + text)
+
+
+def test_its_agent_is_kept_by_id_when_renamed(runner: Automations) -> None:
+    planner = job(runner, "Planner")
+    write(runner, "plan", 'when = { every = "5h" }\nrun = { agent = "Planner" }\n')
+    assert runner.view("plan").agent_id == planner.id  # bound when first read
+    planner.name = "Daily planner"
+    view = runner.view("plan")
+    assert view.agent_id == planner.id and not any("run." in p for p in view.problems)
+    assert "Runs the agent Daily planner of no project" in view.permissions[1]
+    runner.registry.delete(planner.id)
+    assert "run.agent: the agent it ran (Planner) was deleted: choose another" in (
+        runner.view("plan").problems
+    )
+
+
+def test_a_file_edited_by_hand_is_read_again(runner: Automations) -> None:
+    job(runner, "Planner")
+    other = job(runner, "Other", "/code/y")
+    write(runner, "plan", 'when = { every = "5h" }\nrun = { agent = "Planner" }\n')
+    runner.view("plan")
+    write(runner, "plan", 'when = { every = "5h" }\nrun = { agent = "Other" }\n')
+    assert runner.view("plan").agent_id == other.id
+
+
+def test_the_form_s_agent_is_written_and_bound(runner: Automations) -> None:
+    twin_a = job(runner, "Twin", "/code/a")
+    job(runner, "Twin", "/code/b")  # two agents of no project named so: by name, ambiguous
+    definition = Automation.model_validate(
+        {"apiVersion": "handler.automation/v1", "when": {"every": "1h"}, "run": {"agent": "x"}}
+    )
+    check = runner.preview(definition)
+    assert any("2 agents named x" in p or "no agent named x" in p for p in check.problems)
+    view = runner.create("twin", definition=definition, agent_id=twin_a.id)
+    assert view.agent_id == twin_a.id
+    assert view.definition is not None and view.definition.agent_run is not None
+    assert view.definition.agent_run.agent == "Twin"  # its name written in the file
+    with pytest.raises(AutomationError, match="no such agent"):
+        runner.update("twin", definition, "nope")
+
+
+def test_only_is_bound_by_id(runner: Automations) -> None:
+    dev = job(runner, "dev")
+    write(runner, "watch", 'when = "session.stopped"\nonly = { agent = ["dev"] }\nrun = "true"\n')
+    view = runner.view("watch")
+    assert (view.only_agents, view.problems) == ([dev.id], [])
+    dev.name = "developer"
+    assert runner.view("watch").only_agents == [dev.id]
+    runner.registry.delete(dev.id)
+    assert runner.view("watch").problems == ["only.agent: the agent dev was deleted"]
+    write(
+        runner, "watch", 'when = "session.stopped"\nonly = { agent = ["nobody"] }\nrun = "true"\n'
+    )
+    assert runner.view("watch").problems == ["only.agent: no agent named nobody"]

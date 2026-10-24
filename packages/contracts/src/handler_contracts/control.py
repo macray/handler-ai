@@ -6,28 +6,38 @@ from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from .addon import AddonName, BindingName, SlotName
 from .agent_spec import HarnessName
+from .app import (
+    ActionResult,
+    AppManifest,
+    AppManifestNeeds,
+    AppManifestSuggestedAutomation,
+    AppName,
+    NeedName,
+)
+from .automation import AudioFormat, LlmModel
 from .common import (
     AbsolutePath,
-    AccessContext,
+    AccessArea,
+    AreaColor,
+    AreaName,
     CacheSharing,
     CommandSecret,
     Confinement,
-    ContextColor,
-    ContextName,
     Document,
     EgressEntry,
     Enforcement,
     EnvSecret,
     FileSecret,
     FileSource,
+    HostPath,
     MountKind,
     NetworkMode,
     PermissionMode,
     ResourceName,
     SecretPath,
+    StrictDocument,
 )
 from .harness import CacheDeclaration, CacheName, LoginRecipe
-from .miniapp import AppName, MiniAppNeeds
 from .provider import Endpoint, Protocol, ProviderModel
 
 CONTROL_API_VERSION = "handler.control/v1"
@@ -195,20 +205,13 @@ class AddonInfo(Document):
     directory: str  # where it is loaded from (G.1)
     builtin: bool = False  # shipped with handler; else the user's
     overrides_builtin: bool = False  # the user's, named as a built-in addon it replaces
-    source: str | None = None  # installed from (G.5): "catalog:<name>", a folder, an archive URL
-    update_available: bool = False  # installed from the catalog, which now ships other content
+    # installed from (G.5): "source:<source>/<name>" (D.26), a folder, an archive URL
+    source: str | None = None
+    update_available: bool = False  # installed from a source, which now holds other content
 
 
 AddonSource = Annotated[str, Field(min_length=1, max_length=2048)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-
-
-class AddonCatalogEntry(Document):
-    """An addon handler ships but does not load until it is installed (G.5)."""
-
-    name: str
-    description: str | None = None
-    installed: bool = False  # an addon of that name is in the user's folder
 
 
 class AddonPreview(Document):
@@ -231,8 +234,8 @@ class AddonPreview(Document):
 
 
 class AddonPreviewRequest(Document):
-    """A source to look at (G.5): "catalog:<name>", an absolute folder path, an https:// URL of
-    a .tar.gz archive."""
+    """A source to look at (G.5): "source:<source>/<name>" (an addon of a source, D.26), an
+    absolute folder path, an https:// URL of a .tar.gz archive."""
 
     source: AddonSource
 
@@ -373,6 +376,7 @@ class Build(Document):
     step: int | None = None  # podman's "STEP n/m" of the current image build
     steps: int | None = None
     versions: dict[str, str] = {}  # harness → version it installed (B.6), once known
+    warnings: list[str] = []  # what works but should be fixed: a toolbox without what Handler needs
     error: str | None = None
     started_at: Timestamp
     ended_at: Timestamp | None = None
@@ -418,7 +422,7 @@ class AccountInfo(Document):
     problems: list[str] = []
     error: str | None = None
     connectors: bool = False  # its harness may use the account's own connectors (E)
-    contexts: list[str] = []  # the project contexts it may be used in, or `any` (D.19)
+    areas: list[str] = []  # the areas it may be used in, or `any` (D.19)
     agents: list[str] = []  # the agents that use it: "<project> · <agent>", or an ad-hoc one's name
     sessions: int = 0  # sessions on it (as kept by the daemon)
     last_used_at: Timestamp | None = None  # the last activity of one of those sessions
@@ -433,7 +437,7 @@ class AccountRequest(Document):
     description: str | None = None
     plan: Annotated[str, Field(min_length=1)] | None = None  # one of its harness's login plans
     connectors: bool = False  # its harness may use the account's connectors (B.1 accountConnectors)
-    contexts: list[AccessContext] = []  # the project contexts it may be used in, or `any` (D.19)
+    areas: list[AccessArea] = []  # the areas it may be used in, or `any` (D.19)
 
 
 class LoginWindow(Document):
@@ -499,8 +503,11 @@ class ProviderInfo(Document):
     error: str | None = None
     agents: list[str] = []  # the agents that use it, as AccountInfo's
     harnesses: list[str] = []  # the harnesses that accept its protocol
+    model_alone: bool = (
+        False  # it speaks a protocol handlerd calls: the model alone runs on it (D.18)
+    )
     files: list[str] = []  # the harnesses it has config files for (hand-written, E)
-    contexts: list[str] = []  # the project contexts it may be used in, or `any` (D.19)
+    areas: list[str] = []  # the areas it may be used in, or `any` (D.19)
 
 
 class ProviderTemplate(Document):
@@ -526,12 +533,14 @@ class ProviderRequest(Document):
     key: SecretValue | None = None
     remove_key: bool = False
     files: dict[str, dict[str, FileSource]] | None = None  # E: per harness, config file slots
-    contexts: list[AccessContext] = []  # the project contexts it may be used in, or `any` (D.19)
+    areas: list[AccessArea] = []  # the areas it may be used in, or `any` (D.19)
 
 
 class ModelAccess(Document):
     """What an agent runs as (E): a harness and the account or the provider its model calls use
-    (exactly one), and the model. An agent has one or more (D.1); a session runs with one."""
+    (exactly one), and the model. An agent has one (D.1); a session runs with it or another picked
+    for that session (D.19). An agent on the model alone (D.18) has no harness: a provider only
+    (AgentSettings checks it)."""
 
     harness: HarnessName | None = None  # an account's by default; required with a provider
     account: ResourceName | None = None
@@ -542,35 +551,37 @@ class ModelAccess(Document):
     def _account_or_provider(self) -> Self:
         if (self.account is None) == (self.provider is None):
             raise ValueError("name exactly one of 'account' and 'provider'")
-        if self.provider is not None and self.harness is None:
-            raise ValueError("a provider needs the harness that talks to it")
         return self
 
 
 # a JSON Schema (draft 2020-12), checked by handlerd; at most this many bytes as JSON
 JsonSchema = dict[str, Any]
 MAX_SCHEMA_BYTES = 64 * 1024
-SubjectKind = Literal["skill"]  # the handler objects a run can work on (D.18)
 SUBJECT_ROOT = "/subject"  # where a run's subject is mounted, read-only: /subject/<name>
+SKILL_FIELD = "skill"  # "x-handler" of the form's field naming a skill to work on (D.18)
+RUN_TIMEOUT_SEC = 1800  # a job's turn when its interface says none (D.18)
 
 
 class AgentInterface(Document):
-    """What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and
-    the result its final message holds. An agent with one runs unattended, so in permission mode
-    `bypass`: no one is there to answer its requests."""
+    """How a session of an agent starts and ends (D.18): a form (one of its fields may name a
+    skill of the library to work on, its subject), and maybe the result its final message holds.
+    With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
+    to answer its requests). Without, a brief: the form starts a session you then work in."""
 
-    fields: JsonSchema | None = None  # an object schema: the form filled to start a run
-    subject: SubjectKind | None = None  # mounted read-only at /subject/<name>
-    result: JsonSchema  # what its final message gives back
-    timeout_sec: Annotated[int, Field(gt=0, le=86_400)] = 1800  # each turn
+    # an object schema: the form filled to start a session; a string property marked
+    # "x-handler": "skill" (one at most) names a skill, mounted read-only at /subject/<name>
+    fields: JsonSchema | None = None
+    result: JsonSchema | None = None  # a job's: what its final message gives back
+    # a job's: each turn (none: RUN_TIMEOUT_SEC); a brief has none
+    timeout_sec: Annotated[int, Field(gt=0, le=86_400)] | None = None
 
 
-class BuiltinAgent(Document):
-    """An agent handler ships (D.18), set up at most once: everything but what it runs as and where
-    it works, its defaults; `skills` come with it, installed in the library when it is set up."""
+class AgentDefinition(Document):
+    """What an agent set up from it starts with (D.18): everything but what it runs as and where
+    it works, its defaults; `skills` come with it, installed in the library when it is set up.
+    An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
+    and those Handler ships for its needs (D.18)."""
 
-    name: SkillName  # its name: the origin of the agent set up from it
-    description: str  # what it is for
     agent_name: str
     agent_description: str | None = None
     instructions: str | None = None
@@ -581,17 +592,52 @@ class BuiltinAgent(Document):
     permissions: PermissionMode = "bypass"
     skills: list[SkillName] = []
     interface: AgentInterface | None = None
-    agent_id: str | None = None  # the agent set up from it, once there is one
+    # addons its agent needs a configuration of (G.2): the set-up page selects one of each
+    addons: list[AddonName] = []
+    # knowledge folders it reads (D.5), by their names: the set-up page selects one for each
+    knowledge: list[KnowledgeFolder] = []
+    display: bool = False  # its sandboxes get the host's Wayland display (A.6)
+    model_alone: bool = False  # its agent has no program (D.18): it is set up on a provider
+
+
+class HandlerNeed(Document):
+    """One of Handler's own features that needs an agent (D.18: the skill review needs a
+    reviewer), given one by the person as an app's need is (H.2). Handler ships the definition
+    an agent is set up from for it (`data/handler-needs/<name>/`). The UI calls the agent given a
+    helper."""
+
+    name: SkillName  # "skill-review"
+    description: str  # what the agent does for Handler
+    version: Annotated[int, Field(ge=1)]  # one more on each change of its definition
+    definition: AgentDefinition  # what an agent set up for it starts with
+    agent_id: str | None = None  # the agent given: Handler's feature uses it
+    # the person's agents that may be given: a job's whose form and result fit (as H.2), a chat's
+    # set up for this need (nothing else says what it does)
+    fits: list[str] = []
+
+
+class SetHandlerNeedAgentRequest(Document):
+    """The agent given for one of Handler's needs (D.18): one that fits."""
+
+    agent_id: Annotated[str, Field(min_length=1)]
+
+
+# what only an agent program's sandbox has: an agent on the model alone keeps their defaults
+# (D.18)
+SANDBOX_SETTINGS = (
+    *("network", "egress", "allow", "confinement", "permissions"),
+    *("bindings", "display"),
+)
 
 
 class AgentSettings(Document):
-    """How an agent is set up, but where it works: what it may run as (its models), its sandbox,
+    """How an agent is set up, but where it works: what it runs as (its model), its sandbox,
     its permission mode, its tools, knowledge and display. Shared by the requests that create or
     change an agent and by the agent itself. The defaults are the preset of new agents (Guarded):
     filtered network, enforced (D.2, D.8)."""
 
-    # what it runs as, the first by default; each session runs with one of them (D.1)
-    models: Annotated[list[ModelAccess], Field(min_length=1)]
+    # what it runs as; a session may run with another, for that session only (D.1, D.19)
+    model: ModelAccess
     network: NetworkMode = "filtered"  # A.4
     egress: Enforcement = "enforce"  # filtered: enforce, or only log to learn its hosts (A.4)
     allow: list[EgressEntry] = []  # filtered: its own hosts, besides the required ones (A.3)
@@ -600,37 +646,81 @@ class AgentSettings(Document):
     bindings: list[BindingName] = []  # its addons (G.3)
     knowledge: list[KnowledgeFolder] = []  # mounted read-only at /knowledge/<name> (D.5)
     display: bool = False  # its sandboxes get the host's Wayland display (A.6)
-    interface: AgentInterface | None = None  # its runs are unattended (D.18)
+    interface: AgentInterface | None = None  # a form: a job (a result) or a brief (D.18)
+    # no program: each session is a conversation with the model, on a provider; no sandbox, so
+    # none of its settings (they keep their defaults), no tools of any kind (D.18)
+    model_alone: bool = False
 
     @field_validator("allow", "bindings", "knowledge")
     @classmethod
     def _as_set(cls, values: list[str]) -> list[str]:
         return sorted(set(values))
 
-    @field_validator("models")
-    @classmethod
-    def _once_each(cls, values: list[ModelAccess]) -> list[ModelAccess]:
-        if len({m.model_dump_json() for m in values}) != len(values):
-            raise ValueError("a model is listed twice")
-        return values
+    @model_validator(mode="after")
+    def _who_works(self) -> Self:
+        if not self.model_alone:
+            if self.model.provider is not None and self.model.harness is None:
+                raise ValueError("a provider needs the harness that talks to it")
+            return self
+        if self.model.provider is None or self.model.harness is not None:
+            raise ValueError("the model alone runs on a provider, with no harness")
+        defaults = AgentSettings.model_fields
+        sandboxed = [k for k in SANDBOX_SETTINGS if getattr(self, k) != defaults[k].default]
+        if sandboxed:
+            raise ValueError(f"the model alone has no sandbox: {', '.join(sandboxed)} not allowed")
+        return self
 
 
 MAX_INSTRUCTIONS = 20_000
 
 
-class AdHocAgentRequest(AgentSettings):
-    """An ad-hoc agent (one without a project, D.1): the body of create (POST) and of a full
-    update (PUT). Without a scope, a folderless agent: each of its sessions gets a folder of its
-    own (D.18)."""
+class AgentOrigin(Document):
+    """What an agent was set up from, kept for good: the definition of an app's need (H.2), an
+    agents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it
+    came from: where the agent lives is its home (`projectId`, `app`, `chat`)."""
 
-    scope: AbsolutePath | None = None
-    name: str | None = None  # a label shown instead of its folder
+    kind: Literal["app", "agents-file", "handler-need"]
+    name: SkillName  # the app's, the agents file's, Handler's need's
+    agent: SkillName | None = None  # the app's need, the file's agent (its part); a need's: none
+    version: Annotated[int, Field(ge=1)] | None = None  # the file's, the need's (not an app's)
+
+    @model_validator(mode="after")
+    def _parts(self) -> Self:
+        if (self.kind == "app") == (self.version is not None):
+            raise ValueError("a version for an agents file's agent or a need's, and only then")
+        if (self.kind == "handler-need") == (self.agent is not None):
+            raise ValueError("an agent for an app's need or an agents file's, and only then")
+        return self
+
+
+class AgentRequest(AgentSettings):
+    """An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a
+    project (`projectId`: it works in the project's folder), an app (`app`: one of its parts,
+    H.14), Chat (`chat`: someone you talk to, with no folder), or none (outside projects, in its
+    own folder or a folder per session). The home is given at creation and never changes."""
+
+    project_id: str | None = None
+    app: AppName | None = None
+    chat: bool = False
+    scope: AbsolutePath | None = None  # of no project: its folder (None: one per session)
+    # its goal ("Dev", "Review"), required in a project and unique there (case-insensitive);
+    # of no project, a label shown instead of its folder
+    name: str | None = None
     description: str | None = None  # what it is for
     instructions: Annotated[str, Field(max_length=MAX_INSTRUCTIONS)] | None = None
-    skills: list[SkillName] = []  # skills it picks (D.17)
-    # the built-in agent it is set up from (D.18): at most one agent each, kept for good
-    origin: SkillName | None = None
+    skills: list[SkillName] = []  # skills it picks; its project's come on top (D.17)
+    origin: AgentOrigin | None = None  # what it is set up from (D.23, H.2), kept for good
+    default: bool = False  # a project's: becomes its default agent
+    remote_start: bool = False  # a project's: your paired devices may start sessions with it
     confirm_risks: bool = False  # save although it widens what the agent may do (D.8)
+
+    @model_validator(mode="after")
+    def _one_home(self) -> Self:
+        if sum((self.project_id is not None, self.app is not None, self.chat)) > 1:
+            raise ValueError("one home: a project, an app or Chat")
+        if self.project_id is not None and self.scope is not None:
+            raise ValueError("an agent of a project works in its folder: no scope")
+        return self
 
 
 class PatchAgentRequest(Document):
@@ -656,9 +746,10 @@ class RequiredHost(Document):
 
 
 class AgentModel(ModelAccess):
-    """One of an agent's models (D.1): its harness resolved, and what it needs now."""
+    """An agent's model (D.1): its harness resolved, and what it needs now."""
 
-    harness: HarnessName  # resolved: an account's harness when none was named
+    harness: HarnessName | None  # resolved: an account's harness when none was named; None:
+    # the model alone (D.18)
     problem: str | None = None  # why a session cannot start with it now (E1)
     # filtered agents: what its account or provider, MCP servers and the agent's addons require
     # in a session running with it (E4), exactly the required part of that sandbox's allow-list
@@ -666,12 +757,13 @@ class AgentModel(ModelAccess):
 
 
 class Agent(AgentSettings):
-    """What sessions are opened on: a harness on an account or a provider (what, one of its
-    models) working in a folder (where), with its settings. An agent of a project has a
-    `projectId` (its settings all its own; its folder, caches and skills its project's); an
-    ad-hoc one has none (`handler run`, `handler acp` and `handler terminal` outside projects)."""
+    """What sessions are opened on: a harness on an account or a provider (what, its model)
+    working in a folder (where), with its settings. Its home: a project (`projectId`: its
+    settings all its own; its folder, caches and skills its project's), an app (`app`: one of its
+    parts), Chat (`chat`: someone you talk to), or none (outside projects: made on the Other
+    folders page, or by `handler run`, `handler acp` and `handler terminal`)."""
 
-    models: list[AgentModel]
+    model: AgentModel
     scope: AbsolutePath | None = None  # None: folderless, a folder per session (D.18)
     network: NetworkMode  # always sent (the defaults are for requests)
     egress: Enforcement | None = None  # filtered only
@@ -682,36 +774,21 @@ class Agent(AgentSettings):
     project_id: str | None = None  # the project it is an agent of
     description: str | None = None  # an agent's: what it is for
     instructions: str | None = None  # an agent's: sent before the request that starts a session
-    origin: str | None = None  # the built-in agent it is (D.18), at most one each
+    app: str | None = None  # its home besides a project: the app it is one of the parts of (H.14)
+    chat: bool = False  # its home: Chat, someone you talk to (D.1)
+    origin: AgentOrigin | None = None  # what it was set up from (D.18, D.23, H.2)
     remote_start: bool = False  # an agent's: paired devices (owner's) may start sessions with it
     skills: list[str] = []  # the skills it picked (D.17), names
     project_skills: list[str] = []  # given by its project to all its agents (D.17)
-    context: str | None = None  # its project's context (D.19): the models its sessions may use
+    area: str | None = None  # its project's area (D.19): the models its sessions may use
     acp_url: str
     connections: list[Connection]
     created_at: Timestamp
     last_used_at: Timestamp | None = None  # last session, connection or run
 
 
-class AgentRequest(AgentSettings):
-    """An agent of a project: its settings (all its own, never followed from its project; it
-    works in its project's folder) and what it is in the project. The body of create (POST) and
-    of a full update (PUT)."""
-
-    # its goal ("Dev", "Review", "Contracts check"), unique in the project (case-insensitive); never
-    # its model's: another model is not another agent (D.1)
-    name: Annotated[str, Field(pattern=r"^\s*\S")]
-    description: str | None = None  # what it is for
-    instructions: Annotated[str, Field(max_length=MAX_INSTRUCTIONS)] | None = None
-    default: bool = False  # becomes the project's default agent
-    remote_start: bool = False  # your paired devices may start sessions with it (D.7)
-    skills: list[SkillName] = []  # skills it picks; its project's come on top (D.17)
-    confirm_risks: bool = False  # save although it widens what the agent may do (D.8)
-
-
 class ProjectSettingsRequest(Document):
-    """A project's own settings: the body of a full update (PUT). Nothing in it is an agent's:
-    which skills it gives to all its agents is set on the skills (D.17)."""
+    """A project's own settings: the body of a full update (PUT). Nothing in it is an agent's."""
 
     name: str | None = None  # default: the folder's name
     description: str | None = None  # what the project is
@@ -720,8 +797,17 @@ class ProjectSettingsRequest(Document):
     # the toolbox's caches (B.6) for its agents: its own, the global ones (with other projects),
     # or none
     caches: CacheSharing = "project"
-    # its context (D.19): only the accounts and providers made for it run its agents; none: any
-    context: ContextName | None = None
+    # its area (D.19): only the accounts and providers made for it run its agents; none: any
+    area: AreaName | None = None
+    # the library's skills it gives to all its agents (D.17); an agent that picked one itself
+    # drops it, its project giving it
+    skills: list[SkillName] = []
+
+
+class SetProjectPinnedRequest(Document):
+    """Pin a project to the web UI's menu, or take it off (D.8)."""
+
+    pinned: bool
 
 
 class CreateProjectRequest(ProjectSettingsRequest):
@@ -739,28 +825,31 @@ class Project(Document):
     folder: AbsolutePath
     default_agent: str | None = None
     caches: CacheSharing = "project"  # the toolbox's caches for its agents (B.6)
-    context: str | None = None  # its context (D.19)
+    area: str | None = None  # its area (D.19)
+    skills: list[SkillName] = []  # the skills it gives to all its agents (D.17)
+    apps: list[str] = []  # the apps given its folder, or one inside it (H.14), by name
+    pinned: bool  # listed in the web UI's menu (new projects are)
     agents: list[Agent]  # default agent first, then by name
     created_at: Timestamp
     last_used_at: Timestamp | None = None  # its agents' last use
 
 
-class ContextInfo(Document):
-    """A project context (D.19): Work, Personal, a client. A project has at most one; accounts and
+class AreaInfo(Document):
+    """An area (D.19): Work, Personal, a client. A project has at most one; accounts and
     providers say which they may be used in."""
 
     name: str
-    color: ContextColor
+    color: AreaColor
     projects: list[str] = []  # the projects in it, by name
     accounts: list[str] = []  # the accounts made for it (not those for `any`)
     providers: list[str] = []  # the providers made for it (not those for `any`)
 
 
-class ContextRequest(Document):
-    """Create a context, or change its colour (PUT: the name is the path's)."""
+class AreaRequest(Document):
+    """Create an area, or change its colour (PUT: the name is the path's)."""
 
-    name: ContextName
-    color: ContextColor
+    name: AreaName
+    color: AreaColor
 
 
 class EgressEvent(Document):
@@ -841,22 +930,31 @@ class Health(Document):
 MAX_REQUEST = 200_000
 
 
-# who started a session: the web UI, the CLI, an editor (handler acp), a paired phone
-SessionOrigin = Literal["ui", "cli", "editor", "phone", "automation"]
+# who started a session: the web UI, the CLI, an editor (handler acp), a paired phone, an
+# automation's agent run (I.3), an app on a person's request (H.11)
+SessionOrigin = Literal["ui", "cli", "editor", "phone", "automation", "app", "check", "ask"]
 
 
 class SessionSubject(Document):
-    """The handler object a run works on (D.18)."""
+    """What a run works on (D.18): the skill its form's skill field named, as it saw it."""
 
     skill: SkillName
-    digest: str | None = None  # set by handlerd when the run starts: what it saw (D.17)
+    digest: str  # the skill's when the run started (D.17)
+
+
+class SessionAppDraft(Document):
+    """A session working on a draft of an app's code (H.15): its folder, kept by Handler, starts
+    as a copy of `app`'s code, or empty for a new app (none). Used (`POST
+    /v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app."""
+
+    app: AppName | None = None
 
 
 class SessionInput(Document):
-    """What a run of an agent with an interface is started with (D.18)."""
+    """What a session of an agent with an interface is started with (D.18): a job's run, a
+    brief's session."""
 
     fields: dict[str, Any] = {}  # valid against its interface's `fields`
-    subject: SessionSubject | None = None
 
 
 class SessionOutput(Document):
@@ -867,15 +965,205 @@ class SessionOutput(Document):
     error: str | None = None  # why it is not valid
 
 
+class Check(Document):
+    """A run of a job kept with its right answer (D.20): run again with its input, it passes when
+    every field of `compare` comes back as in `answer`."""
+
+    id: str  # "c_" + 8 hex
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    input: dict[str, Any] = {}  # its form's values
+    answer: dict[str, Any]  # the right result, whole (the run's it was kept from)
+    compare: Annotated[list[str], Field(min_length=1)]  # the result's fields that must come back
+    from_run: str | None = None  # the run it was kept from
+    created_at: Timestamp
+    problem: str | None = None  # why it cannot run now: its agent's form or result changed
+
+
+CheckState = Literal["waiting", "running", "passed", "failed", "error"]
+
+
+class CheckResult(Document):
+    """One check in a check run (D.20)."""
+
+    check_id: str
+    name: str  # as it was when it ran
+    state: CheckState
+    session_id: str | None = None  # its run (origin "check")
+    got: dict[str, Any] | None = None  # what came back, of the fields it compares
+    why: str | None = None  # failed: which fields differ; error: why the run did not end well
+
+
+class CheckRun(Document):
+    """An agent's checks run once, one after another (D.20)."""
+
+    id: str  # "k_" + 8 hex
+    started_at: Timestamp
+    ended_at: Timestamp | None = None
+    results: list[CheckResult]
+
+
+class AgentChecks(Document):
+    """An agent's checks, its last check run, and what changed in it since (D.20)."""
+
+    checks: list[Check]
+    comparable: list[str] = []  # its result's fields a check may compare (not free text)
+    last: CheckRun | None = None
+    # what was changed in the agent since its last check run ("its instructions"); None: nothing
+    # or never run
+    changed: list[str] = []
+
+
+class KeepCheckRequest(Document):
+    """A run of the agent kept as a check (D.20)."""
+
+    from_run: NonEmpty
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None  # default: its title
+    compare: list[str] | None = None  # default: the result's fields that are not free text
+
+
+class CheckUpdateRequest(Document):
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    compare: Annotated[list[str], Field(min_length=1)]
+
+
+UseKind = Literal[
+    "agent",
+    "skill",
+    "knowledge",
+    "addon",
+    "account",
+    "provider",
+    "automation",
+    "app",
+    "project",
+    "handler",
+]
+
+
+class UseRef(Document):
+    """A thing at the other end of a use (D.22), and how it is used, in words."""
+
+    kind: UseKind
+    id: str  # an agent's id; a skill's, an addon configuration's, an account's, a provider's,
+    # an automation's, an app's name; a knowledge folder's path in the root; a
+    # project's id; "handler": the name of one of its needs (D.18)
+    label: str  # how it is shown
+    how: str  # "picks it", "runs on it", "given by its project", "runs it"…
+
+
+class Uses(Document):
+    """What a thing uses and what uses it (D.22)."""
+
+    uses: list[UseRef] = []
+    used_by: list[UseRef] = []
+
+
+class AgentsFileCheck(Document):
+    """A check that comes with an agents file's agent (D.20, D.23): copied to each agent set
+    up."""
+
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    input: dict[str, Any] = {}
+    answer: dict[str, Any]
+    compare: Annotated[list[str], Field(min_length=1)]
+
+
+class AgentsFileAgent(Document):
+    """One of an agents file's agents (D.23): its definition and the checks that come with it."""
+
+    part: SkillName  # its name in the file: the end of its agents' origin
+    definition: AgentDefinition
+    checks: list[AgentsFileCheck] = []
+
+
+class AgentsFile(Document):
+    """Agents written so they can be set up again in another project (D.23): their definitions
+    without what is yours (the models they run as, their folder, the addon configurations and
+    knowledge folders they were given), with what they need instead."""
+
+    name: SkillName
+    description: str | None = None
+    version: Annotated[int, Field(ge=1)]  # 1 for an export
+    # where it is set up by default: a project (its agents work in its folder), or outside
+    # projects (folderless agents)
+    place: Literal["project", "outside"] = "project"
+    agents: Annotated[list[AgentsFileAgent], Field(min_length=1)]
+
+
+class ExportAgentsRequest(Document):
+    """`POST /v1/agents-files/export`: agents of one project written as one file (D.23)."""
+
+    name: SkillName  # the file's: its agents' origins keep it
+    description: str | None = None
+    project_id: str
+    agent_ids: Annotated[list[str], Field(min_length=1)]
+    dry_run: bool = False  # say what would be in it (`AgentsExport`), make no file
+
+
+class AgentsExport(Document):
+    """What an agents file holds (`dryRun`), and what of yours it leaves out."""
+
+    file: AgentsFile
+    # what was yours and what it becomes: "Dev: runs on account claude-pro → its model, chosen at
+    # set-up"
+    replaced: list[str] = []
+
+
+ImprovementState = Literal["running", "done", "stopped", "failed"]
+AttemptState = Literal["writing", "checking", "done", "error"]
+
+
+class Attempt(Document):
+    """One version of a job's instructions in an improvement, and how its checks went (D.21)."""
+
+    n: int  # 0: the instructions the improvement started from
+    instructions: str
+    change: str | None = None  # the prompt writer's line: what it changed
+    state: AttemptState
+    why: str | None = None  # error: why it has no result
+    writer_run: str | None = None  # the prompt writer's run that wrote it
+    results: list[CheckResult] = []
+    passed: int = 0
+
+
+class Improvement(Document):
+    """A job's instructions rewritten by the prompt writer, again and again, judged by its checks,
+    until they all pass or the budget is spent (D.21). Nothing changes until an attempt is kept."""
+
+    id: str  # "i_" + 8 hex
+    agent_id: str
+    goal: str  # what to improve, the person's words
+    max_attempts: int
+    max_minutes: int
+    state: ImprovementState
+    why: str | None = None  # why it ended
+    attempts: list[Attempt]
+    best: int = 0  # the attempt with the most checks passing (a tie: the earlier)
+    kept: int | None = None  # the attempt kept, once kept
+    started_at: Timestamp
+    ended_at: Timestamp | None = None
+
+
+class StartImprovementRequest(Document):
+    goal: Annotated[str, Field(min_length=1, max_length=4000)]
+    max_attempts: Annotated[int, Field(ge=1, le=10)] = 5
+    max_minutes: Annotated[int, Field(ge=1, le=240)] = 15
+
+
+class KeepAttemptRequest(Document):
+    attempt: Annotated[int, Field(ge=0)]
+
+
 class CreateSessionRequest(Document):
     agent_id: NonEmpty  # an agent of a project, or an ad-hoc one
     # resume this ACP session of the agent instead of a new one
     acp_session_id: NonEmpty | None = None
     # the first request: the daemon sends it (after an agent's instructions) once the agent runs
     prompt: Annotated[str, Field(min_length=1, max_length=MAX_REQUEST)] | None = None
-    input: SessionInput | None = None  # an agent with an interface: a run (D.18)
+    input: SessionInput | None = None  # an agent with a form: a job's run, a brief's session (D.18)
     from_skill: SkillName | None = None  # a folderless agent: its folder starts as this skill's
-    # any model its project's context allows (D.19), the agent's or not; default: its first
+    app_draft: SessionAppDraft | None = None  # a folderless agent: its folder is an app's draft
+    # any model its project's area allows (D.19), the agent's or not; default: the agent's
     model: ModelAccess | None = None
     origin: SessionOrigin = "ui"
 
@@ -889,7 +1177,8 @@ class Session(Document):
     id: str
     agent_id: str
     project_id: str | None = None  # its agent's project, as of now
-    harness: str  # which of its agent's models it was started with: the harness...
+    harness: str | None  # the model it was started with (its agent's or one picked for it):
+    # the harness (None: the model alone, D.18)...
     account: str | None = None  # ...and the account...
     provider: str | None = None  # ...or the provider...
     model: str | None = None  # ...and the model, when one was named
@@ -904,12 +1193,21 @@ class Session(Document):
     remote: bool = False
     can_resume: bool = False
     error: str | None = None
+    # its last start was refused: an image it needs is not built. The build that makes it (D.4:
+    # a harness, "addon:<name>", "network-filter"); it starts once that image is built
+    missing_image: str | None = None
     harness_version: str | None = None  # what the harness image had installed (B.6)
     origin: SessionOrigin = "ui"
+    app: str | None = None  # origin "app": the app that started it (H.11)
+    # a run waiting for its agent's run in progress (D.18: one at a time per agent): that one
+    waiting_for: str | None = None
     last_stop_reason: str | None = None  # how its last turn ended (end_turn, cancelled, timed_out…)
     answer: str | None = None  # a run's (D.18): the agent's last message, once it ended
-    input: SessionInput | None = None  # a run of an agent with an interface (D.18)
+    input: SessionInput | None = None  # started from its agent's form: a run, a brief's (D.18)
+    unattended: bool = False  # a run of a job (D.18): no one prompts it, it ends with a result
+    subject: SessionSubject | None = None  # the skill it works on, set by handlerd (D.18)
     output: SessionOutput | None = None  # its result, once its turn ended (D.18)
+    app_draft: SessionAppDraft | None = None  # its folder is a draft of an app's code, not used yet
     created_at: Timestamp
     last_activity_at: Timestamp
     acp_url: str
@@ -1005,11 +1303,11 @@ not poll; ok = the last poll succeeded; unreachable; unauthorized = the gateway 
 token."""
 
 
-# Who uses a device (docs/dev/design/miniapps.md §8): "owner" is the person running handler; others
+# Who uses a device (docs/dev/design/apps.md §8): "owner" is the person running handler; others
 # are family.
 PersonName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,29}$")]
 DeviceScope = Literal["all", "apps"]
-"""What a paired device reaches: all = shared sessions and apps; apps = mini apps only."""
+"""What a paired device reaches: all = shared sessions and apps; apps = apps only."""
 
 
 class RemoteDevice(Document):
@@ -1037,7 +1335,14 @@ class RemoteStatus(Document):
 
 
 class SetRemoteGatewayRequest(Document):
-    gateway_url: Annotated[str, Field(pattern=r"^https?://[^\s/]+(/[^\s]*)?$")]
+    # https: handlerd sends its host token on each poll; plain http only to this computer (a
+    # gateway run next to it, for development)
+    gateway_url: Annotated[
+        str,
+        Field(
+            pattern=r"^(https://[^\s/]+|http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?)(/[^\s]*)?$"
+        ),
+    ]
     host_token: Annotated[str, Field(pattern=r"^h_[0-9a-f]{16}\.[A-Za-z0-9_-]{20,}$")]
 
 
@@ -1056,16 +1361,16 @@ class RemotePairing(Document):
 
 
 AppState = Literal["stopped", "starting", "running", "failed"]
-"""A mini app's backend (H.5): started on demand, stopped when idle; failed = it did not start or
+"""An app's backend (H.5): started on demand, stopped when idle; failed = it did not start or
 exited on its own (see its log)."""
 
 
 class AppDeployment(Document):
-    """One installed version of a mini app (H.6)."""
+    """One installed version of an app (H.6)."""
 
     version: str
     deployed_at: Timestamp
-    needs: MiniAppNeeds
+    needs: AppManifestNeeds
 
 
 class AppSource(Document):
@@ -1075,6 +1380,8 @@ class AppSource(Document):
     description: str | None = None
     error: str | None = None  # the manifest is missing or invalid, or names another app
     added_needs: list[str] = []  # what it may reach that the current version cannot
+    # what it may reach (the install page says it before Deploy)
+    needs: AppManifestNeeds | None = None
 
 
 class AppSecret(Document):
@@ -1083,6 +1390,30 @@ class AppSecret(Document):
 
     name: str
     set: bool
+
+
+class AppFileNeed(Document):
+    """A folder an app needs (current or source version, H.2), and the one given for it."""
+
+    name: str  # the app's word for it: `needs.files.<name>`
+    description: str | None = None
+    mode: Literal["ro", "rw"]
+    path: AbsolutePath | None = None  # given; None: not yet
+
+
+class AppAgentNeed(Document):
+    """An agent an app needs (current or source version, H.2), the one given for it, and the
+    person's agents that fit it (D.18: its form takes what the app sends, its result gives what
+    the app reads; it works in the folder given for `worksIn`)."""
+
+    name: str  # the app's word for it: `needs.agents.<name>`
+    description: str | None = None
+    works_in: str | None = None  # the files need whose folder it works in
+    definition: AgentDefinition | None = None  # the source's (None: it cannot be read)
+    origin: AgentOrigin  # what an agent set up from the definition gets as its origin
+    agent_id: str | None = None  # given; None: not yet
+    problem: str | None = None  # the agent given no longer fits (deleted, its form changed…)
+    fits: list[str] = []  # ids of the agents that fit, the one given among them
 
 
 InboxStatus = Literal["ok", "attention", "failed"]
@@ -1104,16 +1435,86 @@ class InboxMessage(Document):
     data: Any = None  # an agent run's whole result (D.18), shown from its interface's schema
     run_id: str | None = None  # an automation's run
     session_id: str | None = None  # an agent run's session
+    app: str | None = None  # the app it opens: an app's own, or the one its automation names
     at: Timestamp
     read: bool = False
 
 
+# ── sources (D.26) ──────────────────────────────────────────────────────
+
+SourceId = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")]
+SourceKind = Literal["app", "agents", "addon"]
+OFFICIAL_SOURCE = "official"  # the source Handler reads by default, its own (D.26)
+SOURCE_API_VERSION = "handler.source/v1"
+SOURCE_MANIFEST = "handler-source.toml"  # at the root of a source's repository
+
+
+class SourceManifest(StrictDocument):
+    """`handler-source.toml` at the root of a source's repository (D.26)."""
+
+    api_version: Literal["handler.source/v1"]
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    description: Annotated[str, Field(max_length=1000)] | None = None
+
+
+class SourceNote(Document):
+    """One thing a source's item does, in a few words, for its card (D.26): "uses 1 folder of
+    yours", "reaches 2 sites"."""
+
+    text: str
+    weakens: bool = False  # what runs on this computer reaches more (a site, an image built)
+
+
+class SourceItem(Document):
+    """Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an
+    agents file's content) or an addon (`addons/<name>/`)."""
+
+    kind: SourceKind
+    name: str
+    description: str | None = None
+    version: str | None = None  # an app's; an agents file's (its integer); an addon has none
+    installed: bool = False  # an app or an addon of that name is installed (wherever from)
+    update: bool = False  # installed from this source, which now holds other content
+    error: str | None = None  # it cannot be read (by this Handler): never offered
+    notes: list[SourceNote] = []  # what it does, from its manifest, the weakening ones first
+
+
+class Source(Document):
+    """A git repository Handler reads to offer things to install (D.26). The official one is
+    Handler's; any other was added by the person, who trusts it."""
+
+    id: SourceId  # its name in Handler: "official", or made from its URL
+    url: str
+    official: bool = False
+    name: str | None = None  # its manifest's
+    description: str | None = None
+    commit: str | None = None  # the commit read last
+    fetched_at: Timestamp | None = None
+    error: str | None = None  # the last fetch's, or its manifest's; its items: what was read before
+    items: list[SourceItem] = []
+
+
+class SourceItemDetail(Document):
+    """`GET /v1/sources/{id}/{apps|agents|addons}/{name}`: an item's page (D.26), before
+    anything is installed: its README, and what its kind's manifest says it may touch."""
+
+    source: Source  # without its items
+    item: SourceItem
+    readme: str | None = None  # its README.md, as written
+    app: AppManifest | None = None
+    agents: AgentsFile | None = None
+    addon: AddonPreview | None = None  # what installing it would bring (G.5)
+
+
+class AddSourceRequest(Document):
+    url: Annotated[str, Field(pattern=r"^https://[^\s]+$", max_length=2048)]
+
+
 class App(Document):
-    """A registered mini app (H): its source folder, what is installed, its backend's state."""
+    """An app (H): its code kept by Handler (H.15), what is installed, its backend's state."""
 
     name: AppName
     description: str | None = None
-    source_dir: AbsolutePath
     url: str  # its own origin, http://<name>.localhost:<port>/ (opened through POST …/open)
     state: AppState
     error: str | None = None
@@ -1121,17 +1522,175 @@ class App(Document):
     previous: AppDeployment | None = None  # what a rollback returns to
     source: AppSource
     secrets: list[AppSecret] = []
-    shortcut: str | None = None  # the GNOME keyboard shortcut that opens it (H.7)
+    files: list[AppFileNeed] = []
+    agents: list[AppAgentNeed] = []
+    # the automations the version a deploy would install suggests (I.1): made from its page
+    suggests: list[AppManifestSuggestedAutomation] = []
     persons: list[str] = []  # who may use it from a paired device (H.8); none: local only
     last_used_at: Timestamp | None = None
+    # the source its code came from (D.26; "official": Handler's); None: a file or a draft
+    from_source: SourceId | None = None
+    # its actions, what you can ask it (H.12): the installed version's (before a first deploy,
+    # its source's)
+    actions: list["AppAction"] = []
+    askable: bool = True  # its actions are offered to Ask (D.24); off: tried from its page only
 
 
-class AddAppRequest(Document):
-    source_dir: AbsolutePath  # a folder with an app.toml
+class AppAction(Document):
+    """One of an app's actions (H.12), as its page and Ask's router see it."""
+
+    name: NeedName
+    description: str
+    examples: list[str] = []
+    by: Literal["code", "agent"]  # its code answers at once; its agent's run takes a while
+    # its form: the route's, or the agent's (its definition's); None: it takes nothing
+    fields: dict[str, Any] | None = None
+
+
+class ActionRequest(Document):
+    """`POST /v1/apps/{name}/actions/{action}`: the action's form, filled."""
+
+    fields: dict[str, Any] = {}
+
+
+ActionState = Literal["running", "succeeded", "failed"]
+
+
+class ActionRun(Document):
+    """An action, done or under way (H.12)."""
+
+    app: AppName
+    action: NeedName
+    state: ActionState
+    result: ActionResult | None = None  # succeeded
+    error: str | None = None  # failed: why
+    run_id: str | None = None  # an agent's action: its run (H.11), read again until it ends
+    session_id: str | None = None  # an agent's action: its run's session
+
+
+class SetAppAskableRequest(Document):
+    askable: bool
+
+
+# ── D.24 Ask: what the person says, routed to one of their apps' actions ─────
+
+
+class AskTurn(Document):
+    """One turn of an exchange with Ask: the person's words, or what Handler answered."""
+
+    who: Literal["you", "handler"]
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+
+
+class AssistantRequest(Document):
+    """`POST /v1/ask`: the exchange so far, the person's words last. Stateless: the client
+    sends it whole each time (a reply to a question is one more turn)."""
+
+    turns: Annotated[list[AskTurn], Field(min_length=1, max_length=20)]
+    timezone: str | None = None  # IANA, where the person is (the device's); else the host's
+
+
+class ActionOption(Document):
+    """One action Ask can pick: which app's, and what it does."""
+
+    app: AppName
+    action: NeedName
+    description: str
+
+
+AssistantKind = Literal["pick", "needs", "none"]
+
+
+class AssistantAnswer(Document):
+    """What Ask did with what was said (D.24)."""
+
+    kind: AssistantKind  # pick: an action was run; needs: a question; none: no action does it
+    summary: str  # one sentence: what was picked, the question, or that none fits
+    app: AppName | None = None  # pick, needs: the app
+    action: NeedName | None = None
+    why: str | None = None  # pick: why this one, in a few words
+    fields: dict[str, Any] | None = None  # pick: its form, as filled
+    run: ActionRun | None = None  # pick: the action, done or under way (H.12)
+    question: str | None = None  # needs
+    actions: list[ActionOption] = []  # none: what can be asked
+    router_run: str | None = None  # the router's run (its session), to read how it decided
+
+
+# ── D.25 Voice: speaking to Ask (transcribe/v1, I.11) ─────────────────────────
+
+
+class VoiceSettings(Document):
+    """`PUT /v1/voice`: what writes down what you say, and when answers are read aloud."""
+
+    model: LlmModel | None = None  # "provider/model", a speech model; None: off (no microphone)
+    read_aloud_spoken: bool = True  # an answer to what you said aloud: read by the device
+    read_aloud_typed: bool = False  # an answer to what you typed
+
+
+class SpeechModelInfo(Document):
+    """A provider's speech model (`speech = true`), one Voice can use."""
+
+    model: LlmModel  # "provider/model"
+    name: str
+    provider: str
+    local: bool  # served on this machine: the recording does not leave it
+
+
+class Voice(VoiceSettings):
+    """`GET /v1/voice`: the settings, and the speech models there are to choose from."""
+
+    models: list[SpeechModelInfo]
+    problem: str | None = None  # the chosen model can no longer be used: why
+
+
+class SpeechRequest(Document):
+    """`POST /v1/voice/transcribe` (and the device's `transcribe`): a recording to write down
+    with the chosen model, never kept."""
+
+    audio: Annotated[str, Field(min_length=1)]  # base64, at most MAX_AUDIO bytes once decoded
+    format: AudioFormat
+    language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] | None = None
+
+
+class Transcription(Document):
+    text: str  # what was heard; empty when nothing was
+
+
+class DraftCopy(Document):
+    """What an opened draft works on instead of the real thing (H.16)."""
+
+    what: str  # "its data", "folder calendar"
+    path: str | None = None  # a folder you gave the app: where it is
+    # copy: a copy made when opened (size: its bytes); read-only: too large to copy, the real
+    # folder read-only; empty: nothing yet (a new app's data, a folder not given)
+    how: Literal["copy", "read-only", "empty"]
+    size: int | None = None
+
+
+class DraftPreview(Document):
+    """`POST /v1/apps/from-draft/{session}/open`: the draft's code running at its own address
+    (`<app>--draft.localhost`), on copies, until it is used, thrown away or closed (H.16)."""
+
+    app: AppName
+    url: str  # a one-time link that opens it (H.4)
+    copies: list[DraftCopy]
 
 
 class SetAppSecretRequest(Document):
     value: SecretValue
+
+
+class SetAppFileRequest(Document):
+    """The folder (or file) given for one of an app's files needs (H.2)."""
+
+    path: HostPath
+    create: bool = False  # a folder that does not exist yet is made (else: 409)
+
+
+class SetAppAgentRequest(Document):
+    """The agent given for one of an app's agents needs (H.2): one that fits."""
+
+    agent_id: Annotated[str, Field(min_length=1)]
 
 
 class SecretSent(Document):
@@ -1168,22 +1727,8 @@ class PutSecretRequest(Document):
     description: str | None = None
 
 
-# GNOME accelerator syntax: modifiers, then one key: <Super>n, <Primary><Alt>F5
-ShortcutKeys = Annotated[
-    str,
-    Field(
-        pattern=r"^(<(Super|Primary|Control|Ctrl|Alt|Shift)>)+"
-        r"([A-Za-z0-9]|F[1-9]|F1[0-2]|space|Return|period|comma|slash|minus|equal)$"
-    ),
-]
-
-
 class SetAppPersonsRequest(Document):
     persons: Annotated[list[PersonName], Field(max_length=20)]
-
-
-class SetAppShortcutRequest(Document):
-    shortcut: ShortcutKeys | None  # null: no shortcut
 
 
 class AppLink(Document):

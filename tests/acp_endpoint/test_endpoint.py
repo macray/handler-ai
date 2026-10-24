@@ -85,7 +85,7 @@ def test_p1_p5_p7_p8(daemon: Daemon, ad_hoc: dict[str, Any], scope: Path) -> Non
     }
     assert seen["mode"] == "yolo" and seen["options"] == {"model": "big-model"}
     assert "$/ping" not in seen["methods"]
-    assert seen["mcpServers"] == ["playwright"]  # P8: its addon's, though the client sent none
+    assert seen["mcpServers"] == ["fake-browser"]  # P8: its addon's, though the client sent none
 
 
 def test_p9_instructions_go_with_the_first_prompt(daemon: Daemon, scope: Path) -> None:

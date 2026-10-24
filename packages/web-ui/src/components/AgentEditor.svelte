@@ -1,33 +1,54 @@
 <script lang="ts">
   // An agent of a project, or an ad-hoc one (no project: in a folder, or a folder per session),
-  // to add one or edit it, in five groups: what it is for (its goal or name, instructions); what
-  // it runs as (its models, each a harness on an account or a provider with a model; the first by
-  // default, each session runs with one) and where; what it is given (addons, skills, knowledge);
+  // to add one or edit it. First how it is used: chatted with, briefed (its interface without a
+  // result, D.18: a form starts each session, then a chat) or given a job (its interface: a form
+  // in, a result out, unattended); a change of use that drops a saved brief or result says so.
+  // Then in groups, each needing only what is above it: what it is for (its goal or name); a
+  // brief's or a job's form, and a job's result, edited as fields (JobEditor); its instructions,
+  // which may name the form's fields, `{{key}}` (D.18), inserted by their labels (a field not
+  // saved yet keeps its placeholders when its label, so its key, changes);
+  // who works (an agent program, or the model alone: D.18, no sandbox, no tools, only providers;
+  // then its model, a harness on an account or a provider with a model; a session may run with
+  // another, picked when it starts) and where; what it is given (addons, skills, knowledge);
   // what it may do (permissions, network, sandbox); how it is started (default agent, from the
   // phone, unattended). Its sandbox settings are its own (nothing is inherited; a new one starts
   // with the defaults of new agents); the hosts its account or provider and its
   // addons need are shown "required by". Its addons, knowledge and skills are its own too; its
   // project's skills come on top. A save that widens what it may do is confirmed (D.8). A new
-  // agent of a project set up like another but for its models is pointed to that one: one goal,
-  // one agent. Its interface (D.18), as JSON: its runs then take an input
-  // and give a result back, unattended; the automations that run it are listed with it (I.1),
-  // and "Save and run it on a schedule…" saves it, then opens a new automation's form for it.
-  import type { Agent, AutomationView, HarnessInfo, Project } from "../lib/contracts.gen";
+  // agent of a project set up like another but for its model is pointed to that one: one goal,
+  // one agent. An agent with a job never asks (bypass, confirmed when chosen); the automations
+  // that run it are listed with it (I.1); "Save and try" saves it, then opens its page and its
+  // run form; "Save and run it on a schedule…" saves it, then opens a new automation's form. On
+  // the model alone, what only a sandbox has (addons, skills, its permissions, network and
+  // sandbox, a folder) is not offered: each says why in one line.
+  import type { Agent, AgentOrigin, AutomationView, HarnessInfo, Project, UseRef } from "../lib/contracts.gen";
   import { resultProblems, runsAgent, whenSentence } from "../lib/automations";
-  import { accessLabel, chosen, modelsOf, noAccess, sameModel, sameRun } from "../lib/access";
+  import { dependents } from "../lib/apps";
+  import { accessLabel, accessOf, chosen, sameRun } from "../lib/access";
   import { api, ApiError } from "../lib/api";
-  import { adHocBody, agentBody, agentLabel, agentSpec, emptyAgent, presetOf, PRESETS, sameSetup, type AgentSpec, type Sandbox } from "../lib/projects.svelte";
+  import { agentBody, agentLabel, agentSpec, emptyAgent, homeOf, presetOf, PRESETS, sameSetup, withModelAlone, type AgentSpec, type Home, type Sandbox } from "../lib/projects.svelte";
   import { href, type Route } from "../lib/router.svelte";
   import { GROUP, SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
   import { PERMISSION_LABEL, type NetworkMode } from "../lib/agents";
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
+  import FlaskConical from "@lucide/svelte/icons/flask-conical";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
-  import { Textarea } from "$lib/components/ui/textarea";
+  import { interfaceOf, newBrief, newJob, placeholders, renamed, switchedTo, useOf, type Use } from "../lib/interface";
+  import { fieldsOf, type Schema } from "../lib/runs";
+  import { tick, untrack } from "svelte";
+  import JobEditor from "./JobEditor.svelte";
   import CalendarClock from "@lucide/svelte/icons/calendar-clock";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import ClipboardList from "@lucide/svelte/icons/clipboard-list";
+  import NotebookPen from "@lucide/svelte/icons/notebook-pen";
+  import MessageSquare from "@lucide/svelte/icons/message-square";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import Bot from "@lucide/svelte/icons/bot";
+  import Zap from "@lucide/svelte/icons/zap";
+  import PromptBox from "./PromptBox.svelte";
   import BindingPicker from "./BindingPicker.svelte";
   import FolderPicker from "./FolderPicker.svelte";
   import HostList from "./HostList.svelte";
@@ -42,15 +63,17 @@
     agent,
     start,
     origin,
+    startFolder,
     pendingSkills = [],
     onsaved,
     oncancel,
   }: {
     project?: Project; // none: an ad-hoc agent
     agent?: Agent; // edit it; none: a new one
-    start?: AgentSpec; // a new one's starting values (a duplicated agent's, a built-in agent's)
-    origin?: string; // a new one: the built-in agent it sets up (D.18)
-    pendingSkills?: string[]; // a built-in agent's skills, not in the library until saved
+    start?: AgentSpec; // a new one's starting values (a duplicated agent's, a definition's)
+    origin?: AgentOrigin; // a new one: what it is set up from (D.23: an agents file's agent, D.18: a need of Handler's, H.2: an app's need, whose part it is)
+    startFolder?: string | null; // a new ad-hoc one's folder (an app's need: the folder given for it)
+    pendingSkills?: string[]; // its definition's skills, not in the library until saved
     onsaved: (agent: Agent, then?: Route) => void; // then: where to go next, instead of back
     oncancel: () => void;
   } = $props();
@@ -60,11 +83,12 @@
   let spec = $state<AgentSpec>(agent ? agentSpec(agent, project ?? { defaultAgent: null }) : (start ?? emptyAgent()));
   // an ad-hoc agent's folder; null: a folder per session (D.18)
   // svelte-ignore state_referenced_locally
-  let folder = $state<string | null>(agent?.scope ?? null);
+  let folder = $state<string | null>(agent ? (agent.scope ?? null) : (startFolder ?? null));
   let busy = $state(false);
   let error = $state<string | null>(null);
   let risks = $state<string | null>(null); // what the last save would widen, to confirm
-  let scheduleNext = $state(false); // saved by "Save and run it on a schedule…": the form next
+  // saved by "Save and try" (its page, to run it) or "Save and run it on a schedule…" (the form)
+  let next = $state<"try" | "schedule" | null>(null);
   let displayAvailable = $state(false); // the daemon found a Wayland display (A.6)
   api.health().then(
     (h) => (displayAvailable = h.display ?? false),
@@ -77,59 +101,40 @@
     () => (harnesses = []),
   );
 
-  let editing = $state(0); // the model the picker edits
+  // who works (D.18): an agent program, or the model alone (what only a sandbox has goes)
+  const PROGRAMS = [
+    { alone: false, label: "An agent program", hint: "Claude Code, Codex…: it works on files and runs tools, in its sandbox.", icon: Bot },
+    { alone: true, label: "The model alone", hint: "One model call a turn, in seconds: no files, no tools, no sandbox. On a provider.", icon: Zap },
+  ];
+  function chooseProgram(alone: boolean): void {
+    if (alone === spec.modelAlone) return;
+    spec = withModelAlone(spec, alone);
+    if (alone) folder = null;
+    customizing = false;
+  }
 
-  // the modes every harness of its models offers (pi has only bypass); all while unknown
-  const offered = $derived.by(() => {
-    const per = spec.models.map((m) => harnesses.find((h) => h.name === m.harness)?.permissions);
-    if (per.some((p) => p === undefined)) return undefined;
-    return (per[0] ?? []).filter((mode) => per.every((p) => p?.includes(mode)));
-  });
+  // the modes its harness offers (pi has only bypass); all while unknown
+  const offered = $derived(harnesses.find((h) => h.name === spec.model.harness)?.permissions);
   const live = $derived(agent?.connections.length ?? 0);
-  // what its past conversations ran with and it no longer lists: they cannot be resumed
-  const dropped = $derived(agent ? modelsOf(agent).filter((old) => !spec.models.some((m) => sameRun(m, old))) : []);
-  // the accounts (subscriptions) its models run on: an unattended agent is better on an API key
-  const onSubscription = $derived([...new Set(spec.models.flatMap((m) => (m.account ? [m.account] : [])))]);
-  const twice = $derived(spec.models.some((m, i) => spec.models.findIndex((o) => sameModel(o, m)) !== i));
-  // one goal, one agent: another agent of the project set up the same, but for its models
+  // what its past conversations ran with, changed: they cannot be resumed
+  const dropped = $derived(agent && !sameRun(spec.model, agent.model) ? agent.model : null);
+  // the account (a subscription) it runs on: an unattended agent is better on an API key
+  const onSubscription = $derived(spec.model.account);
+  // one goal, one agent: another agent of the project set up the same, but for its model
   // (once it has a goal: a new one starts set up like the default agent)
   const twin = $derived(project && !agent && !start && spec.name.trim() ? sameSetup(spec, project.agents, project) : undefined);
   // why it cannot be saved yet
-  const blocker = $derived(
-    !spec.models.every(chosen)
-      ? "Choose what it runs as."
-      : twice
-        ? "A model is listed twice."
-        : folder === ""
-          ? "Choose its folder."
-          : project && !spec.name.trim()
-            ? "Give it a goal."
-            : null,
-  );
   const movedFolder = $derived(!!agent && !project && (agent.scope ?? null) !== folder);
 
   // a new agent starts with what the project's default agent runs as
+  // (once: what is chosen after is the person's)
+  let seeded = false;
   $effect(() => {
-    if (!project || agent || start || spec.models.some(chosen)) return;
+    if (seeded || !project || agent || start || chosen(spec.model, spec.modelAlone)) return;
+    seeded = true;
     const preferred = project.agents.find((a) => a.id === project.defaultAgent);
-    if (preferred) spec.models = modelsOf(preferred);
+    if (preferred) spec = { ...withModelAlone(spec, preferred.modelAlone ?? false), model: accessOf(preferred.model) };
   });
-
-  function addModel(): void {
-    spec.models.push(noAccess());
-    editing = spec.models.length - 1;
-  }
-
-  function removeModel(i: number): void {
-    spec.models.splice(i, 1);
-    editing = Math.min(editing, spec.models.length - 1);
-  }
-
-  function makeDefault(i: number): void {
-    const [m] = spec.models.splice(i, 1);
-    if (m) spec.models.unshift(m);
-    editing = 0;
-  }
 
   type PermissionMode = Agent["permissions"];
   type Confinement = Agent["confinement"];
@@ -181,24 +186,78 @@
   );
 
 
-  // a starting point for an interface (D.18): a form with one request, a result saying how it
-  // went and what it found, as an automation needs it (I.3)
-  const EXAMPLE = {
-    fields: { type: "object", properties: { request: { type: "string", title: "Request" } }, required: ["request"] },
-    result: {
-      type: "object",
-      properties: {
-        status: { enum: ["ok", "attention", "failed"], title: "Status" },
-        summary: { type: "string", title: "Summary" },
-        details: { type: "string", title: "Details" },
-      },
-      required: ["status", "summary"],
-    },
-    timeoutSec: 1800,
+  // how it is used, the first choice, as cards saying each the same three things: how it starts,
+  // who is there, how it ends
+  const USES: { use: Use; label: string; hint: string; icon: typeof MessageSquare }[] = [
+    { use: "chat", label: "Chat", hint: "Say what to do, or nothing; you talk with it until you are done.", icon: MessageSquare },
+    { use: "brief", label: "Brief", hint: "Fill in a form to start, then work on it together.", icon: NotebookPen },
+    { use: "job", label: "Job", hint: "Fill in a form; it works alone and returns a result.", icon: ClipboardList },
+  ];
+  const use = $derived(useOf(spec.interface));
+  const job = $derived(use === "job"); // unattended: it never asks
+
+  // a new job (D.18): no form yet, a result saying how it went, as an automation needs it (I.3);
+  // a new brief: one long text, what a chat's request box asks
+  const NEW_JOB = JSON.stringify(interfaceOf(newJob()), null, 2);
+  const NEW_BRIEF = JSON.stringify(interfaceOf(newBrief(), true), null, 2);
+  // what a save drops of what it has now
+  const was = $derived<Use>(agent?.interface ? (agent.interface.result ? "job" : "brief") : "chat");
+  const DROPS: Partial<Record<`${Use}→${Use}`, string>> = {
+    "job→brief": "Its result goes when you save.",
+    "job→chat": "Its form and its result go when you save.",
+    "brief→chat": "Its brief goes when you save.",
   };
+  const drops = $derived(DROPS[`${was}→${use}`] ?? null);
+  // the form's fields, for its instructions to name; a placeholder naming none blocks the save
+  const formFields = $derived.by(() => {
+    if (use === "chat") return [];
+    try {
+      return fieldsOf(JSON.parse(spec.interface)?.fields as Schema | undefined);
+    } catch {
+      return [];
+    }
+  });
+  const unknownField = $derived(placeholders(spec.instructions).find((k) => !formFields.some((f) => f.key === k)) ?? null);
+  const blocker = $derived(
+    unknownField !== null
+      ? `Instructions: {{${unknownField}}} is not a field of its form.`
+      : !chosen(spec.model, spec.modelAlone)
+      ? "Choose what it runs as."
+      : folder === ""
+        ? "Choose its folder."
+        : project && !spec.name.trim()
+          ? "Give it a goal."
+          : null,
+  );
+  // a field's key that changed in place (it follows its label until saved): its placeholders too
+  let keysBefore: string[] = [];
+  $effect(() => {
+    const keys = formFields.map((f) => f.key);
+    if (keys.length === keysBefore.length) {
+      const before = untrack(() => spec.instructions);
+      let text = before;
+      keys.forEach((k, i) => {
+        const old = keysBefore[i]!;
+        if (old !== k && !keys.includes(old)) text = renamed(text, old, k);
+      });
+      if (text !== before) spec.instructions = text;
+    }
+    keysBefore = keys;
+  });
+  let instructionsBox = $state<HTMLTextAreaElement | null>(null);
+  async function insertField(key: string): Promise<void> {
+    const box = instructionsBox;
+    const [from, to] = box ? [box.selectionStart, box.selectionEnd] : [spec.instructions.length, spec.instructions.length];
+    const piece = `{{${key}}}`;
+    spec.instructions = spec.instructions.slice(0, from) + piece + spec.instructions.slice(to);
+    await tick();
+    box?.focus();
+    box?.setSelectionRange(from + piece.length, from + piece.length);
+  }
+
   // what its result lacks for an automation to run it (I.3); none while the JSON does not parse
   const lacks = $derived.by(() => {
-    if (!spec.interface) return [];
+    if (!job) return [];
     try {
       return resultProblems(JSON.parse(spec.interface)?.result);
     } catch {
@@ -206,27 +265,37 @@
     }
   });
 
-  // the automations that run it (I.1): an automation finds it by its name, in its project
+  // the automations that run it (I.1): an automation finds it by its name, in its project; the
+  // apps it was given to (H.2), by its id
   let automations = $state<AutomationView[]>([]);
+  // Handler's roles it was given for (D.18) and the apps it was given to (H.2): D.22's used-by
+  let usedBy = $state<UseRef[]>([]);
   $effect(() => {
     if (!agent) return;
     api.automations().then(
-      (list) => (automations = list.filter((a) => runsAgent(a.definition, agent.name, project?.name ?? null))),
+      (list) => (automations = list.filter((a) => runsAgent(a, agent.id))),
       () => (automations = []),
+    );
+    dependents(agent.id).then(
+      (refs) => (usedBy = refs.filter((r) => r.kind !== "automation")),
+      () => (usedBy = []),
     );
   });
 
-  // unattended: no one is there to answer its permission requests, so it never asks (bypass);
-  // switching to it is confirmed first, the mode it had is given back when unticked
+  // a job: no one is there to answer its permission requests, so it never asks (bypass);
+  // switching to it is confirmed first, the mode it had is given back when it is no longer one.
+  // A brief keeps its form, a job the form it had as a brief.
   let permissionsBefore = $state<PermissionMode | null>(null);
   let confirmBypass = $state(false);
-  function toggleInterface(on: boolean): void {
-    if (on && spec.permissions !== "bypass") {
+  function chooseUse(next: Use): void {
+    confirmBypass = false;
+    if (next === use) return;
+    if (next === "job" && spec.permissions !== "bypass") {
       confirmBypass = true;
       return;
     }
-    spec.interface = on ? JSON.stringify(EXAMPLE, null, 2) : "";
-    if (!on && permissionsBefore !== null) {
+    spec.interface = next === "chat" ? "" : use === "chat" ? (next === "job" ? NEW_JOB : NEW_BRIEF) : switchedTo(next, spec.interface);
+    if (next !== "job" && permissionsBefore !== null) {
       spec.permissions = permissionsBefore;
       permissionsBefore = null;
     }
@@ -234,7 +303,7 @@
   function acceptBypass(): void {
     permissionsBefore = spec.permissions;
     spec.permissions = "bypass";
-    spec.interface = JSON.stringify(EXAMPLE, null, 2);
+    spec.interface = use === "chat" ? NEW_JOB : switchedTo("job", spec.interface);
     confirmBypass = false;
   }
 
@@ -242,21 +311,21 @@
     busy = true;
     error = null;
     try {
-      let saved: Agent;
-      if (!project) {
-        const body = adHocBody(spec, folder, agent ? (agent.origin ?? null) : (origin ?? null), confirm);
-        saved = agent ? await api.updateAdHocAgent(agent.id, body) : await api.createAdHocAgent(body);
-      } else {
-        const body = agentBody(spec, confirm);
-        saved = agent ? await api.updateAgent(project.id, agent.id, body) : await api.createAgent(project.id, body);
-      }
+      // its home: kept when it exists; a new one's, its project's, or the app it is set up for
+      const home: Home = agent
+        ? { ...homeOf(agent), ...(agent.projectId ? {} : { scope: folder }) }
+        : project
+          ? { projectId: project.id }
+          : { app: origin?.kind === "app" ? origin.name : null, scope: folder };
+      const body = agentBody({ ...spec, origin: agent ? (agent.origin ?? null) : (origin ?? null) }, home, confirm);
+      const saved = agent ? await api.updateAgent(agent.id, body) : await api.createAgent(body);
       risks = null;
-      onsaved(saved, scheduleNext ? { view: "edit-automation", agent: saved.id } : undefined);
+      onsaved(saved, next === "schedule" ? { view: "edit-automation", agent: saved.id } : next === "try" ? { view: "agent", id: saved.id } : undefined);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.title === "risks not confirmed") risks = e.detail ?? e.title;
       else {
         error = (e as Error).message;
-        scheduleNext = false;
+        next = null;
       }
     } finally {
       busy = false;
@@ -265,84 +334,154 @@
 
   function submit(event: SubmitEvent): void {
     event.preventDefault();
-    scheduleNext = false;
+    next = null;
     void save();
   }
 </script>
 
 <form class="space-y-10" onsubmit={submit} data-testid="agent-editor">
-  <section class="space-y-4" aria-labelledby="group-for">
+  <section class="space-y-2" aria-labelledby="group-use" data-testid="agent-use">
+    <h2 id="group-use" class="text-base font-semibold">How will you use it?</h2>
+    <div class="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-labelledby="group-use">
+      {#each USES as u (u.label)}
+        {@const on = confirmBypass ? u.use === "job" : u.use === use}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={on}
+          class="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:border-foreground/30 {on ? 'border-primary ring-1 ring-primary' : ''}"
+          onclick={() => chooseUse(u.use)}
+          data-testid="agent-use-{u.use}"
+        >
+          <u.icon class="mt-0.5 size-5 shrink-0 {on ? 'text-primary' : 'text-muted-foreground'}" />
+          <span class="space-y-0.5">
+            <span class="block text-sm font-medium">{u.label}</span>
+            <span class="block text-xs text-muted-foreground">{u.hint}</span>
+          </span>
+        </button>
+      {/each}
+    </div>
+    {#if confirmBypass}
+      <div class="flex items-start gap-3 rounded-md border border-warn/40 bg-warn/5 p-3" role="alertdialog" aria-labelledby="bypass-title" data-testid="agent-confirm-bypass">
+        <ShieldAlert class="size-5 shrink-0 text-warn" />
+        <div class="space-y-2">
+          <p id="bypass-title" class="text-sm font-medium">Permissions: {PERMISSION_LABEL[spec.permissions]} → {PERMISSION_LABEL.bypass}</p>
+          <p class="text-xs text-muted-foreground">A job runs alone, so it never asks before acting. Only what it may reach (below) limits it.</p>
+          <div class="flex gap-2">
+            <Button type="button" size="sm" variant="destructive" onclick={acceptBypass} data-testid="agent-accept-bypass">Switch to {PERMISSION_LABEL.bypass}</Button>
+            <Button type="button" size="sm" variant="ghost" onclick={() => (confirmBypass = false)}>Cancel</Button>
+          </div>
+        </div>
+      </div>
+    {/if}
+    {#if drops}<p class="text-xs text-warn" data-testid="agent-use-drops">{drops}</p>{/if}
+  </section>
+
+  <section class="space-y-4 border-t pt-8" aria-labelledby="group-for">
     <h2 id="group-for" class={GROUP}>What it is for</h2>
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="space-y-2">
         <Label for="agent-name">{project ? "Goal" : "Name"}</Label>
         <Input id="agent-name" bind:value={spec.name} required={!!project} placeholder="e.g. Dev, Review, Contracts check" data-testid="agent-name-input" />
-        {#if project}<p class="text-xs text-muted-foreground">Its name: what it is for, never its model.</p>{/if}
+        {#if project}<p class="text-xs text-muted-foreground">Name it by its purpose, not its model.</p>{/if}
       </div>
       <div class="space-y-2">
-        <Label for="agent-description">{project ? "More about it" : "Description"}</Label>
+        <Label for="agent-description">Description</Label>
         <Input id="agent-description" bind:value={spec.description} placeholder="e.g. reviews the branch, never edits" data-testid="agent-description" />
       </div>
     </div>
+  </section>
+
+  {#if spec.interface !== ""}
+    <section class="space-y-4 border-t pt-8" aria-labelledby="group-job">
+      <JobEditor bind:value={spec.interface} fresh={!agent?.interface && !start?.interface} brief={use === "brief"} />
+      {#if lacks.length}
+        <p class="text-xs text-warn" data-testid="agent-interface-lacks">An automation can run it only when its <code>result</code> has {lacks.join(" and ")}.</p>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="space-y-4 border-t pt-8" aria-labelledby="group-instructions">
+    <h2 id="group-instructions" class={GROUP}>Its instructions</h2>
     <div class="space-y-2">
-      <Label for="agent-instructions">Instructions</Label>
-      <Textarea
+      <Label for="agent-instructions" class="sr-only">Instructions</Label>
+      <PromptBox
         id="agent-instructions"
         bind:value={spec.instructions}
-        rows={3}
+        bind:ref={instructionsBox}
+        fields={formFields}
         placeholder="e.g. Review the diff against main and list the issues. Do not edit files."
-        data-testid="agent-instructions"
+        testid="agent-instructions"
       />
+      {#if spec.interface !== "" && !formFields.length}
+        <p class="text-xs text-muted-foreground" data-testid="instructions-no-fields">Add fields to the form above to use their values here.</p>
+      {:else if formFields.length}
+        <div class="flex flex-wrap items-center gap-1.5" data-testid="instructions-fields">
+          <span class="text-xs text-muted-foreground">Insert from the form:</span>
+          {#each formFields as f (f.key)}
+            <button
+              type="button"
+              class="cursor-pointer rounded-md border bg-muted px-1.5 py-px text-xs hover:bg-accent"
+              title="Puts {`{{${f.key}}}`} here: its value when a session starts"
+              onclick={() => insertField(f.key)}
+              data-testid="instructions-field">{f.title}</button
+            >
+          {/each}
+        </div>
+      {/if}
       <p class="text-xs text-muted-foreground">
-        Optional. Sent before the request of every session started with one{spec.interface ? ", and before the input of every run" : ""}.
+        {job
+          ? "Sent at the start of each run, with the form's values; how to give the result back is added for you."
+          : use === "brief"
+            ? "Optional. Sent at the start of each session, with the form's values."
+            : "Optional. Sent at the start of each session."}
       </p>
     </div>
   </section>
 
   <section class="space-y-4 border-t pt-8" aria-labelledby="group-runs">
-    <h2 id="group-runs" class={GROUP}>Runs as</h2>
-    <div class="space-y-2" data-testid="agent-models">
-      {#if spec.models.length > 1}
-        <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm" data-testid="agent-model-list">
-          {#each spec.models as m, i (i)}
-            {@const problem = agent?.models.find((a) => sameModel(m, a))?.problem}
-            <li class="flex flex-wrap items-center gap-2 px-3 py-1.5 {editing === i ? 'bg-accent/50' : ''}" data-testid="agent-model">
-              <button type="button" class="min-w-0 flex-1 cursor-pointer truncate text-left" onclick={() => (editing = i)}>
-                {chosen(m) ? accessLabel(m) : "Choose below"}
-                {#if i === 0}<span class="ml-1 rounded bg-accent-soft px-1.5 py-px text-xs font-medium text-accent-soft-foreground">default</span>{/if}
-                {#if problem}<span class="block text-xs text-danger">It cannot start now: {problem}</span>{/if}
-              </button>
-              {#if i > 0}<Button type="button" variant="ghost" size="sm" onclick={() => makeDefault(i)} data-testid="model-make-default">Make default</Button>{/if}
-              <Button type="button" variant="ghost" size="sm" onclick={() => removeModel(i)} data-testid="model-remove">Remove</Button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      {#key editing}
-        <ModelAccessPicker bind:value={spec.models[editing]!} context={project?.context ?? null} />
-      {/key}
-      <div class="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onclick={addModel} disabled={!spec.models.every(chosen)} data-testid="model-add">Add a model</Button>
-        <p class="text-xs text-muted-foreground">
-          The first is its default: a session starts with it unless you choose another; an automation always runs it with the first.
-        </p>
-      </div>
-      {#if twice}<p class="text-xs text-danger">A model is listed twice.</p>{/if}
-      {#each dropped as m (accessLabel(m))}
-        <p class="text-xs text-warn">Its past conversations with {accessLabel(m)} cannot be resumed after this change.</p>
+    <h2 id="group-runs" class={GROUP}>Who works</h2>
+    <div class="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="who works" data-testid="agent-program">
+      {#each PROGRAMS as p (p.label)}
+        {@const on = spec.modelAlone === p.alone}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={on}
+          class="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 text-left transition-colors hover:border-foreground/30 {on ? 'border-primary ring-1 ring-primary' : ''}"
+          onclick={() => chooseProgram(p.alone)}
+          data-testid={p.alone ? "agent-program-model" : "agent-program-harness"}
+        >
+          <p.icon class="mt-0.5 size-5 shrink-0 {on ? 'text-primary' : 'text-muted-foreground'}" />
+          <span class="space-y-0.5">
+            <span class="block text-sm font-medium">{p.label}</span>
+            <span class="block text-xs text-muted-foreground">{p.hint}</span>
+          </span>
+        </button>
       {/each}
-      {#if spec.models.length === 1 && agent?.models[0]?.problem}
-        <p class="text-xs text-danger" data-testid="agent-problem">It cannot start now: {agent.models[0].problem}</p>
+    </div>
+    <div class="space-y-2" data-testid="agent-model">
+      {#key spec.modelAlone}
+        <ModelAccessPicker bind:value={spec.model} area={project?.area ?? null} alone={spec.modelAlone} />
+      {/key}
+      <p class="text-xs text-muted-foreground">A session starts with it; you can pick another for one session when you start it. An automation always runs it with this one.</p>
+      {#if dropped}
+        <p class="text-xs text-warn">Its past conversations with {accessLabel(dropped)} cannot be resumed after this change.</p>
+      {/if}
+      {#if agent?.model.problem}
+        <p class="text-xs text-danger" data-testid="agent-problem">It cannot start now: {agent.model.problem}</p>
       {/if}
       {#if twin}
         <p class="text-xs text-warn" data-testid="agent-twin">
           Set up like <a class="text-link hover:underline" href={href({ view: "edit-agent", project: project!.id, id: twin.id })}>{agentLabel(twin)}</a>
-          but for its model: add the model to it instead, and choose it when a session starts.
+          but for its model: start a session of it and choose that model instead.
         </p>
       {/if}
     </div>
 
-    {#if project}
+    {#if spec.modelAlone}
+      <p class="text-xs text-muted-foreground" data-testid="agent-no-folder">No folder: the model alone reads what its form, the conversation and its knowledge give it.</p>
+    {:else if project}
       <p class="text-xs text-muted-foreground">It works in the project's folder, <code>{project.folder}</code>.</p>
     {:else}
       <div class="space-y-2" data-testid="agent-folder">
@@ -373,13 +512,45 @@
 
   <section class="space-y-6 border-t pt-8" aria-labelledby="group-given">
     <h2 id="group-given" class={GROUP}>What it is given</h2>
-    <BindingPicker projectId={project?.id} bind:value={spec.bindings} />
-    <SkillPicker projectId={project?.id} bind:value={spec.skills} pending={pendingSkills} />
-    <KnowledgePicker bind:value={spec.knowledge} />
+    {#if spec.modelAlone}
+      <KnowledgePicker bind:value={spec.knowledge} />
+      <p class="text-xs text-muted-foreground">Its notes are put into each call (at most 192 KiB in all).</p>
+      <ul class="space-y-1 text-xs text-muted-foreground" data-testid="agent-alone-not-given">
+        <li>No addons: an addon is a tool, it needs an agent program.</li>
+        <li>No skills: a skill can run scripts, it needs an agent program.</li>
+      </ul>
+    {:else}
+      <BindingPicker projectId={project?.id} bind:value={spec.bindings} />
+      <SkillPicker projectId={project?.id} bind:value={spec.skills} pending={pendingSkills} />
+      <KnowledgePicker bind:value={spec.knowledge} />
+    {/if}
   </section>
 
   <section class="space-y-6 border-t pt-8" aria-labelledby="group-may">
     <h2 id="group-may" class={GROUP}>What it may do</h2>
+    {#if spec.modelAlone}
+      <div class="space-y-1 rounded-lg border border-ok/30 bg-ok/5 p-3" data-testid="agent-alone-safe">
+        <p class="flex items-center gap-1.5 text-sm font-medium text-ok"><ShieldCheck class="size-4" />Nothing outside this call</p>
+        <p class="text-xs text-muted-foreground">
+          No files, no network, no tools: it reads what it is sent and answers, whatever it is told. Sent to its provider at each call: the conversation
+          (its form's values first) and its knowledge's notes.
+        </p>
+      </div>
+    {:else}
+    {#if job}
+      <div class="space-y-1">
+        <p class="flex items-center gap-1.5 text-xs font-medium text-warn" data-testid="agent-unattended-permissions">
+          <ShieldAlert class="size-4" />
+          It never asks before acting ({PERMISSION_LABEL.bypass}{permissionsBefore !== null ? `, was ${PERMISSION_LABEL[permissionsBefore]}` : ""}): its network and its sandbox are all that limit it.
+        </p>
+        {#if onSubscription}
+          <p class="text-xs text-muted-foreground" data-testid="agent-unattended-subscription">
+            It runs on a subscription ({onSubscription}): subscription plans are for ordinary, individual use (their vendors' terms). For an
+            agent that runs on its own, an API key (a provider) is recommended.
+          </p>
+        {/if}
+      </div>
+    {/if}
     <div class="space-y-2" data-testid="agent-preset">
       <Label>Safety preset</Label>
       <div class="flex flex-wrap items-center gap-3">
@@ -389,9 +560,9 @@
               type="button"
               role="radio"
               aria-checked={preset?.id === p.id}
-              disabled={spec.interface !== "" && p.sandbox.permissions !== "bypass"}
+              disabled={job && p.sandbox.permissions !== "bypass"}
               class="{SEGMENT} disabled:cursor-not-allowed disabled:opacity-50 {preset?.id === p.id ? SEGMENT_ON : SEGMENT_OFF}"
-              title={spec.interface !== "" && p.sandbox.permissions !== "bypass" ? "Runs unattended: it never asks" : undefined}
+              title={job && p.sandbox.permissions !== "bypass" ? "Runs unattended: it never asks" : undefined}
               onclick={() => applyPreset(p.sandbox)}
               data-testid={`agent-preset-${p.id}`}
             >
@@ -416,9 +587,9 @@
                 type="button"
                 role="radio"
                 aria-checked={spec.permissions === m.mode}
-                disabled={(offered !== undefined && !offered.includes(m.mode)) || (spec.interface !== "" && m.mode !== "bypass")}
+                disabled={(offered !== undefined && !offered.includes(m.mode)) || (job && m.mode !== "bypass")}
                 class="{SEGMENT} disabled:cursor-not-allowed disabled:opacity-50 {spec.permissions === m.mode ? SEGMENT_ON : SEGMENT_OFF}"
-                title={spec.interface !== "" && m.mode !== "bypass" ? "Runs unattended" : undefined}
+                title={job && m.mode !== "bypass" ? "Runs unattended" : undefined}
                 onclick={() => (spec.permissions = m.mode)}
                 data-testid={`permissions-${m.mode}`}
               >
@@ -428,10 +599,10 @@
           </div>
           <p class="text-xs {spec.permissions === 'bypass' ? 'text-warn' : 'text-muted-foreground'}">
             {PERMISSIONS.find((m) => m.mode === spec.permissions)?.hint}
-            {spec.interface !== "" ? "Fixed: it runs unattended." : "A session can change it."}
+            {job ? "Fixed: it runs unattended." : "A session can change it."}
           </p>
           {#if offered && !offered.includes(spec.permissions)}
-            <p class="text-xs text-danger">Its agent programs do not all have this mode (they all offer: {offered.join(", ") || "none in common"}).</p>
+            <p class="text-xs text-danger">Its agent program does not have this mode (it offers: {offered.join(", ")}).</p>
           {/if}
         </div>
 
@@ -507,26 +678,21 @@
       <Label>Allowed hosts</Label>
       <HostList value={spec.allow} onchange={(next) => { spec.allow = next; }} empty="None." />
     </div>
-    {#if agent?.models.some((m) => m.requiredHosts?.length)}
+    {#if agent?.model.requiredHosts?.length}
       <div class="space-y-2" data-testid="agent-required-hosts">
-        <p class="text-xs text-muted-foreground">Also allowed, as the model a session runs with and its addons require:</p>
-        {#each agent.models as m (accessLabel(m))}
-          {#if m.requiredHosts?.length}
-            <div class="space-y-0.5 text-xs">
-              {#if agent.models.length > 1}<p class="font-medium">With {accessLabel(m)}</p>{/if}
-              <ul class="space-y-0.5">
-                {#each m.requiredHosts as r (r.host + r.by)}
-                  <li><span class="font-mono">{r.host}</span> <span class="text-muted-foreground">required by {r.by}</span></li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
-        {/each}
+        <p class="text-xs text-muted-foreground">Also allowed, as its model and its addons require:</p>
+        <ul class="space-y-0.5 text-xs">
+          {#each agent.model.requiredHosts as r (r.host + r.by)}
+            <li><span class="font-mono">{r.host}</span> <span class="text-muted-foreground">required by {r.by}</span></li>
+          {/each}
+        </ul>
       </div>
+    {/if}
     {/if}
     {/if}
   </section>
 
+  {#if project || agent || job}
   <section class="space-y-3 border-t pt-8" aria-labelledby="group-started">
     <h2 id="group-started" class={GROUP}>How it is started</h2>
     {#if project}
@@ -542,54 +708,7 @@
         </div>
       </div>
     {/if}
-    <div class="space-y-2" data-testid="agent-interface">
-      <div class="flex items-start gap-2">
-        <Checkbox id="agent-has-interface" checked={spec.interface !== "" || confirmBypass} onCheckedChange={(c) => toggleInterface(c === true)} data-testid="agent-has-interface" />
-        <div class="space-y-0.5">
-          <Label for="agent-has-interface" class="font-normal">Runs unattended: an input in, a result out</Label>
-          {#if spec.interface === ""}
-            <p class="text-xs text-muted-foreground">Its runs are started with a form and give a result back; no one can prompt them.</p>
-          {:else}
-            <p class="text-xs text-muted-foreground">
-              Its interface, as JSON Schemas: the form a run is started with (<code>fields</code>), what it works on (<code>subject</code>:
-              <code>"skill"</code>, mounted read-only), the result its final message must hold (<code>result</code>), and how long a turn may take
-              (<code>timeoutSec</code>).
-            </p>
-          {/if}
-        </div>
-      </div>
-      {#if confirmBypass}
-        <div class="flex items-start gap-3 rounded-md border border-warn/40 bg-warn/5 p-3" role="alertdialog" aria-labelledby="bypass-title" data-testid="agent-confirm-bypass" {@attach (el) => el.scrollIntoView({ block: "center", behavior: "smooth" })}>
-          <ShieldAlert class="size-5 shrink-0 text-warn" />
-          <div class="space-y-2">
-            <p id="bypass-title" class="text-sm font-medium">Permissions: {PERMISSION_LABEL[spec.permissions]} → {PERMISSION_LABEL.bypass}</p>
-            <p class="text-xs text-muted-foreground">It will never ask before acting.</p>
-            <div class="flex gap-2">
-              <Button type="button" size="sm" variant="destructive" onclick={acceptBypass} data-testid="agent-accept-bypass">Switch to {PERMISSION_LABEL.bypass}</Button>
-              <Button type="button" size="sm" variant="ghost" onclick={() => (confirmBypass = false)}>Cancel</Button>
-            </div>
-          </div>
-        </div>
-      {:else if spec.interface !== ""}
-        <p class="flex items-center gap-1.5 text-xs font-medium text-warn" data-testid="agent-unattended-permissions">
-          <ShieldAlert class="size-4" />
-          Permissions: {PERMISSION_LABEL.bypass}{permissionsBefore !== null ? ` (was ${PERMISSION_LABEL[permissionsBefore]})` : ""}
-        </p>
-      {/if}
-      {#if spec.interface !== "" && onSubscription.length}
-        <p class="text-xs text-muted-foreground" data-testid="agent-unattended-subscription">
-          It runs on a subscription ({onSubscription.join(", ")}): subscription plans are for ordinary, individual use (their vendors' terms). For an
-          agent that runs on its own, an API key (a provider) is recommended.
-        </p>
-      {/if}
-      {#if spec.interface !== ""}
-        <Textarea bind:value={spec.interface} rows={14} class="font-mono text-xs" spellcheck={false} data-testid="agent-interface-json" />
-        {#if lacks.length}
-          <p class="text-xs text-warn" data-testid="agent-interface-lacks">An automation can run it only when its <code>result</code> has {lacks.join(" and ")}.</p>
-        {/if}
-      {/if}
-    </div>
-    {#if agent || spec.interface !== ""}
+    {#if agent || job}
       <div class="space-y-2" data-testid="agent-automations">
         <Label>Started automatically</Label>
         {#if !agent}
@@ -613,14 +732,14 @@
             type="button"
             variant="outline"
             size="sm"
-            disabled={busy || spec.interface === "" || !spec.name.trim() || !!blocker || lacks.length > 0}
-            onclick={() => ((scheduleNext = true), void save())}
+            disabled={busy || !job || !spec.name.trim() || !!blocker || lacks.length > 0}
+            onclick={() => ((next = "schedule"), void save())}
             data-testid="agent-schedule"
           >
             <CalendarClock />Save and run it on a schedule…
           </Button>
-          {#if spec.interface === ""}
-            <p class="text-xs text-muted-foreground">Only an agent that runs unattended: tick it above.</p>
+          {#if !job}
+            <p class="text-xs text-muted-foreground">Only for jobs (choose at the top).</p>
           {:else if !spec.name.trim()}
             <p class="text-xs text-muted-foreground">An automation finds it by its name: give it one above.</p>
           {:else if lacks.length}
@@ -629,7 +748,25 @@
         </div>
       </div>
     {/if}
+    {#if usedBy.length}
+      <div class="space-y-2" data-testid="agent-used-by">
+        <Label>Used by</Label>
+        <p class="text-xs text-muted-foreground">They run it when you use them. Its form and result must still fit what they send and read.</p>
+        <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm">
+          {#each usedBy as u (`${u.kind}/${u.id}`)}
+            <li class="flex flex-wrap items-center gap-2 px-3 py-2">
+              <a
+                class="font-medium text-link hover:underline"
+                href={u.kind === "handler" ? href({ view: "settings", section: "helpers" }) : href({ view: "apps", app: u.id })}>{u.label}</a
+              >
+              <span class="text-muted-foreground">{u.how}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
   </section>
+  {/if}
 
   <div class="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t bg-background px-1 py-3">
     {#if risks}
@@ -637,11 +774,16 @@
         <p>This gives the agent more than {agent ? "before" : "a new agent gets by default"}: {risks}.</p>
         <div class="flex gap-2">
           <Button type="button" size="sm" variant="destructive" disabled={busy} onclick={() => save(true)} data-testid="agent-confirm-risks">Save anyway</Button>
-          <Button type="button" size="sm" variant="ghost" onclick={() => ((risks = null), (scheduleNext = false))}>Back</Button>
+          <Button type="button" size="sm" variant="ghost" onclick={() => ((risks = null), (next = null))}>Back</Button>
         </div>
       </div>
     {/if}
-    <Button type="submit" disabled={busy || !!blocker} data-testid="agent-save">{agent ? "Save" : "Add the agent"}</Button>
+    {#if spec.interface !== ""}
+      <Button type="button" disabled={busy || !!blocker} onclick={() => ((next = "try"), void save())} data-testid="agent-save-try"><FlaskConical />Save and try</Button>
+      <Button type="submit" variant="outline" disabled={busy || !!blocker} data-testid="agent-save">{agent ? "Save" : "Add the agent"}</Button>
+    {:else}
+      <Button type="submit" disabled={busy || !!blocker} data-testid="agent-save">{agent ? "Save" : "Add the agent"}</Button>
+    {/if}
     <Button type="button" variant="ghost" onclick={oncancel}>Cancel</Button>
     {#if blocker}<p class="text-xs text-muted-foreground" data-testid="agent-save-blocker">{blocker}</p>{/if}
     {#if agent && live}

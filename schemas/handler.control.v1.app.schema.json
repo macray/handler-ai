@@ -2,8 +2,382 @@
   "$id": "urn:handler.control/v1/app",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "AgentDefinition": {
+      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)\nand those Handler ships for its needs (D.18).",
+      "properties": {
+        "agentName": {
+          "title": "Agentname",
+          "type": "string"
+        },
+        "agentDescription": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentdescription"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructions"
+        },
+        "network": {
+          "default": "filtered",
+          "enum": [
+            "none",
+            "filtered",
+            "open"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "egress": {
+          "default": "enforce",
+          "enum": [
+            "enforce",
+            "log-only"
+          ],
+          "title": "Egress",
+          "type": "string"
+        },
+        "allow": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "confinement": {
+          "default": "strict",
+          "enum": [
+            "strict",
+            "nested",
+            "privileged"
+          ],
+          "title": "Confinement",
+          "type": "string"
+        },
+        "permissions": {
+          "default": "bypass",
+          "enum": [
+            "ask",
+            "accept-edits",
+            "bypass"
+          ],
+          "title": "Permissions",
+          "type": "string"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInterface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "addons": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": "Addons",
+          "type": "array"
+        },
+        "knowledge": {
+          "default": [],
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^/\\x00]",
+            "type": "string"
+          },
+          "title": "Knowledge",
+          "type": "array"
+        },
+        "display": {
+          "default": false,
+          "title": "Display",
+          "type": "boolean"
+        },
+        "modelAlone": {
+          "default": false,
+          "title": "Modelalone",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agentName"
+      ],
+      "title": "AgentDefinition",
+      "type": "object"
+    },
+    "AgentInterface": {
+      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
+      "properties": {
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "timeoutSec": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 86400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
+        }
+      },
+      "title": "AgentInterface",
+      "type": "object"
+    },
+    "AgentOrigin": {
+      "description": "What an agent was set up from, kept for good: the definition of an app's need (H.2), an\nagents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it\ncame from: where the agent lives is its home (`projectId`, `app`, `chat`).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "app",
+            "agents-file",
+            "handler-need"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "AgentOrigin",
+      "type": "object"
+    },
+    "AppAction": {
+      "description": "One of an app's actions (H.12), as its page and Ask's router see it.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "examples": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Examples",
+          "type": "array"
+        },
+        "by": {
+          "enum": [
+            "code",
+            "agent"
+          ],
+          "title": "By",
+          "type": "string"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "by"
+      ],
+      "title": "AppAction",
+      "type": "object"
+    },
+    "AppAgentNeed": {
+      "description": "An agent an app needs (current or source version, H.2), the one given for it, and the\nperson's agents that fit it (D.18: its form takes what the app sends, its result gives what\nthe app reads; it works in the folder given for `worksIn`).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "worksIn": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worksin"
+        },
+        "definition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentDefinition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "origin": {
+          "$ref": "#/$defs/AgentOrigin"
+        },
+        "agentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentid"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Problem"
+        },
+        "fits": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Fits",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "origin"
+      ],
+      "title": "AppAgentNeed",
+      "type": "object"
+    },
     "AppDeployment": {
-      "description": "One installed version of a mini app (H.6).",
+      "description": "One installed version of an app (H.6).",
       "properties": {
         "version": {
           "title": "Version",
@@ -15,7 +389,7 @@
           "type": "string"
         },
         "needs": {
-          "$ref": "#/$defs/MiniAppNeeds"
+          "$ref": "#/$defs/AppManifestNeeds"
         }
       },
       "required": [
@@ -24,6 +398,229 @@
         "needs"
       ],
       "title": "AppDeployment",
+      "type": "object"
+    },
+    "AppFileNeed": {
+      "description": "A folder an app needs (current or source version, H.2), and the one given for it.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "mode": {
+          "enum": [
+            "ro",
+            "rw"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        }
+      },
+      "required": [
+        "name",
+        "mode"
+      ],
+      "title": "AppFileNeed",
+      "type": "object"
+    },
+    "AppManifestAgentNeed": {
+      "additionalProperties": false,
+      "description": "A job the app starts runs of (H.11): which agent is the person's choice at install, one of\ntheirs that fits or one set up from the definition the app ships.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "worksIn": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worksin"
+        }
+      },
+      "required": [
+        "from"
+      ],
+      "title": "AppManifestAgentNeed",
+      "type": "object"
+    },
+    "AppManifestFileNeed": {
+      "additionalProperties": false,
+      "description": "A folder (or a file) of the person's the backend reads (or writes), H.9: which one is the\nperson's choice at install, mounted at the same path.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "mode": {
+          "default": "ro",
+          "enum": [
+            "ro",
+            "rw"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "init": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Init",
+          "type": "array"
+        }
+      },
+      "title": "AppManifestFileNeed",
+      "type": "object"
+    },
+    "AppManifestNeeds": {
+      "additionalProperties": false,
+      "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
+      "properties": {
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "secrets": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Secrets",
+          "type": "array"
+        },
+        "files": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "$ref": "#/$defs/AppManifestFileNeed"
+            }
+          },
+          "title": "Files",
+          "type": "object"
+        },
+        "notify": {
+          "default": false,
+          "title": "Notify",
+          "type": "boolean"
+        },
+        "agents": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "$ref": "#/$defs/AppManifestAgentNeed"
+            }
+          },
+          "title": "Agents",
+          "type": "object"
+        }
+      },
+      "title": "AppManifestNeeds",
+      "type": "object"
+    },
+    "AppManifestSuggestedAutomation": {
+      "additionalProperties": false,
+      "description": "An automation the app suggests (`[[automations]]`, I.1): made by the person from the app's\npage, off until they turn it on; its results open the app.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/Schedule"
+        },
+        "run": {
+          "$ref": "#/$defs/AppManifestSuggestedRun"
+        }
+      },
+      "required": [
+        "description",
+        "when",
+        "run"
+      ],
+      "title": "AppManifestSuggestedAutomation",
+      "type": "object"
+    },
+    "AppManifestSuggestedRun": {
+      "additionalProperties": false,
+      "description": "What a suggested automation runs: the agent given for one of the app's needs.",
+      "properties": {
+        "agent": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Agent",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/AutomationAgentInput",
+          "default": {
+            "fields": {}
+          }
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "title": "AppManifestSuggestedRun",
       "type": "object"
     },
     "AppSecret": {
@@ -91,76 +688,96 @@
           },
           "title": "Addedneeds",
           "type": "array"
+        },
+        "needs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppManifestNeeds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "AppSource",
       "type": "object"
     },
-    "MiniAppFile": {
+    "AutomationAgentInput": {
       "additionalProperties": false,
-      "description": "A file or folder of the host the backend may read (or write): mounted at the same path.",
+      "description": "What the agent's run is started with (D.18 `SessionInput`).",
       "properties": {
-        "path": {
-          "title": "Path",
-          "type": "string"
-        },
-        "mode": {
-          "default": "ro",
-          "enum": [
-            "ro",
-            "rw"
-          ],
-          "title": "Mode",
-          "type": "string"
+        "fields": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Fields",
+          "type": "object"
         }
       },
-      "required": [
-        "path"
-      ],
-      "title": "MiniAppFile",
+      "title": "AutomationAgentInput",
       "type": "object"
     },
-    "MiniAppNeeds": {
+    "Schedule": {
       "additionalProperties": false,
-      "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
+      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
       "properties": {
-        "egress": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Egress",
-          "type": "array"
+        "every": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Every"
         },
-        "secrets": {
-          "default": [],
-          "items": {
-            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
-            "type": "string"
-          },
-          "title": "Secrets",
-          "type": "array"
+        "at": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
         },
-        "files": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/MiniAppFile"
-          },
-          "maxItems": 10,
-          "title": "Files",
-          "type": "array"
-        },
-        "notify": {
-          "default": false,
-          "title": "Notify",
-          "type": "boolean"
+        "days": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri",
+                  "sat",
+                  "sun"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Days"
         }
       },
-      "title": "MiniAppNeeds",
+      "title": "Schedule",
       "type": "object"
     }
   },
-  "description": "A registered mini app (H): its source folder, what is installed, its backend's state.",
+  "description": "An app (H): its code kept by Handler (H.15), what is installed, its backend's state.",
   "properties": {
     "name": {
       "pattern": "^[a-z][a-z0-9-]{0,29}$",
@@ -178,10 +795,6 @@
       ],
       "default": null,
       "title": "Description"
-    },
-    "sourceDir": {
-      "title": "Sourcedir",
-      "type": "string"
     },
     "url": {
       "title": "Url",
@@ -242,17 +855,29 @@
       "title": "Secrets",
       "type": "array"
     },
-    "shortcut": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Shortcut"
+    "files": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppFileNeed"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "agents": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppAgentNeed"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "suggests": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppManifestSuggestedAutomation"
+      },
+      "title": "Suggests",
+      "type": "array"
     },
     "persons": {
       "default": [],
@@ -274,11 +899,36 @@
       ],
       "default": null,
       "title": "Lastusedat"
+    },
+    "fromSource": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fromsource"
+    },
+    "actions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppAction"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "askable": {
+      "default": true,
+      "title": "Askable",
+      "type": "boolean"
     }
   },
   "required": [
     "name",
-    "sourceDir",
     "url",
     "state",
     "source"

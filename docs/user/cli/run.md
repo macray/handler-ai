@@ -37,7 +37,7 @@ Which agent runs:
 | `-p`, `--prompt REQUEST` | the first request, sent as the session starts (after the agent's instructions) |
 | `--detach` | start the session and give the shell back; `handler attach` to join it |
 | `--remote` | share the session with your paired phone ([`session share`](session.md) does it later) |
-| `--anyway` | in a project's folder, run outside the project: the way to use an account its context does not allow. Asks you to type `yes` |
+| `--anyway` | in a project's folder, run outside the project: the way to use an account its area does not allow. Asks you to type `yes` |
 | agent options | network, addons, permissions… ([agent options](agent-options.md)) |
 
 ## Examples

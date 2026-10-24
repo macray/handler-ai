@@ -53,15 +53,22 @@ def add_automation_routes(app: FastAPI, ctx: Context) -> None:
     async def create_automation(request: Request) -> Response:
         body = parse_body(CreateAutomationRequest, await request.body())
         with problems("cannot create this automation"):
-            made = automations.create(
-                body.name, example=body.from_, definition=body.definition, enable=body.enable
+            return dump(
+                automations.create(
+                    body.name,
+                    example=body.from_,
+                    definition=body.definition,
+                    agent_id=body.agent_id,
+                    enable=body.enable,
+                ),
+                status=201,
             )
-            return dump(made, status=201)
 
     @app.post("/v1/automations/check", dependencies=authed)
     async def check_automation(request: Request) -> Response:
         body = parse_body(AutomationDefinitionRequest, await request.body())
-        return dump(automations.preview(body.definition))
+        with problems("cannot check this automation"):
+            return dump(automations.preview(body.definition, body.agent_id))
 
     @app.get("/v1/automations/{name}", dependencies=authed)
     def get_automation(name: str) -> Response:
@@ -72,7 +79,7 @@ def add_automation_routes(app: FastAPI, ctx: Context) -> None:
     async def update_automation(name: str, request: Request) -> Response:
         body = parse_body(AutomationDefinitionRequest, await request.body())
         with problems("cannot change this automation"):
-            return dump(automations.update(name, body.definition))
+            return dump(automations.update(name, body.definition, body.agent_id))
 
     @app.delete("/v1/automations/{name}", dependencies=authed)
     async def delete_automation(name: str) -> Response:

@@ -1,31 +1,37 @@
-// Secrets as Settings → Secrets shows them (D.14, E3): what each belongs to, where its value is,
-// and whether agents can read it (else handler adds it to their requests to its hosts).
+// Secrets as Settings → Secrets shows them (D.14, E3): grouped by what they belong to, where each
+// value is, and the page its owner is set on (where it is changed).
 import type { SecretInfo } from "./contracts.gen";
 import { href, type Route } from "./router.svelte";
 
-export type Owner = { label: string; route: Route };
-
-const OWNERS: Record<string, { word: string; route: Route }> = {
-  accounts: { word: "Account", route: { view: "settings", section: "models" } },
-  providers: { word: "Provider", route: { view: "settings", section: "models" } },
-  bindings: { word: "Addon configuration", route: { view: "settings", section: "addons" } },
-  apps: { word: "App", route: { view: "apps" } },
+// the kinds of owners ("providers/openrouter"), with the page each is set on
+const OWNERS: Record<string, Route> = {
+  accounts: { view: "settings", section: "models" },
+  providers: { view: "settings", section: "models" },
+  bindings: { view: "addons" },
+  apps: { view: "apps" },
 };
 
-/** What a secret belongs to ("accounts/perso" → "Account perso"), with the page it is set on. */
-export function owner(usedBy: string): Owner {
-  const [kind = "", ...name] = usedBy.split("/");
-  const known = OWNERS[kind];
-  return known ? { label: `${known.word} ${name.join("/")}`, route: known.route } : { label: usedBy, route: { view: "settings", section: "secrets" } };
+/** The groups of the page, in its order: by the kind of what a secret belongs to. */
+export const GROUPS = [
+  { id: "accounts", label: "Accounts" },
+  { id: "providers", label: "Providers" },
+  { id: "bindings", label: "Addon configurations" },
+  { id: "apps", label: "Apps" },
+  { id: "unused", label: "Not used" },
+] as const;
+
+/** Its group: its first owner's kind, or "unused". */
+export function group(s: SecretInfo): string {
+  const kind = s.usedBy?.[0]?.split("/")[0];
+  return kind && kind in OWNERS ? kind : "unused";
 }
 
-/** Its title: what it is to its owner ("Provider openrouter · key"), or its path when nothing uses it. */
-export function title(s: SecretInfo): string {
+/** Its title in its group: its owners' names and the slot ("openrouter · key"), or its path. */
+export function slot(s: SecretInfo): string {
   const usedBy = s.usedBy ?? [];
   if (!usedBy.length) return s.path;
-  const slot = s.path.split("/").at(-1) ?? "";
-  const what = slot === "apiKey" ? "key" : slot;
-  return `${usedBy.map((u) => owner(u).label).join(", ")} · ${what}`;
+  const name = s.path.split("/").at(-1) ?? "";
+  return `${usedBy.map((u) => u.split("/").slice(1).join("/")).join(", ")} · ${name === "apiKey" ? "key" : name}`;
 }
 
 /** Where its value is, in words. */
@@ -39,15 +45,10 @@ export function source(s: SecretInfo): string {
   return s.hasValue === false ? `${where}: not set` : where;
 }
 
-/** Whether its value can be replaced here: one in handler's store whose owner does not set it itself
- *  (an account's token is its login, an app's secret restarts the app). */
-export function replaceable(s: SecretInfo): boolean {
-  return (s.source ?? "secret") === "secret" && !s.path.startsWith("accounts/") && !s.path.startsWith("apps/");
-}
-
 /** A stored value nothing uses: the only kind removed from here. */
 export function removable(s: SecretInfo): boolean {
   return (s.source ?? "secret") === "secret" && !s.usedBy?.length && s.createdAt != null;
 }
 
-export const ownerHref = (usedBy: string) => href(owner(usedBy).route);
+/** The page where its owner is set, and its value changed. */
+export const ownerHref = (usedBy: string) => href(OWNERS[usedBy.split("/")[0]!]!);

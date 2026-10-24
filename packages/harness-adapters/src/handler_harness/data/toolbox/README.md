@@ -19,6 +19,9 @@ clipboard, contract A.6), podman.
 
 What Handler needs from it (contract B.6): a glibc system with `sh`; what the harness and addon
 recipes install with (`npm`, `uv`, `jq`); `python3` for harnesses whose MCP servers run through
-`handler-sandbox-env`; `chromium` for the playwright addon; podman with setcap'd
+`handler-sandbox-env`; `chromium` for the playwright addon; `bun` for the agents that write apps
+(the App creator, the `app-builder` addon: they build and test apps with it, any version); podman
+with setcap'd
 `newuidmap`/`newgidmap` only for agents with `confinement = "nested"`. Something missing shows as
-a failed rebuild: nothing switches.
+a failed rebuild: nothing switches. Bun is the exception: missing, the rebuild warns (in its log
+and in Settings → Images) and still switches.

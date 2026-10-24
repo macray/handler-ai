@@ -240,6 +240,7 @@ def test_provider_templates_are_valid() -> None:
         "ollama",
         "openai-api",
         "openrouter",
+        "speech-local",
     }
     llamacpp = found["llamacpp"].files  # how Codex talks to a model it does not know
     assert llamacpp is not None and set(llamacpp["codex"]) == {"instructions_md"}

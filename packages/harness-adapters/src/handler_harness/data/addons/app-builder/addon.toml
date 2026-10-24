@@ -1,0 +1,10 @@
+# Apps addon (contract G.1, handler.addon/v1): what an agent needs to write an app (contract
+# H, docs/dev/design/apps.md): the skill and its template (Svelte UI, Bun + SQLite backend). No
+# tool of its own: Bun, the only runtime of apps, is in the toolbox, at the version apps run on.
+# A binding needs no setting: `addon = "app-builder"` is enough.
+apiVersion = "handler.addon/v1"
+name = "app-builder"
+description = "Write apps: a skill with a Svelte + SQLite template, run by Bun"
+# npm packages: the UI's build (vite, svelte) and the backend's type check (typescript). Nothing
+# else: an app's backend runs without network unless its manifest says so.
+egress = ["registry.npmjs.org:443"]

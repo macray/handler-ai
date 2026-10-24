@@ -2,13 +2,16 @@
   // Model access: the two ways an agent's harness reaches a model, accounts (a subscription
   // logged in, D.9) and providers (an API and its key, or a model server on this computer, D.12).
   // One of either kind is enough to start. This page loads what both sections show, says whether
-  // agents can run, and offers every way to connect a model: open on a first run, behind a
-  // button once there is one. Each option starts a new account or provider in its section.
+  // agents can run (said only when there is something to do: finish one, fix this computer, or
+  // create a first project), and offers every way to connect a model: on the page on a first run,
+  // then from each section's Add, in a dialog. Each option opens its section's dialog for a new
+  // account or provider.
+  import type { Snippet } from "svelte";
   import Check from "@lucide/svelte/icons/check";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CreditCard from "@lucide/svelte/icons/credit-card";
   import KeyRound from "@lucide/svelte/icons/key-round";
   import Plus from "@lucide/svelte/icons/plus";
-  import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { api } from "../lib/api";
   import type { AccountInfo, HarnessInfo, ProviderInfo, ProviderTemplate } from "../lib/contracts.gen";
@@ -16,6 +19,7 @@
   import { href } from "../lib/router.svelte";
   import { runtime } from "../lib/runtime.svelte";
   import AccountsSettings from "./AccountsSettings.svelte";
+  import Dialog from "./Dialog.svelte";
   import LoadingCards from "./LoadingCards.svelte";
   import ProvidersSettings from "./ProvidersSettings.svelte";
 
@@ -24,7 +28,7 @@
   let harnesses = $state<HarnessInfo[] | null>(null);
   let templates = $state<ProviderTemplate[]>([]);
   let error = $state<string | null>(null);
-  let picking = $state(false); // "Connect another model" open
+  let adding = $state<"account" | "provider" | null>(null); // a section's Add: its picker's dialog
   let accountsSection = $state<ReturnType<typeof AccountsSettings>>();
   let providersSection = $state<ReturnType<typeof ProvidersSettings>>();
 
@@ -70,66 +74,63 @@
       .map((h) => h.name)
       .join(", ");
 
-  function connect(begin: () => void, section: string): void {
-    picking = false;
+  /** An option picked: the picker closes, its section opens the new account's or provider's dialog. */
+  function connect(begin: () => void): void {
+    adding = null;
     begin();
-    requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 </script>
 
-{#snippet picker()}
-  <div class="space-y-4" data-testid="model-picker">
-    <div class="space-y-1">
-      <h2 class="text-base font-semibold">Connect a model</h2>
-      <p class="text-sm text-muted-foreground">
-        Agents need a model to work. One is enough to start; you can add more later, of either kind.
-      </p>
-    </div>
-    <div class="grid gap-6 sm:grid-cols-2">
-      <div class="space-y-3">
-        <div class="space-y-0.5">
-          <h3 class="flex items-center gap-2 text-sm font-medium"><CreditCard class="size-4 text-muted-foreground" />With a subscription you pay for</h3>
-          <p class="text-xs text-muted-foreground">A flat monthly price, with its usage limits.</p>
-        </div>
-        <div class="space-y-1.5">
-          {#if harnesses === null}
-            <Skeleton class="h-8 rounded-md" /><Skeleton class="h-8 rounded-md" />
-          {:else}
-            {#each subscriptions as h (h.name)}
-              <Button
-                variant="outline"
-                class="w-full justify-between"
-                onclick={() => connect(() => accountsSection?.start(h.name), "accounts")}
-                data-testid="connect-subscription"
-              >
-                {h.login?.subscription}<span class="text-xs text-muted-foreground">{h.product}</span>
-              </Button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-      <div class="space-y-3">
-        <div class="space-y-0.5">
-          <h3 class="flex items-center gap-2 text-sm font-medium"><KeyRound class="size-4 text-muted-foreground" />With an API key or a local model</h3>
-          <p class="text-xs text-muted-foreground">Pay per use, or free with a model server on this computer.</p>
-        </div>
-        <div class="space-y-1.5">
-          {#each apis as t (t.name)}
-            <Button
-              variant="outline"
-              class="w-full justify-between"
-              onclick={() => connect(() => providersSection?.start(t), "providers")}
-              data-testid="connect-api"
-            >
-              {t.description ?? t.name}<span class="truncate font-mono text-xs text-muted-foreground">{usedBy(t)}</span>
-            </Button>
-          {/each}
-          <Button variant="outline" class="w-full justify-start border-dashed text-muted-foreground shadow-none" onclick={() => connect(() => providersSection?.start(null), "providers")}>
-            Another API: enter its address
-          </Button>
-        </div>
+{#snippet option(label: string, detail: string, mono: boolean, onclick: () => void, testid?: string)}
+  <button type="button" class="group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-muted/60" {onclick} data-testid={testid}>
+    <span class="min-w-0 flex-1 truncate">{label}</span>
+    {#if detail}<span class="shrink-0 truncate text-xs text-muted-foreground {mono ? 'font-mono' : ''}">{detail}</span>{/if}
+    <ChevronRight class="size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5" />
+  </button>
+{/snippet}
+
+{#snippet group(icon: typeof CreditCard, title: string, text: string, list: Snippet, headed: boolean)}
+  {@const Icon = icon}
+  <div class="space-y-3">
+    {#if headed}
+    <div class="flex items-start gap-3">
+      <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon class="size-4" /></span>
+      <div class="space-y-0.5">
+        <h3 class="text-sm font-medium">{title}</h3>
+        <p class="text-xs text-muted-foreground">{text}</p>
       </div>
     </div>
+    {/if}
+    <div class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm">{@render list()}</div>
+  </div>
+{/snippet}
+
+<!-- every way to connect a model of a kind, or of both on a first run -->
+{#snippet picker(which: "both" | "account" | "provider")}
+  <div class="grid gap-8 {which === 'both' ? 'sm:grid-cols-2' : ''}" data-testid="model-picker">
+    {#snippet subscriptionList()}
+      {#if harnesses === null}
+        <div class="space-y-2 p-3"><Skeleton class="h-6 rounded-md" /><Skeleton class="h-6 rounded-md" /></div>
+      {:else}
+        {#each subscriptions as h (h.name)}
+          {@render option(h.login?.subscription ?? h.name, h.product, false, () => connect(() => accountsSection?.start(h.name)), "connect-subscription")}
+        {/each}
+      {/if}
+    {/snippet}
+    {#snippet apiList()}
+      {#each apis as t (t.name)}
+        {@render option(t.description ?? t.name, usedBy(t), true, () => connect(() => providersSection?.start(t)), "connect-api")}
+      {/each}
+      <button type="button" class="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground" onclick={() => connect(() => providersSection?.start(null))}>
+        <Plus class="size-4" />Another API: enter its address
+      </button>
+    {/snippet}
+    {#if which !== "provider"}
+      {@render group(CreditCard, "With a subscription you pay for", "A flat monthly price, with its usage limits. For your own use.", subscriptionList, which === "both")}
+    {/if}
+    {#if which !== "account"}
+      {@render group(KeyRound, "With an API key or a local model", "Pay per use, or free with a model server on this computer.", apiList, which === "both")}
+    {/if}
   </div>
 {/snippet}
 
@@ -137,33 +138,38 @@
 {#if !loaded}
   <div class="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-3"><LoadingCards /></div>
 {:else if none}
-  {@render picker()}
-{:else}
-  <div class="space-y-4">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      {#if ready && runtime.blocked}
-        <p class="text-sm text-warn" data-testid="model-access-ready">
-          Ready on the model side, but agents can't run on this computer yet:
-          <a class="text-link hover:underline" href={href({ view: "settings", section: "images" })}>see what to fix</a>.
-        </p>
-      {:else if ready}
-        <p class="flex items-center gap-2 text-sm" data-testid="model-access-ready">
-          <Check class="size-4 text-ok" />You're ready: agents can run on {ready === 1 ? "it" : "them"}.
-          {#if projects.loaded && !projects.list.length}
-            <a class="text-link hover:underline" href={href({ view: "edit-project" })}>Create a project and its agents →</a>
-          {/if}
-        </p>
-      {:else}
-        <p class="text-sm text-warn" data-testid="model-access-ready">Not ready yet: finish one below (its login or its token, or its key).</p>
-      {/if}
-      <Button variant="outline" size="sm" onclick={() => (picking = !picking)} data-testid="connect-model">
-        {#if picking}Close{:else}<Plus />Connect another model{/if}
-      </Button>
+  <div class="enter space-y-6">
+    <div class="space-y-1">
+      <h2 class="text-base font-semibold">Connect a model</h2>
+      <p class="text-sm text-muted-foreground">Agents need a model to work. One is enough to start; you can add more later, of either kind.</p>
     </div>
-    {#if picking}<div class="rounded-lg border p-4">{@render picker()}</div>{/if}
+    {@render picker("both")}
   </div>
+{:else if ready && runtime.blocked}
+  <p class="rounded-[10px] border border-warn/40 bg-warn/5 px-4 py-3 text-sm text-warn" data-testid="model-access-ready">
+    Ready on the model side, but agents can't run on this computer yet:
+    <a class="text-link hover:underline" href={href({ view: "settings", section: "images" })}>see what to fix</a>.
+  </p>
+{:else if !ready}
+  <p class="rounded-[10px] border border-warn/40 bg-warn/5 px-4 py-3 text-sm text-warn" data-testid="model-access-ready">
+    Not ready yet: finish one below (its login, its token or its key).
+  </p>
+{:else if projects.loaded && !projects.list.length}
+  <!-- ready, and nothing to run yet: the next step -->
+  <p class="enter flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] border bg-card px-4 py-3 text-sm shadow-panel" data-testid="model-access-ready">
+    <span class="flex items-center gap-2"><Check class="size-4 text-ok" />You're ready to run agents.</span>
+    <a class="text-link hover:underline" href={href({ view: "edit-project" })}>Create a project and its agents →</a>
+  </p>
 {/if}
 {#if loaded}
-  <AccountsSettings bind:this={accountsSection} accounts={accounts ?? []} harnesses={harnesses ?? []} onchange={loadAccounts} />
-  <ProvidersSettings bind:this={providersSection} providers={providers ?? []} onchange={loadProviders} />
+  <AccountsSettings bind:this={accountsSection} listed={!none} onadd={() => (adding = "account")} accounts={accounts ?? []} harnesses={harnesses ?? []} onchange={loadAccounts} />
+  <ProvidersSettings bind:this={providersSection} listed={!none} onadd={() => (adding = "provider")} providers={providers ?? []} onchange={loadProviders} />
+  <Dialog
+    bind:open={() => adding !== null, (v) => (v ? null : (adding = null))}
+    title={adding === "provider" ? "Add a provider" : "Add an account"}
+    description={adding === "provider" ? "An API and its key, or a model server on this computer." : "A subscription you pay for, for your own use."}
+    testid="model-picker-dialog"
+  >
+    {#if adding}{@render picker(adding)}{/if}
+  </Dialog>
 {/if}

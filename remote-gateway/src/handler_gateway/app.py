@@ -50,6 +50,7 @@ MAX_WAIT = 25.0
 DOWN_BODY = 256 * 1024  # one command envelope
 UP_BODY = 8 * 1024 * 1024  # a batch of agent output
 POLL_BYTES = 4 * 1024 * 1024  # per poll answer
+FETCHED_KEPT = 1000  # ids the host fetched, per device, until it polls: the newest
 
 
 @dataclass
@@ -117,7 +118,7 @@ def bearer(request: Request) -> str | None:
 async def body(request: Request, limit: int) -> Any:
     if int(request.headers.get("content-length") or 0) > limit:
         raise TooBigError()
-    raw = b""
+    raw = bytearray()
     async for chunk in request.stream():
         raw += chunk
         if len(raw) > limit:
@@ -186,7 +187,9 @@ def create_app(state: State, client_dir: Path | None = None) -> Starlette:
             state.polling[host] -= 1
         state.host_seen[host] = time.time()
         for env in found:
-            state.fetched.setdefault(env.dev, []).append(env.id)
+            ids = state.fetched.setdefault(env.dev, [])
+            ids.append(env.id)
+            del ids[:-FETCHED_KEPT]  # a device that never polls: a hint only, the newest kept
         for dev in {env.dev for env in found}:
             state.up_box(dev).poke()  # its long poll answers with the fetched ids
         cursor = found[-1].cursor if found else state.cursor(request.query_params.get("after"))
@@ -336,19 +339,24 @@ def create_app(state: State, client_dir: Path | None = None) -> Starlette:
     return Starlette(routes=routes, middleware=[Middleware(SecurityHeaders)])
 
 
+# frame-src 'self': an app's frame cannot be navigated out of the gateway (the client's policy
+# governs it), so an app's page cannot carry data away in an address.
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
-    "form-action 'none'"
+    "img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; "
+    "base-uri 'none'; form-action 'none'"
 )
-# The frame a mini app runs in, on the phone (handler's docs/dev/design/miniapps.md §5.2): loaded
+# The frame an app runs in, on the phone (handler's docs/dev/design/apps.md §5.2): loaded
 # sandboxed (an opaque origin) by the client, it runs the app's inlined page and reaches nothing:
-# no connection, no fetch, only postMessage to the client, which carries the app's calls.
+# no connection, no fetch, only postMessage to the client, which carries the app's calls. Its own
+# `sandbox` makes it an opaque origin however it is opened (alone in a tab too): never the
+# client's, which holds the device's keys.
 APP_FRAME = "/appframe.html"
 APP_FRAME_CSP = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
     "img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; "
-    "frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+    "frame-ancestors 'self'; base-uri 'none'; form-action 'none'; "
+    "sandbox allow-scripts allow-forms allow-modals"
 )
 
 

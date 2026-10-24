@@ -3,6 +3,7 @@
 //
 //   keys  HKDF-SHA256(K, salt "handler-remote/v1", info "down" | "up" | "gateway-auth")
 //   seal  AES-256-GCM, random 96-bit nonce, AAD "handler-remote/v1|hostId|deviceId|dir|id"
+//   plain {expires: unix ms, frames, …}: taken once, before it expires (mailbox.svelte.ts)
 //
 // The device key K is imported once, at pairing, and never kept: what is stored (IndexedDB) are
 // the derived AES keys, non-extractable — page scripts can use them, not read them.
@@ -78,8 +79,8 @@ export async function open(key: CryptoKey, at: Address, direction: Direction, en
   const additionalData = aad(at.hostId, at.deviceId, direction, envelope.id);
   const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(envelope.nonce), additionalData }, key, unb64(envelope.ct));
   const plaintext: unknown = JSON.parse(dec.decode(data));
-  if (typeof plaintext !== "object" || plaintext === null || typeof (plaintext as { ts?: unknown }).ts !== "number") {
-    throw new Error("envelope without timestamp");
+  if (typeof plaintext !== "object" || plaintext === null || typeof (plaintext as { expires?: unknown }).expires !== "number") {
+    throw new Error("envelope without expiry");
   }
   return plaintext as Record<string, unknown>;
 }

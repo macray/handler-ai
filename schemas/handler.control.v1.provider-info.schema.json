@@ -58,6 +58,11 @@
           "title": "Images",
           "type": "boolean"
         },
+        "speech": {
+          "default": false,
+          "title": "Speech",
+          "type": "boolean"
+        },
         "temperature": {
           "anyOf": [
             {
@@ -123,7 +128,8 @@
         "enum": [
           "anthropic",
           "openai-chat",
-          "responses"
+          "responses",
+          "transcriptions"
         ]
       },
       "title": "Endpoints",
@@ -200,6 +206,11 @@
       "title": "Harnesses",
       "type": "array"
     },
+    "modelAlone": {
+      "default": false,
+      "title": "Modelalone",
+      "type": "boolean"
+    },
     "files": {
       "default": [],
       "items": {
@@ -208,12 +219,12 @@
       "title": "Files",
       "type": "array"
     },
-    "contexts": {
+    "areas": {
       "default": [],
       "items": {
         "type": "string"
       },
-      "title": "Contexts",
+      "title": "Areas",
       "type": "array"
     }
   },

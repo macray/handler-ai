@@ -52,7 +52,7 @@ export class AcpConnection {
   agent = $state<InitializeResponse | null>(null);
 
   /** A turn this attachment did not start has ended. */
-  onTurnEnded: ((stopReason: string) => void) | null = null;
+  onTurnEnded: (() => void) | null = null;
 
   private conn: ClientSideConnection | null = null;
   private transport: Transport | null = null;
@@ -84,6 +84,8 @@ export class AcpConnection {
         if (method === "_handler/session_state") {
           this.busy = Boolean(params.busy);
           this.session.inTurn = this.busy; // its prompt was in the replayed history
+          const stop = typeof params.lastStopReason === "string" ? params.lastStopReason : null;
+          this.session.lastStop = this.busy || stop === "end_turn" ? null : stop;
           const started = typeof params.turnStartedAt === "string" ? Date.parse(params.turnStartedAt) : NaN;
           this.turnStartedAt = this.busy ? (Number.isNaN(started) ? (this.turnStartedAt ?? Date.now()) : started) : null;
           if (!this.busy) this.interrupting = false;
@@ -96,7 +98,7 @@ export class AcpConnection {
         }
         if (method === "_handler/turn_ended") {
           this.idle(); // a turn started before this attachment (e.g. before a reload)
-          this.onTurnEnded?.(String(params.stopReason ?? ""));
+          this.onTurnEnded?.();
         }
       },
     };
@@ -126,9 +128,11 @@ export class AcpConnection {
     return Boolean(this.agent?.agentCapabilities?.promptCapabilities?.image);
   }
 
-  /** A turn: the images first, then the text (either may be empty, not both). */
+  /** A turn: the images first, then the text (either may be empty, not both). When it fails, its
+   *  prompt leaves the timeline if nothing came after it (the page gives it back to the input). */
   async prompt(text: string, images: PromptImage[] = []): Promise<StopReason> {
     this.session.addUserPrompt(text, images);
+    const shown = this.session.entries.at(-1);
     this.busy = true;
     this.turnStartedAt = Date.now();
     try {
@@ -140,6 +144,9 @@ export class AcpConnection {
         ],
       });
       return result.stopReason;
+    } catch (e) {
+      if (this.session.entries.at(-1) === shown) this.session.entries.pop();
+      throw e;
     } finally {
       this.idle();
     }
@@ -155,6 +162,7 @@ export class AcpConnection {
   }
 
   private idle(): void {
+    if (this.busy && this.turnStartedAt !== null) this.session.turnTook(Date.now() - this.turnStartedAt);
     this.busy = false;
     this.session.inTurn = false;
     this.turnStartedAt = null;

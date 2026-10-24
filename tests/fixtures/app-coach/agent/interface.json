@@ -1,0 +1,8 @@
+{
+  "fields": {"type": "object", "properties": {"fake": {"type": "string"}, "answer": {}}},
+  "result": {
+    "type": "object",
+    "required": ["status", "summary"],
+    "properties": {"status": {"enum": ["ok", "attention", "failed"]}, "summary": {"type": "string"}}
+  }
+}

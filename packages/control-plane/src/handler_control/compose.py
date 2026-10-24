@@ -1,6 +1,6 @@
 """Composition — the only place combining contracts:
 HarnessLaunch (B) + the agent's sandbox settings (D.8) + what the selected addons add (G.3)
-→ SandboxSpec (A), a mini app (H) → SandboxSpec (A), an addon image's check (G.4) →
+→ SandboxSpec (A), an app (H) → SandboxSpec (A), an addon image's check (G.4) →
 SandboxSpec (A), and an automation's run (I.3) → SandboxSpec (A).
 
 Pure: validates and assembles, never touches the filesystem or starts anything.
@@ -18,13 +18,13 @@ from handler_contracts import (
     APP_SOCKET,
     RUNTIME_IMAGE,
     SANDBOX_API_VERSION,
+    AppManifest,
     Confinement,
     Enforcement,
     FilteredNetwork,
     HarnessLaunch,
     ImageMount,
     Injection,
-    MiniAppManifest,
     Mount,
     NetworkMode,
     NetworkPolicy,
@@ -63,6 +63,16 @@ def check_scope(work_folders: list[str], scope: str, handler_roots: tuple[str, .
         raise ScopeError(f"{resolved} is outside the work folders ({', '.join(roots)})")
     if not Path(resolved).is_dir():
         raise ScopeError(f"scope {resolved} is not a directory")
+    return resolved
+
+
+def narrowed_scope(scope: str, folder: str) -> str:
+    """`folder`, a directory inside the checked `scope`, mounted instead of it (D.16)."""
+    resolved = canonical_scope(folder)
+    if not is_within(resolved, scope):
+        raise ScopeError(f"{resolved} is outside the agent's folder {scope}")
+    if not Path(resolved).is_dir():
+        raise ScopeError(f"{resolved} is not a directory")
     return resolved
 
 
@@ -164,6 +174,30 @@ def addon_check_spec(
     toolbox, confined like an agent (`strict`, the host user), no network. `path_append`: the
     addon's bin directory as agents get it on PATH, or nothing to see what the toolbox alone
     provides. `scope`: an empty folder, checked (the workdir)."""
+    mounts = [ImageMount(image=image, target=target)]
+    path = list(path_append or [])
+    return _check_spec(
+        name=name, toolbox=toolbox, scope=scope, argv=argv, image_mounts=mounts, path_append=path
+    )
+
+
+def toolbox_check_spec(*, name: str, toolbox: str, scope: str, argv: list[str]) -> SandboxSpec:
+    """B.6: a command run in the toolbox alone, as agents get it, confined like an agent
+    (`strict`, the host user), no network. `scope`: an empty folder, checked (the workdir)."""
+    return _check_spec(
+        name=name, toolbox=toolbox, scope=scope, argv=argv, image_mounts=[], path_append=[]
+    )
+
+
+def _check_spec(
+    *,
+    name: str,
+    toolbox: str,
+    scope: str,
+    argv: list[str],
+    image_mounts: list[ImageMount],
+    path_append: list[str],
+) -> SandboxSpec:
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
         name=name,
@@ -173,8 +207,8 @@ def addon_check_spec(
         workdir=scope,
         user=SandboxUser(mode="host-user", home=CHECK_HOME),
         mounts=[Mount(source=scope, target=scope, read_only=False, kind="scope")],
-        image_mounts=[ImageMount(image=image, target=target)],
-        path_append=list(path_append or []),
+        image_mounts=image_mounts,
+        path_append=path_append,
         files=[],
         writable_paths=[],
         network=NoNetwork(mode="none"),
@@ -241,43 +275,32 @@ APP_MEMORY = "512m"
 def app_sandbox_spec(
     *,
     name: str,
-    manifest: MiniAppManifest,
+    manifest: AppManifest,
     code: str,
     data: str,
     run: str,
     test: bool = False,
     secrets: dict[str, str] | None = None,
-    files: list[tuple[str, bool]] | None = None,
+    files: list[tuple[str, str, bool]] | None = None,
 ) -> SandboxSpec:
-    """H.3: a mini app's backend. Its code read-only at APP_CODE_DIR, its data read-write at the
+    """H.3: an app's backend. Its code read-only at APP_CODE_DIR, its data read-write at the
     same path (its scope, so the paths it stores stay valid across versions), the directory of
-    its socket; no network unless the manifest lists hosts, then the allow-list, enforced. Deno's
-    own permissions repeat these limits inside the container. `test`: `deno test` on the backend's
-    directory instead of serving it (H.6). All host paths absolute and existing. `secrets`: the
-    values of the manifest's secrets (H.2), given as env vars (never to tests). `files`: the
-    manifest's host files, checked and resolved (path, writable), mounted at the same path (not
-    for tests either). With `needs.notify`, the backend reaches handler at APP_API_SOCKET (H.9).
+    its socket; no network unless the manifest lists hosts, then the allow-list, enforced.
+    `test`: `bun test` on the backend's directory instead of serving it (H.6). All host paths
+    absolute and existing. `secrets`: the values of the manifest's secrets (H.2), given as env
+    vars (never to tests). `files`: the folders given for its files needs, checked and resolved
+    (need, path, writable), mounted at the same path, `HANDLER_APP_FILES` naming them by need
+    (not for tests either). With `needs.notify` or `needs.agents`, the backend reaches handler at
+    APP_API_SOCKET (H.9, H.11).
     """
     files = [] if test else list(files or [])
-    net = [f"unix:{APP_SOCKET}"]
-    if manifest.needs.notify and not test:
-        net.append(f"unix:{APP_API_SOCKET}")
     egress = list(manifest.needs.egress)
-    wildcard = any(e.startswith("*.") for e in egress)
-    allow_net = "--allow-net" if wildcard else f"--allow-net={','.join(net + egress)}"
-    permissions = [
-        "--cached-only",  # dependencies are vendored with the code: nothing is fetched
-        "--frozen",
-        "--no-prompt",
-        f"--allow-read={','.join([APP_CODE_DIR, data, APP_RUN_DIR, *(p for p, _ in files)])}",
-        f"--allow-write={','.join([data, APP_RUN_DIR, *(p for p, rw in files if rw)])}",
-        allow_net,  # a wildcard host cannot be said to Deno: the proxy filters alone
-        "--allow-env",
-    ]
+    # Its dependencies are in its code: nothing is installed, no .env of its data folder is read.
+    flags = ["--no-install", "--no-env-file"]
     if test:
-        argv = ["test", *permissions, "--permit-no-files", f"{APP_CODE_DIR}/{manifest.server.dir}"]
+        argv = ["test", *flags, "--pass-with-no-tests", f"{APP_CODE_DIR}/{manifest.server.dir}"]
     else:
-        argv = ["run", *permissions, f"{APP_CODE_DIR}/{manifest.server.entry}"]
+        argv = ["run", *flags, f"{APP_CODE_DIR}/{manifest.server.entry}"]
     network: NetworkPolicy = (
         FilteredNetwork(mode="filtered", allow=sorted(set(egress)), enforcement="enforce")
         if egress
@@ -287,27 +310,24 @@ def app_sandbox_spec(
         api_version=SANDBOX_API_VERSION,
         name=name,
         image=RUNTIME_IMAGE,
-        argv=argv,  # the image's entrypoint is deno
+        argv=argv,  # the image's entrypoint is bun
         env={
             "HANDLER_APP_NAME": manifest.name,
             "HANDLER_APP_VERSION": manifest.version,
             "HANDLER_APP_DATA": data,
             "HANDLER_APP_SOCKET": APP_SOCKET,
-            "DENO_DIR": f"{APP_HOME}/.cache/deno",  # the image's /deno-dir is read-only
-            "DENO_NO_UPDATE_CHECK": "1",
             "NO_COLOR": "1",
-            "TINI_SUBREAPER": "1",  # the image's tini runs under podman's init
         }
         | ({} if test else dict(secrets or {}))
-        | ({"HANDLER_APP_FILES": json.dumps([p for p, _ in files])} if files else {})
-        | ({"HANDLER_APP_API": APP_API_SOCKET} if manifest.needs.notify and not test else {}),
+        | ({"HANDLER_APP_FILES": json.dumps({n: p for n, p, _ in files})} if files else {})
+        | ({"HANDLER_APP_API": APP_API_SOCKET} if manifest.needs.handler_api and not test else {}),
         workdir=data,
         user=SandboxUser(mode="host-user", home=APP_HOME),
         mounts=[
             Mount(source=data, target=data, read_only=False, kind="scope"),
             Mount(source=code, target=APP_CODE_DIR, read_only=True, kind="app"),
             Mount(source=run, target=APP_RUN_DIR, read_only=False, kind="app"),
-            *(Mount(source=p, target=p, read_only=not rw, kind="app") for p, rw in files),
+            *(Mount(source=p, target=p, read_only=not rw, kind="app") for _, p, rw in files),
         ],
         files=[],
         writable_paths=[],

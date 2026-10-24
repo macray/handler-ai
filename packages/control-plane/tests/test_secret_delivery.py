@@ -77,9 +77,7 @@ def test_the_sandbox_holds_a_phantom_of_its_provider_key(
     tmp_path: Path, network: NetworkMode
 ) -> None:
     s, runs = _keyed(tmp_path)
-    agent = AgentRecord(
-        id="a1", models=[runs], scope=str(tmp_path / "code" / "shop"), network=network
-    )
+    agent = AgentRecord(id="a1", model=runs, scope=str(tmp_path / "code" / "shop"), network=network)
     spec, launch, _ = launcher.prepare(s, agent, runs, "c1")
     [i] = spec.injections
     assert (i.name, i.value, i.hosts) == (
@@ -94,9 +92,7 @@ def test_the_sandbox_holds_a_phantom_of_its_provider_key(
 
 def test_without_network_a_phantom_and_no_injection(tmp_path: Path) -> None:
     s, runs = _keyed(tmp_path)
-    agent = AgentRecord(
-        id="a1", models=[runs], scope=str(tmp_path / "code" / "shop"), network="none"
-    )
+    agent = AgentRecord(id="a1", model=runs, scope=str(tmp_path / "code" / "shop"), network="none")
     spec, _, _ = launcher.prepare(s, agent, runs, "c1")
     assert spec.injections == []
     assert spec.env["OPENAI_API_KEY"] not in ("sk-" + "k" * 40, "")

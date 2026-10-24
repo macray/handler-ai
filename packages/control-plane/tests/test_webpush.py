@@ -1,4 +1,4 @@
-"""Unit tests: content-free Web Push with VAPID (docs/dev/design/miniapps.md §7)."""
+"""Unit tests: content-free Web Push with VAPID (docs/dev/design/apps.md §7)."""
 
 import asyncio
 import base64
@@ -61,7 +61,21 @@ def test_push_sends_nothing_but_the_signal(tmp_path: Path) -> None:
 
 
 def test_endpoints() -> None:
+    """The browsers' push services only: handlerd posts to it, on a paired device's word."""
     assert webpush.valid_endpoint("https://updates.push.services.mozilla.com/wpush/v2/x")
-    assert not webpush.valid_endpoint("http://push.example.org/x")
+    assert webpush.valid_endpoint("https://fcm.googleapis.com/fcm/send/x")
+    assert webpush.valid_endpoint("https://web.push.apple.com/x")
+    assert webpush.valid_endpoint("https://wns2-par02p.notify.windows.com/w/?token=x")
+    for elsewhere in (
+        "https://push.example.org/x",
+        "https://192.168.1.1/x",
+        "https://localhost/x",
+        "https://fcm.googleapis.com.example.org/x",
+        "https://fcm.googleapis.com:8443/x",
+        "https://me@fcm.googleapis.com/x",
+        "https://notify.windows.com.example.org/x",
+    ):
+        assert not webpush.valid_endpoint(elsewhere), elsewhere
+    assert not webpush.valid_endpoint("http://fcm.googleapis.com/x")
     assert not webpush.valid_endpoint("https://" + "a" * 3000)
     assert not webpush.valid_endpoint(None)

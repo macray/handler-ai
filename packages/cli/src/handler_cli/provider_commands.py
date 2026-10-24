@@ -3,16 +3,16 @@ does, an API and its key (Anthropic, OpenAI, Mistral, OpenRouter) or a model ser
 computer (llama.cpp, Ollama). A provider starts from a template; its key goes to handler's secret
 store, never shown again.
 
-handler provider list                the providers: endpoints, models, key, contexts, agents
+handler provider list                the providers: endpoints, models, key, areas, agents
 handler provider templates           what a provider can start from
 handler provider add NAME --from TEMPLATE [--key] [--endpoint PROTOCOL=URL …] [--model ID …]
-                     [--context CONTEXT …] [--description TEXT]
+                     [--area AREA …] [--description TEXT]
                                      a provider from a template. --key: ask for its key (hidden,
                                      or read from stdin). --endpoint: another URL for a protocol
                                      (e.g. a server on another port). --model: the models it offers,
-                                     instead of the template's. --context: the project contexts it
+                                     instead of the template's. --area: the areas it
                                      is made for (Work, Personal…, or any; none: it runs nowhere a
-                                     project has a context)
+                                     project has an area)
 handler provider rm NAME             it and its key (agents using it cannot start until given
                                      another)
 
@@ -40,7 +40,7 @@ def add_parser(sub: Any) -> None:
     add.add_argument("--key", action="store_true", help="ask for its key")
     add.add_argument("--endpoint", action="append", metavar="PROTOCOL=URL", default=[])
     add.add_argument("--model", action="append", metavar="ID", default=[])
-    add.add_argument("--context", action="append", metavar="CONTEXT", default=[])
+    add.add_argument("--area", action="append", metavar="AREA", default=[])
     add.add_argument("--description")
     p.add_parser("rm").add_argument("name")
 
@@ -48,7 +48,7 @@ def add_parser(sub: Any) -> None:
 def dispatch(args: argparse.Namespace) -> int:
     d = Daemon()
     if args.provider_cmd == "list":
-        rows = [["NAME", "STATUS", "ENDPOINTS", "MODELS", "KEY", "CONTEXTS", "AGENTS"]]
+        rows = [["NAME", "STATUS", "ENDPOINTS", "MODELS", "KEY", "AREAS", "AGENTS"]]
         for p in d.call("GET", "/v1/providers"):
             status = p["status"] if p["status"] == "ready" else "; ".join(
                 p.get("problems") or [p.get("error") or p["status"]])  # fmt: skip
@@ -59,7 +59,7 @@ def dispatch(args: argparse.Namespace) -> int:
                     ", ".join(p.get("endpoints", {})),
                     ", ".join(m["id"] for m in p.get("models", [])),
                     p.get("key") or "-",
-                    ", ".join(p.get("contexts", [])) or "-",
+                    ", ".join(p.get("areas", [])) or "-",
                     ", ".join(p.get("agents", [])) or "-",
                 ]
             )
@@ -103,7 +103,7 @@ def request(d: Daemon, args: argparse.Namespace) -> dict[str, Any]:
         "description": args.description or template.get("description"),
         "endpoints": endpoints,
         "models": models,
-        "contexts": args.context,
+        "areas": args.area,
         "files": template.get("files"),
     }
     if args.key:

@@ -101,11 +101,9 @@ export function resultProblems(result: unknown): string[] {
   return found;
 }
 
-/** Whether an automation runs that agent: by its name, in its project (by name) or in none. */
-export function runsAgent(definition: Automation | null | undefined, agentName: string | null | undefined, projectName: string | null): boolean {
-  const run = definition?.run;
-  if (!run || typeof run === "string" || !("agent" in run) || !agentName) return false;
-  return run.agent === agentName && (run.project ?? null) === projectName;
+/** Whether an automation runs that agent: the one its names were bound to (I.1), by id. */
+export function runsAgent(automation: { agentId?: string | null }, agentId: string): boolean {
+  return automation.agentId === agentId;
 }
 
 /** A name for a new automation: "reviewer-hourly" from the agent's name and its schedule. */
@@ -125,13 +123,9 @@ export function suggestName(what: string, form: ScheduleForm | null): string {
   return `${base || "automation"}-${when}`.slice(0, 64).replace(/-+$/, "");
 }
 
-/** The automations that are on and run that agent (by its name, in its project or in none). */
-export function schedulesOf<T extends { enabled?: boolean; definition?: Automation | null }>(
-  list: T[],
-  agentName: string | null | undefined,
-  projectName: string | null,
-): T[] {
-  return list.filter((a) => a.enabled && runsAgent(a.definition, agentName, projectName));
+/** The automations that are on and run that agent (by id, I.1). */
+export function schedulesOf<T extends { enabled?: boolean; agentId?: string | null }>(list: T[], agentId: string): T[] {
+  return list.filter((a) => a.enabled && runsAgent(a, agentId));
 }
 
 /** What the new-automation form holds; `definitionOf` reads it back from a definition. */
@@ -140,9 +134,10 @@ export type AutomationForm = {
   schedule: ScheduleForm; // with on = "time"
   stopProject: string; // with on = "stop": "" any session
   what: "agent" | "app";
-  agent: { name: string; project: string | null; fields: Record<string, unknown>; skill: string } | null;
+  agent: { name: string; project: string | null; fields: Record<string, unknown> } | null;
   app: string;
   call: string;
+  opens: string; // an agent run's: the app its inbox messages open ("" none)
   description: string;
 };
 
@@ -169,10 +164,11 @@ export function formOf(definition: Automation | null | undefined): AutomationFor
     what: "agent" in run ? "agent" : "app",
     agent:
       "agent" in run
-        ? { name: run.agent, project: run.project ?? null, fields: { ...(run.input?.fields ?? {}) }, skill: run.input?.subject?.skill ?? "" }
+        ? { name: run.agent, project: run.project ?? null, fields: { ...(run.input?.fields ?? {}) } }
         : null,
     app: "app" in run ? run.app : "",
     call: "app" in run ? run.call : "POST /api/",
+    opens: definition.app ?? "",
     description: definition.description ?? "",
   };
 }

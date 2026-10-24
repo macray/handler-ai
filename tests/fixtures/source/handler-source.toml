@@ -1,0 +1,6 @@
+# The source the tests read as Handler's official one (D.26), made up for them: an app, two addons
+# with an image (one an MCP server, one with a store, secrets and egress), an agents file. Never
+# Handler's real registry, which changes without notice and is not in this repository.
+apiVersion = "handler.source/v1"
+name = "Test source"
+description = "What the tests install, standing in for Handler's own source."

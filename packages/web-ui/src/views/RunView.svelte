@@ -1,11 +1,15 @@
 <script lang="ts">
   // A run of an agent with an interface (D.18): what it was given, how it went, and its result,
   // shown from its schema. Polled while it runs; watching it live opens its session. Titled by what
-  // it was given; run again with the same input and model.
+  // it was given; run again with the same input and model; a job's run that ended well can be kept
+  // as a check (D.20).
   import When from "../components/When.svelte";
   import Eye from "@lucide/svelte/icons/eye";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
+  import Target from "@lucide/svelte/icons/target";
+  import CheckDialog from "../components/CheckDialog.svelte";
   import Trash from "@lucide/svelte/icons/trash-2";
+  import X from "@lucide/svelte/icons/x";
   import { Button } from "$lib/components/ui/button";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import OutputView from "../components/OutputView.svelte";
@@ -17,7 +21,7 @@
   import { agentLabel, projects } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { accessLabel } from "../lib/access";
-  import { inputSummary, runState, verdictOf, type Schema } from "../lib/runs";
+  import { inputSummary, runState, startedBy, verdictOf, type Schema } from "../lib/runs";
 
   let { id }: { id: string } = $props();
 
@@ -27,12 +31,12 @@
   let error = $state<string | null>(null);
 
   const status = $derived(run ? runState(run) : "running");
-  const skill = $derived(run?.input?.subject?.skill ?? undefined);
+  const skill = $derived(run?.subject?.skill ?? undefined);
   const result = $derived(agent?.interface?.result as Schema | undefined);
   const verdict = $derived(run?.output ? verdictOf(result, run.output.value) : null);
-  const changed = $derived(Boolean(digest && run?.input?.subject?.digest && digest !== run.input.subject.digest));
+  const changed = $derived(Boolean(digest && run?.subject && digest !== run.subject.digest));
   const found = $derived(agent ? projects.of(agent) : undefined);
-  const title = $derived(run ? (inputSummary(run.input) ?? run.title ?? "Run") : "Run");
+  const title = $derived(run ? (inputSummary(run) ?? run.title ?? "Run") : "Run");
   const parent = $derived(
     agent
       ? { label: found ? `${found.project.name} · ${agentLabel(found.agent)}` : agentLabel(agent), href: href({ view: "agent", id: agent.id }) }
@@ -70,9 +74,34 @@
     if (!run || !agent) return;
     error = null;
     try {
-      const input = { fields: run.input?.fields ?? {}, subject: run.input?.subject ? { skill: run.input.subject.skill } : null };
+      const input = { fields: run.input?.fields ?? {} };
       const model = { harness: run.harness, account: run.account ?? null, provider: run.provider ?? null, model: run.model ?? null };
       navigate({ view: "run", id: (await api.startRun(agent.id, input, model)).id });
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  // kept as a check (D.20): what may be compared comes from its agent's checks
+  let keeping = $state(false);
+  let comparable = $state<string[]>([]);
+  let kept = $state(false);
+  const keepable = $derived(status === "done" && !!agent?.interface?.result && run?.origin !== "check" && !!run?.output?.valid);
+  async function keep(): Promise<void> {
+    if (!agent) return;
+    try {
+      comparable = (await api.agentChecks(agent.id)).comparable ?? [];
+      keeping = true;
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  /** A run waiting for its turn, not started after all. */
+  async function cancel(): Promise<void> {
+    if (!run) return;
+    try {
+      run = await api.cancelSession(run.id);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -96,12 +125,19 @@
 
 <PageHeader {title} {parent} titled>
   {#snippet actions()}
-    {#if run}
+    {#if run?.waitingFor}
+      <Button variant="ghost" size="sm" onclick={cancel} title="It will not start" data-testid="run-cancel"><X />Cancel</Button>
+    {:else if run}
       <Button variant="ghost" size="sm" href={href({ view: "session", key: run.id })} title={status === "running" ? "Its conversation, live" : "Its conversation: restarts its sandbox to show it"} data-testid="run-watch">
         <Eye />{status === "running" ? "Watch" : "Conversation"}
       </Button>
+    {/if}
+    {#if run}
       {#if status !== "running" && agent}
         <Button variant="ghost" size="sm" onclick={again} title="A new run with the same input and model" data-testid="run-again"><RotateCcw />Run again</Button>
+      {/if}
+      {#if keepable && !kept}
+        <Button variant="ghost" size="sm" onclick={keep} title="This answer is right: run it again later to see it still comes" data-testid="run-keep-check"><Target />Keep as a check</Button>
       {/if}
       {#if status !== "running"}
         <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={remove} data-testid="run-delete"><Trash />Delete</Button>
@@ -114,13 +150,16 @@
     <PageTitle {title} description="An unattended run: what it was given and what it gave back." />
     {#if error}<p class="text-sm text-danger">{error}</p>{/if}
     {#if run}
+      {#if kept && agent}
+        <p class="text-sm" data-testid="run-kept">Kept as a check: <a class="text-link hover:underline" href={href({ view: "agent", id: agent.id })}>its checks</a>.</p>
+      {/if}
       <section class="flex flex-wrap items-center gap-3 text-sm" data-testid="run-status">
         <StatusBadge status={STATE[status] ?? "failed"} />
         {#if verdict}
           <span class="text-muted-foreground">Verdict</span>
           <span class="inline-flex rounded-md border px-2 py-0.5 text-xs font-medium {TONE[verdict.tone]}" data-testid="run-verdict">{verdict.value}</span>
         {/if}
-        <span class="text-xs text-muted-foreground"><When at={run.createdAt} /> · {accessLabel(run)}</span>
+        <span class="text-xs text-muted-foreground"><When at={run.createdAt} /> · {startedBy(run)} · {accessLabel(run)}</span>
       </section>
 
       <section class="space-y-3">
@@ -140,7 +179,12 @@
 
       <section class="space-y-3" data-testid="run-result">
         <h2 class="text-base font-semibold">Result</h2>
-        {#if status === "running"}
+        {#if run.waitingFor}
+          <p class="text-sm text-muted-foreground" data-testid="run-waiting">
+            It waits for <a class="text-link hover:underline" href={href({ view: "run", id: run.waitingFor })}>the run of its agent in progress</a>: one run of an agent at a time.
+            It starts when that one ends, and gives up after 30 minutes.
+          </p>
+        {:else if status === "running"}
           <p class="text-sm text-muted-foreground">It is working{run.busy ? "" : " (starting)"}… Watch it live from the top bar.</p>
         {:else if run.output?.valid}
           <OutputView schema={result} value={run.output.value} {skill} />
@@ -170,3 +214,16 @@
     {/if}
   </div>
 </div>
+
+{#if agent && run && keeping}
+  <CheckDialog
+    bind:open={keeping}
+    agentId={agent.id}
+    result={agent.interface?.result as Schema | undefined}
+    {comparable}
+    answer={(run.output?.value ?? {}) as Record<string, unknown>}
+    fromRun={run.id}
+    name={title}
+    onsaved={() => (kept = true)}
+  />
+{/if}

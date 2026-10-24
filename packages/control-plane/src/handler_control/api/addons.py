@@ -1,5 +1,6 @@
-"""Addon routes for installing (G.5): the catalog handler ships, preview, install, remove. Listing
-addons is in catalog.py (G.1), rebuilding their images in images.py (G.4)."""
+"""Addon routes for installing (G.5): preview, install, remove. What sources offer is in
+sources.py (D.26), listing addons in catalog.py (G.1), rebuilding their images in images.py
+(G.4)."""
 
 import asyncio
 import contextlib
@@ -8,7 +9,6 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
 
 from handler_contracts import (
-    AddonCatalogEntry,
     AddonInstalled,
     AddonInstallRequest,
     AddonPreviewRequest,
@@ -22,28 +22,9 @@ from .catalog import addon_info
 from .common import Context, ProblemError, dump, log, parse_body
 
 
-def catalog_entries() -> list[AddonCatalogEntry]:
-    installed = addon_install.lock()
-    entries = []
-    for name in addon_catalog.catalog_names():
-        addon = addon_catalog.load(addon_catalog.CATALOG_DIR / name)
-        entries.append(
-            AddonCatalogEntry(
-                name=name,
-                description=addon.manifest.description,
-                installed=name in installed,
-            )
-        )
-    return entries
-
-
 def add_addon_install_routes(app: FastAPI, ctx: Context) -> None:
     authed = [Depends(ctx.require_auth)]
     settings = ctx.settings
-
-    @app.get("/v1/addon-catalog", dependencies=authed)
-    def addon_catalog_list() -> Response:
-        return dump(catalog_entries())
 
     @app.post("/v1/addons/preview", dependencies=authed)
     async def preview_addon(request: Request) -> Response:
@@ -64,7 +45,7 @@ def add_addon_install_routes(app: FastAPI, ctx: Context) -> None:
         except addon_install.AddonInstallError as e:
             raise ProblemError(422, "cannot install the addon", str(e)) from None
         log.info("addon %s installed from %s", name, body.source)
-        info = await asyncio.to_thread(addon_info, name)
+        info = await asyncio.to_thread(addon_info, settings, name)
         build = None
         if info.image is not None:
             # another build running: built later (Settings → Images,

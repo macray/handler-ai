@@ -4,6 +4,7 @@ apiKey = { secret = "key" }
 
 [endpoints]
 openai-chat = "https://api.mistral.ai/v1"
+transcriptions = "https://api.mistral.ai/v1"  # speech to text, for Voice
 
 [[models]]
 id = "devstral-medium-latest"
@@ -12,3 +13,8 @@ name = "Devstral Medium"
 [[models]]
 id = "mistral-large-latest"
 name = "Mistral Large"
+
+[[models]]
+id = "voxtral-mini-latest"
+name = "Voxtral Mini (speech to text)"
+speech = true

@@ -7,12 +7,20 @@ import { Mailbox } from "./mailbox.svelte";
 import { deviceFrom, forgetDevice, loadDevice, readFragment, saveDevice, type Device, type PairingInfo } from "./pairing";
 import type {
   AgentList,
+  AskAnswer,
+  ActionOption,
+  AskOptions,
+  RemoteTranscription,
+  TranscribeParams,
+  AskTurn,
+  RemoteActionRun,
   AppList,
   InboxList,
   InboxMessage,
   PushKey,
   PushSubscribeParams,
   PushSubscription,
+  RemoteAgent,
   RemoteProject,
   SessionList,
   SharedApp,
@@ -21,6 +29,9 @@ import type {
   StartedSession,
   StartSessionParams,
 } from "./remote.gen";
+
+/** The host refused a frame of an attachment it no longer holds (it detached the sleeping phone). */
+const NOT_ATTACHED = -32021;
 
 /** Close codes after which re-attaching is pointless: the session is not shared or not running. */
 const FINAL = new Map([
@@ -38,7 +49,7 @@ class RemoteApp {
   listError = $state<string | null>(null);
   loading = $state(false);
 
-  // who this device is for, and the mini apps shared with that person
+  // who this device is for, and the apps shared with that person
   person = $state("owner");
   scope = $state<"all" | "apps">("all");
   apps = $state<SharedApp[]>([]);
@@ -55,9 +66,20 @@ class RemoteApp {
 
   settings = $state(false); // the Settings screen: this device, notifications, forget
 
-  // starting a session from here: the agents allowed, the screen, the session being started
+  // Ask (D.24), the owner's devices: what can be asked now; the tab shown first when there is
+  tab = $state<"ask" | "home">("home");
+  askOptions = $state<ActionOption[]>([]);
+  // speaking (D.25): a speech model chosen on the host; answers read aloud when you spoke / typed
+  voice = $state({ listens: false, readAloudSpoken: true, readAloudTyped: false });
+
+  // starting a session from here: the agents allowed (a project's, or who you talk to in Chat),
+  // the screen (opened on Chat with words typed: Ask's "Start a chat about it"), the session
+  // being started
   agents = $state<RemoteProject[]>([]);
+  chats = $state<RemoteAgent[]>([]);
   composing = $state(false);
+  composeChat = $state(false);
+  composeSay = $state("");
   startError = $state<string | null>(null);
   private awaited: string | null = null; // started here: opened once the host shares it
 
@@ -67,6 +89,7 @@ class RemoteApp {
   attaching = $state(false);
   error = $state<string | null>(null);
   ended = $state<string | null>(null); // why the session view cannot continue
+  private opening: Promise<void> | null = null;
 
   async init(): Promise<void> {
     try {
@@ -112,6 +135,7 @@ class RemoteApp {
     this.mailbox = null;
     await forgetDevice();
     forgetPages();
+    forgetDrafts();
     this.settings = false;
     this.device = null;
     this.sessions = [];
@@ -152,8 +176,18 @@ class RemoteApp {
           ? await this.mailbox.request<SessionList>("_handler/remote/list_sessions")
           : { sessions: [] };
       this.sessions = sessions;
-      this.agents =
-        this.scope === "all" ? (await this.mailbox.request<AgentList>("_handler/remote/list_agents")).projects : [];
+      const startable: AgentList =
+        this.scope === "all" ? await this.mailbox.request<AgentList>("_handler/remote/list_agents") : { projects: [] };
+      [this.agents, this.chats] = [startable.projects, startable.chats ?? []];
+      const hadAsks = this.askOptions.length > 0;
+      const options = this.scope === "all" ? await this.mailbox.request<AskOptions>("_handler/remote/ask_options").catch(() => null) : null;
+      this.askOptions = options?.actions ?? [];
+      this.voice = {
+        listens: options?.listens ?? false,
+        readAloudSpoken: options?.readAloudSpoken ?? true,
+        readAloudTyped: options?.readAloudTyped ?? false,
+      };
+      if (!hadAsks && this.askOptions.length) this.tab = "ask"; // first shown, once there is something to ask
       this.listError = null;
       this.openAwaited();
       if (this.current) this.current = sessions.find((s) => s.id === this.current?.id) ?? this.current;
@@ -164,6 +198,30 @@ class RemoteApp {
     } finally {
       this.loading = false;
     }
+  }
+
+  /** Ask (D.24): the exchange so far, the person's words last; answered once an app did it. */
+  async ask(turns: AskTurn[]): Promise<AskAnswer> {
+    if (!this.mailbox) throw new Error("not paired");
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return await this.mailbox.request<AskAnswer>("_handler/remote/ask", { turns, timezone }, 120_000);
+  }
+
+  /** A recording written down on the host with its speech model (D.25), never kept. */
+  async transcribe(speech: TranscribeParams): Promise<string> {
+    if (!this.mailbox) throw new Error("not paired");
+    return (await this.mailbox.request<RemoteTranscription>("_handler/remote/transcribe", speech, 90_000)).text;
+  }
+
+  /** An agent's action, read again until it ends (H.12). */
+  async actionRun(app: string, action: string, runId: string): Promise<RemoteActionRun> {
+    if (!this.mailbox) throw new Error("not paired");
+    return await this.mailbox.request<RemoteActionRun>("_handler/remote/action_run", { app, action, runId });
+  }
+
+  /** The New session screen: on a project's agents, or on Chat with `say` typed. */
+  compose(chat = false, say = ""): void {
+    [this.composeChat, this.composeSay, this.startError, this.composing] = [chat, say, null, true];
   }
 
   /** A new session of an allowed agent, `prompt` sent first; opened once the host shares it. */
@@ -188,8 +246,14 @@ class RemoteApp {
     void this.open(found);
   }
 
-  /** Attach to a shared session: the host replays the conversation, then it goes on live. */
-  async open(session: SharedSession): Promise<void> {
+  /** Attach to a shared session: the host replays the conversation, then it goes on live. One
+   *  attaching at a time: asked again meanwhile, the one under way is awaited. */
+  open(session: SharedSession): Promise<void> {
+    this.opening ??= this.attach(session).finally(() => (this.opening = null));
+    return this.opening;
+  }
+
+  private async attach(session: SharedSession): Promise<void> {
     if (!this.mailbox) return;
     this.conn?.close();
     this.current = session;
@@ -231,7 +295,7 @@ class RemoteApp {
     else if (this.mailbox?.hostOnline) void this.refresh();
   }
 
-  /** Show a mini app: its page from handler, or this phone's copy when the host does not answer. */
+  /** Show an app: its page from handler, or this phone's copy when the host does not answer. */
   async openApp(shared: SharedApp): Promise<void> {
     if (!this.mailbox) return;
     this.currentApp = shared;
@@ -294,16 +358,50 @@ class RemoteApp {
     this.appError = null;
   }
 
-  async send(text: string): Promise<void> {
-    if (!this.conn) return;
+  /** A prompt. Never lost: the phone re-attaches first when the host may have detached it
+   *  while it slept, and resends it when the host says it was detached (the agent never got it).
+   *  `false` when it failed: the caller gives the text back to the input. */
+  async send(text: string): Promise<boolean> {
+    if (!this.conn) return false;
     this.error = null;
     try {
-      const stop = await this.conn.prompt(text);
-      if (stop !== "end_turn") this.error = `turn ended: ${stop}`;
+      if (this.mailbox?.mayBeDetached) await this.reattach();
+      try {
+        await this.required().prompt(text); // how it ended: shown by the timeline
+      } catch (e) {
+        if ((e as { code?: number }).code !== NOT_ATTACHED) throw e;
+        await this.reattach();
+        await this.required().prompt(text);
+      }
+      return true;
     } catch (e) {
-      this.error = (e as Error).message;
+      const why = (e as Error).message;
+      await this.reattach(); // a sound attachment for the next try, and the conversation as it is
+      this.error = `Your message failed (${why}). It is back in the input.`;
+      return false;
     }
+  }
+
+  private required(): AcpConnection {
+    if (!this.conn || this.conn.closed) throw new Error(this.error ?? "the session could not be reattached");
+    return this.conn;
   }
 }
 
 export const app = new RemoteApp();
+
+const DRAFT = "handler-draft:";
+
+/** What was typed for a session and not sent yet: kept on this phone, also across a reload. */
+export function loadDraft(session: string): string {
+  return localStorage.getItem(DRAFT + session) ?? "";
+}
+
+export function saveDraft(session: string, text: string): void {
+  if (text) localStorage.setItem(DRAFT + session, text);
+  else localStorage.removeItem(DRAFT + session);
+}
+
+function forgetDrafts(): void {
+  for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) localStorage.removeItem(key);
+}

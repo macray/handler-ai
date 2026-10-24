@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.control/v1/set-app-file-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The folder (or file) given for one of an app's files needs (H.2).",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "create": {
+      "default": false,
+      "title": "Create",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "SetAppFileRequest",
+  "type": "object"
+}

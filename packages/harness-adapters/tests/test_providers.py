@@ -116,7 +116,7 @@ def test_vibe_gets_a_provider_and_a_model() -> None:
     assert "MISTRAL_API_KEY" not in result.env
 
 
-def test_vibe_reserves_a_default_reply_and_at_most_half_the_window() -> None:
+def test_vibe_reserves_a_default_reply_and_at_most_a_fifth_of_the_window() -> None:
     def threshold(model: dict[str, Any]) -> int:
         config = tomllib.loads(
             files(launch("vibe", LLAMACPP | {"models": [model]}))["/home/agent/.vibe/config.toml"]
@@ -124,7 +124,9 @@ def test_vibe_reserves_a_default_reply_and_at_most_half_the_window() -> None:
         return config["models"][0]["auto_compact_threshold"]
 
     assert threshold({"id": "m", "contextWindow": 100000}) == 100000 - 16384
-    assert threshold({"id": "m", "contextWindow": 32000, "maxOutput": 32000}) == 16000
+    # a small window compacts at 80 %, not at half, whatever its maxOutput
+    assert threshold({"id": "m", "contextWindow": 32000, "maxOutput": 32000}) == 25600
+    assert threshold({"id": "m", "contextWindow": 65536, "maxOutput": 32768}) == 65536 - 13107
 
 
 def test_vibe_key_goes_to_its_own_variable() -> None:
@@ -152,10 +154,10 @@ def test_pi_gets_models_and_settings_with_the_models_native_fields() -> None:
     assert settings["compaction"] == {"reserveTokens": 32768}  # room for a reply (B9)
 
 
-def test_pi_keeps_its_own_reserve_without_a_max_output() -> None:
+def test_pi_reserves_at_most_a_fifth_of_a_small_window() -> None:
     result = launch("pi", LLAMACPP | {"models": [{"id": "small", "contextWindow": 32000}]})
     settings = json.loads(files(result)["/home/agent/.pi/agent/settings.json"])
-    assert "compaction" not in settings
+    assert settings["compaction"] == {"reserveTokens": 6400}  # not pi's own 16384: half of it
 
 
 def test_pi_key_is_the_name_of_its_variable() -> None:

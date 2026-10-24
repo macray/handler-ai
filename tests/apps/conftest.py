@@ -1,11 +1,12 @@
-"""Shared by the mini app suites: a daemon with its own data folder, a browser on an app's
+"""Shared by the app suites: a daemon with its own data folder, a browser on an app's
 origin, the Control API."""
 
+import io
 import json
 import shutil
-import subprocess
 import time
 import uuid
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,31 +31,10 @@ def data_root() -> Iterator[Path]:
     dev_env.remove_scope(path)
 
 
-GNOME_SCHEMA = (
-    Path(__file__).resolve().parents[2] / "packages" / "control-plane" / "tests" / "fixtures"
-    / "org.gnome.settings-daemon.plugins.media-keys.gschema.xml"
-)  # fmt: skip
-
-
-def gnome_env(root: Path) -> dict[str, str]:
-    """gsettings on a keyfile under `root`, with the part of GNOME's schema handler uses: the daemon
-    sets keyboard shortcuts there, not in the desktop running the tests."""
-    schemas = root / "gnome" / "schemas"
-    schemas.mkdir(parents=True)
-    shutil.copy(GNOME_SCHEMA, schemas)
-    if shutil.which("glib-compile-schemas"):
-        subprocess.run(["glib-compile-schemas", str(schemas)], check=True)
-    return {
-        "GSETTINGS_SCHEMA_DIR": str(schemas),
-        "GSETTINGS_BACKEND": "keyfile",
-        "XDG_CONFIG_HOME": str(root / "gnome" / "config"),
-    }
-
-
 @pytest.fixture(scope="module")
 def daemon(data_root: Path) -> Iterator[Daemon]:
     env = {"HANDLER_DATA_DIR": str(data_root), "HANDLER_APP_IDLE_TIMEOUT": str(IDLE_TIMEOUT)}
-    yield from start_daemon(extra_env=env | gnome_env(data_root))
+    yield from start_daemon(extra_env=env)
 
 
 def copy_fixture(name: str, data_root: Path) -> Path:
@@ -105,6 +85,25 @@ class AppClient:
 def api(daemon: Daemon, method: str, path: str, json: object = None) -> httpx.Response:
     with daemon.http() as c:  # a deploy may pull the runtime image: long timeout
         return c.request(method, path, json=json, timeout=600)
+
+
+def app_file(folder: Path) -> bytes:
+    """An app's folder as the file Handler installs (H.15): a zip of it, without .git and
+    node_modules, as `handler app add` makes it."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for path in sorted(folder.rglob("*")):
+            rel = path.relative_to(folder)
+            if path.is_file() and not {".git", "node_modules"} & set(rel.parts):
+                zf.write(path, rel.as_posix())
+    return buffer.getvalue()
+
+
+def add_app(daemon: Daemon, folder: Path) -> httpx.Response:
+    """Install the app's folder as a file: a new app (201) or its next version (200)."""
+    with daemon.http() as c:
+        headers = {"Content-Type": "application/zip"}
+        return c.post("/v1/apps", content=app_file(folder), headers=headers, timeout=120)
 
 
 def set_version(source: Path, version: str) -> None:

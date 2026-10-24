@@ -1,0 +1,17 @@
+{
+  "$id": "urn:handler.control/v1/add-source-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "url": {
+      "maxLength": 2048,
+      "pattern": "^https://[^\\s]+$",
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "AddSourceRequest",
+  "type": "object"
+}

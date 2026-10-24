@@ -6,18 +6,21 @@ from urllib.parse import quote
 
 from pydantic import Field
 
-from .common import Document
+from .common import AbsolutePath, Document
 from .control import ModelAccess
 
 
 class TerminalStart(Document):
-    """The client's terminal type, and arguments for the harness's program."""
+    """The client's terminal type, arguments for the harness's program, the folder it works in."""
 
     term: Annotated[str, Field(pattern=r"^[A-Za-z0-9._+-]{1,64}$")] = "xterm-256color"
     colorterm: Annotated[str, Field(pattern=r"^[A-Za-z0-9._+-]{1,64}$")] | None = None
     args: list[str] = []
-    # any model its project's context allows (D.19), the agent's or not; default: its first
+    # any model its project's area allows (D.19), the agent's or not; default: the agent's
     model: ModelAccess | None = None
+    # the client's directory, inside the agent's folder: the only one mounted, instead of the
+    # agent's (a project's sub-folder); default: the agent's folder
+    folder: AbsolutePath | None = None
 
 
 class TerminalStarted(Document):

@@ -1,0 +1,9 @@
+# Handler's Prompt writer (for its need: need.toml). Its instructions: instructions.md (the default
+# prompt: edit the agent set up from it to change them); its interface: interface.json.
+# Improvements (D.21) run it.
+
+[agent]
+name = "Prompt writer"
+description = "Rewrites a job's instructions, judged by its checks"
+# text in, text out: the model alone (no program, no sandbox, no tools)
+model_alone = true

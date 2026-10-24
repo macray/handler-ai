@@ -1,0 +1,42 @@
+{
+  "$id": "urn:handler.remote/v1/transcribe-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/transcribe` \u2192 Transcription: a recording from one of the owner's devices,\nwritten down with the chosen speech model (D.25), never kept.",
+  "properties": {
+    "audio": {
+      "minLength": 1,
+      "title": "Audio",
+      "type": "string"
+    },
+    "format": {
+      "enum": [
+        "webm",
+        "ogg",
+        "mp4",
+        "wav",
+        "mp3"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z]{2}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language"
+    }
+  },
+  "required": [
+    "audio",
+    "format"
+  ],
+  "title": "TranscribeParams",
+  "type": "object"
+}

@@ -18,7 +18,7 @@ from typing import Any
 
 from handler_contracts import CacheSharing, RemoteAgent, RemoteProject
 
-from .agents import AgentRecord, AgentRegistry, CheckedSettings
+from .agents import AgentRecord, AgentRegistry, describe
 
 
 @dataclass
@@ -30,7 +30,8 @@ class ProjectRecord:
     skills: list[str] = field(default_factory=list)  # given to all its agents (set by D.17)
     default_agent: str | None = None
     caches: CacheSharing = "project"  # the toolbox's caches for its agents (caches.py)
-    context: str | None = None  # its context: the accounts and providers it runs (contexts.py)
+    area: str | None = None  # its area: the accounts and providers it runs (areas.py)
+    pinned: bool = True  # in the web UI's menu
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -45,7 +46,8 @@ class ProjectRecord:
             "skills": self.skills,
             "defaultAgent": self.default_agent,
             "caches": self.caches,
-            "context": self.context,
+            "area": self.area,
+            "pinned": self.pinned,
             "createdAt": self.created_at.isoformat(),
         }
 
@@ -59,9 +61,18 @@ class ProjectRecord:
             skills=r.get("skills", []),
             default_agent=r.get("defaultAgent"),
             caches=r.get("caches", "project"),
-            context=r.get("context"),
+            area=r.get("area"),
+            pinned=r["pinned"],
             created_at=datetime.fromisoformat(r["createdAt"]),
         )
+
+
+class NamedAgentError(LookupError):
+    """No agent, or more than one, of that name there; `field`: "project" or "agent"."""
+
+    def __init__(self, field: str, detail: str) -> None:
+        super().__init__(detail)
+        self.field = field
 
 
 def folder_name(folder: str) -> str:
@@ -76,6 +87,11 @@ class ProjectRegistry:
         if self.file.exists():
             for r in json.loads(self.file.read_text()):
                 self.projects[r["id"]] = ProjectRecord.from_json(r)
+        # what agents.json keeps of their project is a copy: taken again from the project, so a
+        # copy saved before a change of format (or by an older version) is never what they run
+        for project in self.projects.values():
+            for agent in self.agents(project):
+                self.resolve(project, agent)
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +125,7 @@ class ProjectRegistry:
             agents = [
                 RemoteAgent(
                     id=a.id,
-                    name=a.name or a.models[0].harness,
+                    name=a.name or describe(a.model),
                     description=a.description,
                     default=a.id == project.default_agent,
                 )
@@ -122,13 +138,32 @@ class ProjectRegistry:
                 )
         return listed
 
+    def named_agent(self, name: str, project: str | None) -> AgentRecord:
+        """The agent of that name in the project of that name (None: an agent of no project), as
+        an automation names one (I.1)."""
+        pid = None
+        if project is not None:
+            found = [p for p in self.projects.values() if p.name == project]
+            if not found:
+                raise NamedAgentError("project", f"no project named {project}")
+            pid = found[0].id
+        agents = [
+            a for a in self.registry.agents.values() if a.name == name and a.project_id == pid
+        ]
+        where = f"in project {project}" if project else "of no project"
+        if not agents:
+            raise NamedAgentError("agent", f"no agent named {name} {where}")
+        if len(agents) > 1:
+            raise NamedAgentError("agent", f"{len(agents)} agents named {name} {where}")
+        return agents[0]
+
     def label(self, agent: AgentRecord) -> str | None:
         """How a session's agent is named in short: "project · agent" for an agent of a
         project."""
         project = self.get(agent.project_id or "")
         if project is None:
             return agent.name
-        return f"{project.name} · {agent.name or agent.models[0].harness}"
+        return f"{project.name} · {agent.name or agent.model.harness}"
 
     def last_used(self, project: ProjectRecord) -> datetime | None:
         used = [w.last_used_at for w in self.agents(project) if w.last_used_at]
@@ -138,10 +173,10 @@ class ProjectRegistry:
 
     def resolve(self, project: ProjectRecord, agent: AgentRecord) -> None:
         """What the agent gets from its project: its folder, the caches setting, the project's
-        skills and its context."""
+        skills and its area."""
         agent.scope = project.folder
         agent.caches = project.caches
-        agent.context = project.context
+        agent.area = project.area
         agent.project_skills = list(project.skills)
 
     def add(self, project: ProjectRecord) -> ProjectRecord:
@@ -160,74 +195,29 @@ class ProjectRegistry:
         self.registry.save()
         self.save()
 
-    def delete(self, project: ProjectRecord) -> list[AgentRecord]:
-        """Remove it and its agents; returns the agents (the caller stops their sessions)."""
-        agents = self.agents(project)
-        for agent in agents:
-            self.registry.agents.pop(agent.id, None)
-        self.projects.pop(project.id, None)
-        self.registry.save()
-        self.save()
-        return agents
-
-    def add_agent(
-        self,
-        project: ProjectRecord,
-        settings: CheckedSettings,
-        *,
-        name: str,
-        description: str | None,
-        instructions: str | None,
-        default: bool = False,
-        remote_start: bool = False,
-        skills: list[str] | None = None,
-    ) -> AgentRecord:
-        agent = AgentRecord(
-            **settings.model_dump(),
-            name=name,
-            project_id=project.id,
-            description=description,
-            instructions=instructions,
-            remote_start=remote_start,
-            skills=sorted(set(skills or [])),
-        )
+    def add_agent(self, project: ProjectRecord, agent: AgentRecord, default: bool = False) -> None:
+        """Register a new agent of the project (checked, agent_service.py): what it gets from
+        its project resolved; its default when asked, or when it has none yet."""
+        agent.project_id = project.id
         self.resolve(project, agent)
         self.registry.add(agent)
         if default or project.default_agent is None:
-            project.default_agent = agent.id
-            self.save()
-        return agent
+            self.set_default(project, agent.id)
 
-    def update_agent(
-        self,
-        project: ProjectRecord,
-        agent: AgentRecord,
-        settings: CheckedSettings,
-        *,
-        name: str,
-        description: str | None,
-        instructions: str | None,
-        default: bool = False,
-        remote_start: bool = False,
-        skills: list[str] | None = None,
-    ) -> None:
-        agent.set_settings(settings)
-        agent.name, agent.description, agent.instructions = name, description, instructions
-        agent.remote_start = remote_start
-        agent.skills = sorted(set(skills or []))
-        self.resolve(project, agent)
-        self.registry.save()
-        if default and project.default_agent != agent.id:
-            project.default_agent = agent.id
-            self.save()
+    def delete(self, project: ProjectRecord) -> None:
+        """Remove it (its agents are deleted first, agent_service.py)."""
+        self.projects.pop(project.id, None)
+        self.save()
 
-    def remove_agent(self, project: ProjectRecord, agent: AgentRecord) -> None:
-        self.registry.agents.pop(agent.id, None)
-        self.registry.save()
-        if project.default_agent == agent.id:
-            rest = self.agents(project)
-            project.default_agent = rest[0].id if rest else None
-            self.save()
+    def set_default(self, project: ProjectRecord, agent_id: str | None) -> None:
+        project.default_agent = agent_id
+        self.save()
+
+    def agent_gone(self, project: ProjectRecord, agent_id: str) -> None:
+        """One of its agents was deleted: its default becomes the first of the others."""
+        if project.default_agent == agent_id:
+            rest = [a for a in self.agents(project) if a.id != agent_id]
+            self.set_default(project, rest[0].id if rest else None)
 
     # ── skills (D.17): the projects that give them to all their agents, the agents picking them ──
 
@@ -237,6 +227,14 @@ class ProjectRegistry:
 
     def skill_users(self, name: str) -> list[AgentRecord]:
         return [w for w in self.registry.agents.values() if name in w.skills]
+
+    def give_skills(self, project: ProjectRecord, names: list[str]) -> None:
+        """The skills `project` gives to all its agents (D.17): those of its agents that picked
+        one of them drop it."""
+        project.skills = sorted(set(names))
+        for agent in self.agents(project):
+            agent.skills = [s for s in agent.skills if s not in project.skills]
+        self._resolve_all()
 
     def give_skill(self, old: str | None, new: str, givers: list[ProjectRecord]) -> None:
         """Skill `old` (None: a new one) is now `new`, given by `givers` to all their agents: the

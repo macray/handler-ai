@@ -1,16 +1,17 @@
-// Runs of agents with an interface (D.18): the form a run is started with, its result shown from
-// its schema (two hints: "x-handler": "verdict" on an enum, the run's outcome, shown as a badge;
-// "x-handler": "code-ref" on {path, lines: [from, to]}, those lines of the subject read by handlerd), and
-// a built-in agent's defaults, the form it is set up with.
-import type { BuiltinAgent, Session, SessionInput } from "./contracts.gen";
+// Runs of agents with an interface (D.18): the form a run is started with ("x-handler": "long-text"
+// on a string: several lines; "skill": a skill of the library, the run's subject), its result shown from its schema (two hints: "x-handler": "verdict"
+// on an enum, the run's outcome, shown as a badge; "x-handler": "code-ref" on {path, lines: [from,
+// to]}, those lines of the subject read by handlerd), and
+// a definition's defaults, the form it is set up with.
+import type { AgentDefinition, AgentInterface, Session } from "./contracts.gen";
 import { emptyAgent, type AgentSpec } from "./projects.svelte";
 
 export type Schema = Record<string, unknown>;
 
-/** What a run was given, in one line: its subject skill, else its fields' values. */
-export function inputSummary(input: SessionInput | null | undefined): string | null {
-  if (input?.subject?.skill) return `the skill ${input.subject.skill}`;
-  const values = Object.values(input?.fields ?? {})
+/** What a run was given, in one line: the skill it works on, else its fields' values. */
+export function inputSummary(run: Session): string | null {
+  if (run.subject) return `the skill ${run.subject.skill}`;
+  const values = Object.values(run.input?.fields ?? {})
     .filter((v) => ["string", "number", "boolean"].includes(typeof v) && String(v).trim())
     .map((v) => String(v).trim().replace(/\s+/g, " "));
   if (!values.length) return null;
@@ -23,7 +24,7 @@ export type Field = {
   key: string;
   title: string;
   description?: string;
-  kind: "text" | "number" | "boolean" | "choice" | "json";
+  kind: "text" | "long-text" | "skill" | "number" | "boolean" | "choice" | "list" | "json";
   choices: string[];
   required: boolean;
 };
@@ -39,6 +40,11 @@ export function titleOf(key: string, schema: Schema): string {
   return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
 }
 
+/** The key of an interface's skill field (one at most): a skill of the library to work on. */
+export function skillField(iface: AgentInterface | null | undefined): string | null {
+  return properties(iface?.fields as Schema | undefined).find(([, s]) => s["x-handler"] === "skill")?.[0] ?? null;
+}
+
 export function fieldsOf(schema: Schema | null | undefined): Field[] {
   const required = Array.isArray(schema?.required) ? (schema.required as string[]) : [];
   return properties(schema).map(([key, s]) => {
@@ -46,8 +52,14 @@ export function fieldsOf(schema: Schema | null | undefined): Field[] {
     const kind: Field["kind"] = choices.length
       ? "choice"
       : s.type === "string"
-        ? "text"
-        : s.type === "number" || s.type === "integer"
+        ? s["x-handler"] === "long-text"
+          ? "long-text"
+          : s["x-handler"] === "skill"
+            ? "skill"
+            : "text"
+        : s.type === "array" && (s.items as Schema | undefined)?.type === "string"
+          ? "list"
+          : s.type === "number" || s.type === "integer"
           ? "number"
           : s.type === "boolean"
             ? "boolean"
@@ -63,13 +75,21 @@ export function fieldsOf(schema: Schema | null | undefined): Field[] {
   });
 }
 
-/** The form's values as a run's `fields`: empty optional ones left out; throws on bad JSON. */
+/** The form's values as a run's `fields`: empty optional ones left out (a list: one per line);
+ *  throws on bad JSON. */
 export function fieldValues(fields: Field[], values: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = values[f.key];
     if (v === undefined || v === "" || v === null) continue;
     if (f.kind === "number") out[f.key] = Number(v);
+    else if (f.kind === "list") {
+      const items = String(v)
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (items.length) out[f.key] = items;
+    }
     else if (f.kind === "json") {
       try {
         out[f.key] = JSON.parse(String(v));
@@ -79,6 +99,17 @@ export function fieldValues(fields: Field[], values: Record<string, unknown>): R
     } else out[f.key] = v;
   }
   return out;
+}
+
+/** A run's `fields` back in the form: a list one per line, JSON as text. */
+export function formValues(fields: Field[], input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).map(([k, v]) => {
+      const kind = fields.find((f) => f.key === k)?.kind;
+      if (kind === "list" && Array.isArray(v)) return [k, v.join("\n")];
+      return [k, kind === "json" ? JSON.stringify(v) : v];
+    }),
+  );
 }
 
 export type Tone = "ok" | "warn" | "danger" | "muted";
@@ -113,15 +144,24 @@ export function codeRef(value: unknown): { path: string; from: number; to: numbe
 }
 
 /** How a run is doing: running, then its result (valid or not), or why it has none. */
+/** Who started a run, in words: "you", "an automation", "the app planner". */
+export function startedBy(s: Session): string {
+  if (s.origin === "automation") return "by an automation";
+  if (s.origin === "app") return `by the app ${s.app ?? ""}`.trimEnd();
+  if (s.origin === "check") return "by its checks";
+  return "by you";
+}
+
+/** How a run is going; a run waiting for its turn (one run of an agent at a time) is running. */
 export function runState(s: Session): "running" | "done" | "invalid" | "no result" {
   if (s.state === "starting" || s.state === "running") return "running";
   if (s.output) return s.output.valid ? "done" : "invalid";
   return "no result";
 }
 
-/** A built-in agent's defaults, the form it is set up with (D.18): its models are chosen there;
- *  from then on its settings are the user's. */
-export function builtinSpec(t: BuiltinAgent): AgentSpec {
+/** A definition's defaults (D.18: an agents file's agent, D.23, a need's of Handler, or an app's, H.2), the form it
+ *  is set up with: its models are chosen there; from then on its settings are the user's. */
+export function definitionSpec(t: AgentDefinition): AgentSpec {
   return {
     ...emptyAgent(),
     name: t.agentName,
@@ -133,6 +173,9 @@ export function builtinSpec(t: BuiltinAgent): AgentSpec {
     permissions: t.permissions ?? "bypass",
     allow: [...(t.allow ?? [])],
     skills: [...(t.skills ?? [])],
+    knowledge: [...(t.knowledge ?? [])],
+    display: t.display ?? false,
     interface: t.interface ? JSON.stringify(t.interface, null, 2) : "",
+    modelAlone: t.modelAlone ?? false,
   };
 }

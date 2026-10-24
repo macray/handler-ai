@@ -18,8 +18,8 @@ Nothing here needs the Handler source code. Every key and rule, for reference:
 
 ## Schedule one of your agents (the web UI)
 
-**Automations** → **New automation**, or from the agent's settings: tick *Runs unattended*, then
-**Save and run it on a schedule…** (under *How it is started*, which also lists the automations
+**Schedule** (in the menu) → **New automation**, or from the agent's settings: at the top, *How will you use
+it?* → *Job*, then **Save and run it on a schedule…** (under *How it is started*, which also lists the automations
 that run it): the agent is saved and the form opens for it. Choose when (every
 morning, weekdays at 08:30, every hour, or your own; or when a session stops), the agent (one that
 runs unattended, below) and what it is given, and a name. The page says what it will do before
@@ -42,7 +42,7 @@ handler automation examples                    # what handler ships
 handler automation new env-issues --from env-issues
 ```
 
-or the web UI: **Automations** → *A script, from an example*. It is copied to
+or the web UI: **Schedule** → *A script, from an example*. It is copied to
 `~/.config/handler-ai/automations/env-issues/`, **off**. Then:
 
 1. Edit `automation.toml` in your editor: the model it calls (`services.llm`, one of your
@@ -79,8 +79,14 @@ to = "handler/env-issues.md"            # a note of your knowledge root
 The folder is the truth: Handler reads it every time, and writes it only when you make one (an example
 copied, the web UI's form); never an agent. The automation's page
 and `handler automation show <name>` show its files, what it may do and its problems (a model that is
-not one of your providers', a note whose folder does not exist, a project of `only` that was
-renamed). One with problems never runs.
+not one of your providers', a note whose folder does not exist, an agent it runs that was
+deleted). One with problems never runs.
+
+**Agents and projects by name, then for good.** You name the agent it runs, and those of `only`,
+by name. The first time Handler reads a name, it remembers which agent (or project) it is: rename
+it later and the automation still runs (or watches) the same one; the file keeps the name you
+wrote. Delete it, and the automation says so and stops until you choose another. Edit the file to
+name another agent, and Handler reads that name again.
 
 **On and off.** Its page (and `handler automation show`) says what it does in sentences: what starts
 it, what runs and what it may reach, where results go. Turning it on is your approval; while it
@@ -113,8 +119,9 @@ project = "my-app"                      # its project; absent: an agent outside 
 input = { fields = { focus = "security" } }   # its form, as its interface says
 ```
 
-The agent must have an **interface** (a form and a result: in its settings, *Runs unattended*,
-whose starting interface already has the two result fields below): it then runs on its
+The agent must be a **job** (a form and a result: in its settings, *Job*; a *Brief* has no
+result and needs you, so an automation cannot run it; its
+editor always keeps the two result fields below): it then runs on its
 own, never asks you, in its own sandbox with its own settings: its folder (read-write: it may
 change files there, for example a `decisions.md` it reads again next time), its network, its
 model. Its result must say how it went and in one sentence what it found, in two required fields
@@ -136,7 +143,19 @@ Everything else in the result is kept with the message and shown on the run's pa
 valid result (it timed out, crashed, gave none) comes to the inbox as failed. Each run is a
 session of the agent, started by the automation: open it from the run to see what it did.
 
-**Its model.** An agent runs here on its first model. A subscription (an account) is meant for
+**One run at a time.** While the agent is already running (another automation's run, one you
+started), this one waits for it, then runs; after 30 minutes of waiting it fails, and your inbox
+says so.
+
+**Its results open an app.** When you act on what the agent says in one of your apps (a planner
+app for a calendar agent), name it: each result in your inbox gets a button that opens it, on the
+computer and on your phone. In the form: *Its results open*.
+
+```toml
+app = "planner"                         # before [run]
+```
+
+**Its model.** An agent runs here on its model. A subscription (an account) is meant for
 your own, ordinary use; whether a vendor lets an agent run on it unattended is said on the
 accounts screen, per vendor, after Handler read their terms:
 
@@ -158,9 +177,10 @@ automation's name); an error answer is a failed run. What the app notifies comes
 
 ## Your inbox
 
-What Handler tells you, newest first: your apps' notifications, your agents' results, and the runs
-that failed (not a script's try: you watched it). The **Inbox** page in the web UI, `handler inbox`,
-your paired phone; a message for you is also shown on your desktop and pushed, content-free, to
+What Handler tells you, newest first: your apps' notifications, your agents' results (run by an
+automation, or by one of your apps on your request), and the runs that failed (not a script's try:
+you watched it). A message tied to an app has a button that opens it. The **Inbox** page in the
+web UI (the menu counts its unread messages), `handler inbox`, your paired phone; a message for you is also shown on your desktop and pushed, content-free, to
 your phone. A script that succeeded says nothing: its result is in its note.
 
 ## What a script gets

@@ -1,7 +1,5 @@
 <script lang="ts">
   // A new project (no `id`), or an existing one's settings, with Delete.
-  import Trash from "@lucide/svelte/icons/trash-2";
-  import { Button } from "$lib/components/ui/button";
   import PageHeader from "../components/PageHeader.svelte";
   import PageTitle from "../components/PageTitle.svelte";
   import ProjectEditor from "../components/ProjectEditor.svelte";
@@ -11,7 +9,7 @@
   import { byRecentUse, projects } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
 
-  let { id, knowledge }: { id?: string; knowledge?: string } = $props();
+  let { id, knowledge, folder }: { id?: string; knowledge?: string; folder?: string } = $props();
 
   let project = $state<Project | null>(null);
   let lastAccess = $state<ModelAccess | undefined>(); // a new project's first agent: the last one used
@@ -24,7 +22,7 @@
         project = current;
         const latest = byRecentUse(all)[0];
         const used = latest?.agents.find((a) => a.id === latest.defaultAgent);
-        lastAccess = used?.models[0] ? accessOf(used.models[0]) : undefined;
+        lastAccess = used ? accessOf(used.model) : undefined;
         loaded = true;
       },
       (e: Error) => (error = e.message),
@@ -58,22 +56,21 @@
 
 <PageHeader
   titled
-  title={project ? `${project.name}: settings` : id ? "Project" : "New project"}
+  title={project ? "Settings" : id ? "Project" : "New project"}
   parent={project ? { label: project.name, href: href({ view: "project", id: project.id }) } : { label: "Projects", href: href({ view: "home" }) }}
->
-  {#snippet actions()}
-    {#if project}
-      <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={remove} data-testid="project-delete"><Trash />Delete</Button>
-    {/if}
-  {/snippet}
-</PageHeader>
+/>
 <div class="flex-1 overflow-y-auto">
-  <div class="mx-auto w-full max-w-3xl space-y-8 px-8 pt-10">
-    <PageTitle title={project ? "Project settings" : "New project"} description={project ? "Its folder and name, and what is for all its agents. Its agents are on the project page." : "A code folder, and the agents you work on it with."} />
+  <div class="mx-auto w-full max-w-3xl space-y-8 px-8 pt-10 pb-10">
+    <PageTitle
+      title={project ? "Settings" : "New project"}
+      description={project
+        ? `${project.name}'s folder and name, and what all its agents get. Each agent's own settings are on its page.`
+        : "A code folder, and the agents you work on it with."}
+    />
     {#if error}<p class="text-sm text-danger">{error}</p>{/if}
     {#if loaded && (project || !id)}
       {#key project?.id}
-        <ProjectEditor project={project ?? undefined} initialAccess={lastAccess} initialKnowledge={knowledge} onsaved={saved} oncancel={back} />
+        <ProjectEditor project={project ?? undefined} initialAccess={lastAccess} initialKnowledge={knowledge} initialFolder={folder} onsaved={saved} oncancel={back} ondelete={remove} />
       {/key}
     {:else if !error}
       <p class="text-sm text-muted-foreground">Loading…</p>

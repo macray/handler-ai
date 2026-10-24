@@ -1,5 +1,6 @@
-"""`handler inbox` — what handler told you: your apps' notifications, your automations' results and
-failures, newest first (the web UI's Inbox)."""
+"""`handler inbox` — what handler told you: your apps' notifications, your agents' results (run by
+an automation or by one of your apps) and the runs that failed, newest first (the web UI's Inbox).
+OPENS: the app a message opens (`handler app open NAME`)."""
 
 import argparse
 from typing import Any
@@ -18,7 +19,7 @@ def dispatch(_: argparse.Namespace) -> int:
     if not messages:
         print("nothing yet")
         return 0
-    rows = [["AT", "FROM", "STATUS", "TITLE", "SUMMARY"]]
+    rows = [["AT", "FROM", "STATUS", "TITLE", "SUMMARY", "OPENS"]]
     for m in messages:
         source = f"{m['source']} {m['name']}"
         unread = "" if m.get("read") else "• "
@@ -28,6 +29,9 @@ def dispatch(_: argparse.Namespace) -> int:
             m.get("status") or "-",
             one_line(m["title"], 40),
             one_line(m.get("summary") or "", 70),
+            m.get("app") or "-",
         ])  # fmt: skip
     table(rows)
+    if any(m.get("app") for m in messages):
+        print("\nopen an app: handler app open NAME")
     return 0

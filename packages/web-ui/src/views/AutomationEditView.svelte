@@ -21,7 +21,7 @@
   import type { Agent, App, Automation, AutomationCheck, AutomationView, Project } from "../lib/contracts.gen";
   import { GROUP, SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
   import { agentLabel } from "../lib/projects.svelte";
-  import { fieldsOf, fieldValues, type Schema } from "../lib/runs";
+  import { fieldsOf, fieldValues, formValues, type Schema } from "../lib/runs";
   import { href, navigate } from "../lib/router.svelte";
 
   let { name: editing, agent: chosenAgent }: { name?: string; agent?: string } = $props();
@@ -42,9 +42,9 @@
   // svelte-ignore state_referenced_locally
   let agentId = $state(chosenAgent ?? "");
   let values = $state<Record<string, unknown>>({});
-  let subject = $state("");
   let app = $state("");
   let call = $state("POST /api/");
+  let opens = $state(""); // an agent run's: the app its inbox messages open
 
   let name = $state("");
   let named = $state(false); // the person typed a name: no more suggestions
@@ -58,7 +58,7 @@
   $effect(() => {
     Promise.all([api.agents(), api.projects(), api.apps(), editing ? api.automation(editing) : null]).then(
       ([a, p, x, current]) => {
-        agents = a.filter((ag) => ag.interface);
+        agents = a.filter((ag) => ag.interface?.result); // jobs: only they run unattended
         projectList = p;
         apps = x;
         if (current) fill(current);
@@ -97,16 +97,14 @@
     what = f.what;
     app = f.app;
     call = f.call;
+    opens = f.opens;
     description = f.description;
-    const runs = f.agent && agents.find((a) => a.name === f.agent?.name && projectOf(a) === f.agent?.project);
+    // the agent its names were bound to (I.1), whatever it is called now
+    const runs = f.agent && agents.find((a) => a.id === current.agentId);
     if (f.agent && runs) {
       agentId = formAgent = runs.id;
-      const kinds = fieldsOf(runs.interface?.fields as Schema | undefined);
-      values = Object.fromEntries(
-        Object.entries(f.agent.fields).map(([k, v]) => [k, kinds.find((x) => x.key === k)?.kind === "json" ? JSON.stringify(v) : v]),
-      );
-      subject = f.agent.skill;
-    } else if (f.agent) error = `Its agent ${f.agent.name} no longer runs unattended or was renamed: choose one.`;
+      values = formValues(fieldsOf(runs.interface?.fields as Schema | undefined), f.agent.fields);
+    } else if (f.agent) error = `Its agent ${f.agent.name} no longer runs unattended or was deleted: choose one.`;
   }
 
   // a new agent chosen: its own form
@@ -115,7 +113,6 @@
     if (agentId === formAgent) return;
     formAgent = agentId;
     values = {};
-    subject = "";
   });
 
   $effect(() => {
@@ -143,9 +140,9 @@
     } catch (e) {
       return { wrong: (e as Error).message };
     }
-    if (agent.interface?.subject === "skill") input.subject = { skill: subject };
     const project = projectOf(agent);
-    return { definition: { ...base, run: { agent: agent.name, ...(project ? { project } : {}), input } } };
+    const opened = opens ? { app: opens } : {};
+    return { definition: { ...base, ...opened, run: { agent: agent.name, ...(project ? { project } : {}), input } } };
   });
 
   // handlerd says what it would do, as it is filled in
@@ -156,7 +153,7 @@
     }
     const definition = $state.snapshot(built.definition) as Automation;
     const timer = setTimeout(() => {
-      api.checkAutomation(definition).then(
+      api.checkAutomation(definition, what === "agent" ? agentId : null).then(
         (c) => ((check = c), (checkError = null)),
         (e: Error) => ((check = null), (checkError = e.message)),
       );
@@ -172,7 +169,7 @@
     busy = true;
     error = null;
     try {
-      await api.updateAutomation(editing, $state.snapshot(built.definition) as Automation);
+      await api.updateAutomation(editing, $state.snapshot(built.definition) as Automation, what === "agent" ? agentId : null);
       navigate({ view: "automation", name: editing });
     } catch (e) {
       error = (e as Error).message;
@@ -186,7 +183,11 @@
     busy = true;
     error = null;
     try {
-      const made = await api.createAutomation(name, { definition: $state.snapshot(built.definition) as Automation, enable });
+      const made = await api.createAutomation(name, {
+        definition: $state.snapshot(built.definition) as Automation,
+        agentId: what === "agent" ? agentId : null,
+        enable,
+      });
       navigate({ view: "automation", name: made.name });
     } catch (e) {
       error = (e as Error).message;
@@ -334,17 +335,28 @@
           </div>
           {#if agent}
             <div class="space-y-4 rounded-lg border bg-card p-4" data-testid="new-automation-input">
-              {#if fields.length || agent.interface?.subject === "skill"}
-                <RunFields {agent} {fields} bind:values bind:subject />
+              {#if fields.length}
+                <RunFields {fields} bind:values />
               {:else}
                 <p class="text-sm text-muted-foreground">Its form has no field: it runs with nothing to fill in.</p>
               {/if}
             </div>
             <p class="text-sm" data-testid="new-automation-model">
-              Runs on <strong>{agent.models[0] ? accessLabel(agent.models[0]) : "no model"}</strong>, its default model (the first in
-              its settings, the one new sessions start with too).
+              Runs on <strong>{accessLabel(agent.model)}</strong>, its model (the one its sessions start with too).
               <a class="text-link hover:underline" href={agent.projectId ? href({ view: "edit-agent", project: agent.projectId, id: agent.id }) : href({ view: "edit-ad-hoc", id: agent.id })}>Change it</a>
             </p>
+            {#if apps.length || opens}
+              <div class="space-y-1.5">
+                <Label for="run-opens">Its results open</Label>
+                <NativeSelect.Root id="run-opens" bind:value={opens} class="w-full" data-testid="new-automation-opens">
+                  <NativeSelect.Option value="">No app: its run's page</NativeSelect.Option>
+                  {#each apps as a (a.name)}<NativeSelect.Option value={a.name}>the app {a.name}</NativeSelect.Option>{/each}
+                </NativeSelect.Root>
+                <p class="text-xs text-muted-foreground">
+                  Each result in your inbox gets a button that opens this app, on the computer and on your phone: the app where you act on what the agent said (a planner for a calendar agent).
+                </p>
+              </div>
+            {/if}
           {/if}
         {/if}
       {:else if loaded && !apps.length}

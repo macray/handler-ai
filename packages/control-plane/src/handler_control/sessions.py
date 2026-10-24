@@ -12,11 +12,14 @@ stops the agent or its turn.
     Attachment     one attached client (a WebSocket, or in-process: the remote connector),
                    with its own bounded queue so a slow client cannot hold up the agent
 
-A session may be started with a request (sent by the daemon as its first turn). A run of an
-agent with an interface (D.18) is started with an input instead, and is unattended: its
+A session may be started with a request (sent by the daemon as its first turn), or, for an agent
+with an interface (D.18), with an input (its form filled): a brief's session then goes on as a
+chat; a job's run is unattended: its
 permission requests are answered by its interface's policy, its turn is cancelled after its
 timeout, no client may prompt it, and its result is read from its final message (one more turn
-when it is missing or invalid); then it stops, its answer (the agent's last message) kept.
+when it is missing or invalid); then it stops, its answer (the agent's last message) kept. Runs
+of one agent take turns (D.18): a run waits, in order, while another run of its agent goes on, at
+most `run_wait_timeout` (30 min); runs of other agents go on meanwhile.
 
 Storage, one folder per session under <state>/sessions/<id>/ (F.2):
     session.json    the record
@@ -36,24 +39,32 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from starlette.websockets import WebSocket
 
 from handler_contracts import (
+    RUN_TIMEOUT_SEC,
     AcpCloseCode,
     AgentInterface,
+    LlmUsage,
+    Mount,
+    NoNetwork,
+    SandboxExit,
     Session,
+    SessionAppDraft,
     SessionErrorCode,
     SessionInput,
     SessionLifecycle,
     SessionOrigin,
     SessionOutput,
+    SessionSubject,
     session_acp_path,
 )
 
-from . import __version__, interfaces, launcher, session_files, skill_scan, skills
+from . import __version__, interfaces, launcher, llm, session_files, skill_scan, skills
 from .agents import AgentRecord, AgentRegistry, LiveConnection, RunsAs
+from .model_agent import ModelAgent
 from .policy import AcpPolicy, ToAgent, ToClient, instructed, is_request, is_response, parse
 from .sandbox_process import read_stderr, stop
 from .secrets import redactor
@@ -62,13 +73,70 @@ from .settings import Settings
 log = logging.getLogger("handler.sessions")
 
 Message = dict[str, Any]
+STDERR_DRAIN = 2.0  # seconds for the rest of a sandbox's stderr once it exited
+SANDBOX_EXITS = {int(code) for code in SandboxExit}  # its launcher refused or failed to start it
 START_TIMEOUT = 300.0  # initialize + session/new|load, image start included
 TITLE_LENGTH = 80  # a title taken from the first request
 CANCEL_GRACE = 30.0  # after a timeout's session/cancel, for the agent to end its turn
 QUEUE_SIZE = 10_000  # messages waiting for one client; more: it is closed as too slow (F.7)
+RUN_POLL = 0.2
+RESULT_POLL = 0.5  # a run read again until it ended (result_of)
 
 # how a session stopped (F.5), on its `lifecycle stopped` event: read by automations (I.2)
 StopHow = Literal["explicit", "idle", "exited", "error", "run_ended", "daemon_restarted", "deleted"]
+
+
+class AgentLink(Protocol):
+    """What a session talks ACP through: an agent program's sandbox (SandboxLink) or, for an
+    agent on the model alone, handlerd's own model agent (model_agent.ModelAgent, D.18)."""
+
+    async def send(self, msg: Message) -> None: ...
+
+    async def receive(self) -> Message | None:
+        """Its next message; None when it is gone."""
+        ...
+
+    async def wait(self) -> int | None:
+        """Once gone: its exit code."""
+        ...
+
+    async def stop(self) -> None: ...
+
+
+class AgentMessageTooBigError(Exception):
+    """A line of the agent's past the message limit (DEFAULT_MAX_MESSAGE_BYTES)."""
+
+
+class SandboxLink:
+    """An agent program in its sandbox: ACP as JSON lines on the sandbox process's stdio."""
+
+    def __init__(self, proc: asyncio.subprocess.Process, label: str) -> None:
+        assert proc.stdin is not None and proc.stdout is not None
+        self.proc, self.label = proc, label
+        self.stdin, self.stdout = proc.stdin, proc.stdout
+
+    async def send(self, msg: Message) -> None:
+        with contextlib.suppress(ConnectionError):
+            self.stdin.write(json.dumps(msg).encode() + b"\n")
+            await self.stdin.drain()
+
+    async def receive(self) -> Message | None:
+        while True:
+            try:
+                line = await self.stdout.readline()
+            except (ValueError, asyncio.LimitOverrunError):
+                raise AgentMessageTooBigError from None
+            if not line:
+                return None
+            if (msg := parse(line.decode(errors="replace"))) is not None:
+                return msg
+            log.warning("[%s] dropped a non-object agent message", self.label)
+
+    async def wait(self) -> int | None:
+        return await self.proc.wait()
+
+    async def stop(self) -> None:
+        await stop(self.proc)
 
 
 def with_session_id(msg: Message, old: str | None, new: str | None) -> Message:
@@ -97,11 +165,14 @@ def error(req_id: Any, code: int, message: str) -> Message:
 class SessionRecord:
     id: str
     agent_id: str
-    harness: str  # which of its agent's models it was started with: the harness, on the
-    # account or provider below, with `model`
+    harness: str | None  # the model it was started with (its agent's or one picked for it): the
+    # harness (None: the model alone, D.18), on the account or provider below, with `model`
     scope: str
     created_at: datetime
     last_activity_at: datetime
+    # started with its agent's model, not one picked for it alone (D.19): when the agent's
+    # changes, it resumes with the agent's new one on the same harness and access
+    agents_model: bool
     account: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -113,13 +184,19 @@ class SessionRecord:
     state: SessionLifecycle = "starting"
     can_resume: bool = False
     error: str | None = None
+    missing_image: str | None = None  # its last start refused: the build making what it needs
     harness_version: str | None = None
     origin: SessionOrigin = "ui"
+    app: str | None = None  # origin "app": the app that started it (H.11)
+    waiting_for: str | None = None  # a run waiting: the run of its agent it waits for (D.18)
     last_stop_reason: str | None = None
     answer: str | None = None  # a run's: the agent's last message, kept when it ended
-    interface: dict[str, Any] | None = None  # a run (D.18): its agent's interface when it started
-    input: dict[str, Any] | None = None  # a run: SessionInput, the subject's digest set
+    interface: dict[str, Any] | None = None  # a run (D.18): its job's interface when it started
+    input: dict[str, Any] | None = None  # a run, a brief's session: SessionInput
+    subject: dict[str, Any] | None = None  # a run: SessionSubject, the skill it works on
     output: dict[str, Any] | None = None  # a run: SessionOutput, once its turn ended
+    # its folder is a draft of an app's code (H.15), not used yet: SessionAppDraft
+    app_draft: dict[str, Any] | None = None
     # its agent's instructions, until they go with the first prompt a client sends (F.3)
     instructions: str | None = None
 
@@ -277,7 +354,7 @@ class LiveSession:
         self.agent = agent
         self.runs = runs  # the agent's model it runs with
         self.log = store.event_log(record.id)
-        self.proc: asyncio.subprocess.Process | None = None
+        self.link: AgentLink | None = None
         self.policy: AcpPolicy | None = None
         self.init_result: Message = {}
         self.modes: Any = None
@@ -297,6 +374,8 @@ class LiveSession:
         self.translate = False  # the agent's session id is not the clients': translated (F.6)
         self.idle: asyncio.TimerHandle | None = None
         self.tasks: list[asyncio.Task[None]] = []
+        self.stderr: asyncio.Task[None] | None = None  # its sandbox's logs, read
+        self.launcher_said: str | None = None  # the last line of its sandbox's launcher's own
 
     @property
     def busy(self) -> bool:
@@ -310,44 +389,18 @@ class LiveSession:
         state_dir.mkdir(parents=True, exist_ok=True)
         self.log.redact = self.store.redactor(self.agent, self.runs)
         subject = None
-        if rec.input is not None and (given := SessionInput.model_validate(rec.input)).subject:
+        if rec.subject is not None:
             try:
-                subject = interfaces.subject_mount(settings.skills_dir, given.subject)
+                subject = interfaces.subject_mount(
+                    settings.skills_dir, SessionSubject.model_validate(rec.subject)
+                )
             except skills.SkillError as e:
                 raise SessionError(str(e)) from None
-        started = await launcher.start(
-            settings,
-            self.agent,
-            self.runs,
-            rec.id,
-            str(state_dir),
-            folder=rec.scope,
-            subject=subject,
-        )
-        session_files.record_mounts(self.store.mounts(rec.id), started.spec, now())
-        rec.harness_version = await launcher.harness_version(rec.harness)
-        self.proc = started.process  # ty: ignore[invalid-assignment]
-        self.policy = AcpPolicy(
-            scope=rec.scope,
-            network=started.spec.network,
-            session_defaults=started.launch.session_defaults,
-            on_event=lambda text: log.info("[%s] policy: %s", rec.id, text),
-        )
-        self.agent.connections[rec.id] = LiveConnection(
-            id=rec.id,
-            sandbox=started.spec.name,
-            since=now(),
-            process=self.proc,
-            egress_base=started.egress_base,
-        )
-        assert self.proc is not None
-        registry = self.store.registry
-        self.tasks = [
-            asyncio.create_task(self.agent_pump()),
-            asyncio.create_task(
-                read_stderr(self.proc, rec.id, lambda e: registry.add_event(self.agent, rec.id, e))
-            ),
-        ]
+        if self.agent.model_alone:
+            self.start_model_agent(state_dir)
+        else:
+            await self.start_sandbox(state_dir, subject)
+        self.tasks.append(asyncio.create_task(self.agent_pump()))
         caps = {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}
         info = {"name": "handlerd", "version": __version__}
         self.init_result = await self.request(
@@ -373,10 +426,69 @@ class LiveSession:
             else:
                 rec.acp_session_id = result["sessionId"]
         self.modes, self.config_options = result.get("modes"), result.get("configOptions")
-        rec.state, rec.error = "running", None
+        rec.state, rec.error, rec.missing_image = "running", None, None
         self.log.append("lifecycle", event="started")
         self.store.save(rec)
         self.schedule_idle()
+
+    async def start_sandbox(self, state_dir: Path, subject: Mount | None) -> None:
+        """An agent program in its sandbox (A, B)."""
+        rec, settings = self.record, self.store.settings
+        started = await launcher.start(
+            settings,
+            self.agent,
+            self.runs,
+            rec.id,
+            str(state_dir),
+            folder=rec.scope,
+            subject=subject,
+        )
+        session_files.record_mounts(self.store.mounts(rec.id), started.spec, now())
+        assert rec.harness is not None  # an agent program's
+        rec.harness_version = await launcher.harness_version(rec.harness)
+        process = started.process
+        self.link = SandboxLink(process, rec.id)  # ty: ignore[invalid-argument-type]
+        self.policy = AcpPolicy(
+            scope=rec.scope,
+            network=started.spec.network,
+            session_defaults=started.launch.session_defaults,
+            on_event=lambda text: log.info("[%s] policy: %s", rec.id, text),
+        )
+        self.agent.connections[rec.id] = LiveConnection(
+            id=rec.id,
+            sandbox=started.spec.name,
+            since=now(),
+            process=process,
+            egress_base=started.egress_base,
+        )
+        registry = self.store.registry
+        on_egress = lambda e: registry.add_event(self.agent, rec.id, e)  # noqa: E731
+        said = lambda line: setattr(self, "launcher_said", line)  # noqa: E731
+        self.stderr = asyncio.create_task(read_stderr(process, rec.id, on_egress, said))  # ty: ignore[invalid-argument-type]
+        self.tasks = [self.stderr]
+
+    def start_model_agent(self, state_dir: Path) -> None:
+        """An agent on the model alone (D.18): handlerd's model agent, no sandbox, no tools."""
+        rec = self.record
+        assert self.runs.provider is not None  # the model alone runs on a provider
+
+        def on_call(usage: LlmUsage, ms: int) -> None:
+            tokens = {"inTokens": usage.in_tokens, "outTokens": usage.out_tokens}
+            self.log.append("lifecycle", event="model call", model=self.runs.model, ms=ms, **tokens)
+
+        self.link = ModelAgent(
+            self.store.settings,
+            provider=self.runs.provider,
+            model=self.runs.model,
+            knowledge_folders=self.agent.knowledge,
+            folder=state_dir,
+            on_call=on_call,
+        )
+        self.policy = AcpPolicy(
+            scope=rec.scope,
+            network=NoNetwork(mode="none"),
+            on_event=lambda text: log.info("[%s] policy: %s", rec.id, text),
+        )
 
     async def request(self, method: str, params: Message, *, replay: bool = True) -> Message:
         """A request of the daemon itself, through the policy (P1, P2, P7 apply)."""
@@ -409,30 +521,25 @@ class LiveSession:
             await self.route(action.msg)
 
     async def to_agent(self, msg: Message) -> None:
-        assert self.proc is not None and self.proc.stdin is not None
+        assert self.link is not None
         if self.translate and self.record.agent_session_id is not None:
             msg = with_session_id(msg, self.record.acp_session_id, self.record.agent_session_id)
         async with self.agent_lock:
-            with contextlib.suppress(ConnectionError):
-                self.proc.stdin.write(json.dumps(msg).encode() + b"\n")
-                await self.proc.stdin.drain()
+            await self.link.send(msg)
 
     async def agent_pump(self) -> None:
-        assert self.proc is not None and self.proc.stdout is not None and self.policy is not None
+        assert self.link is not None and self.policy is not None
         try:
             while True:
                 try:
-                    line = await self.proc.stdout.readline()
-                except (ValueError, asyncio.LimitOverrunError):
+                    msg = await self.link.receive()
+                except AgentMessageTooBigError:
                     log.warning("[%s] agent message too big: stopping", self.record.id)
                     self.stop_reason, self.stop_how = "agent message too big", "error"
+                    await self.link.stop()
                     break
-                if not line:
-                    break
-                msg = parse(line.decode(errors="replace"))
                 if msg is None:
-                    log.warning("[%s] dropped a non-object agent message", self.record.id)
-                    continue
+                    break
                 if self.translate:  # its one session, whatever id the agent gave it
                     msg = with_session_id(msg, None, self.record.acp_session_id)
                 for action in self.policy.from_agent(msg):
@@ -531,15 +638,19 @@ class LiveSession:
     async def ended(self) -> None:
         """The agent is gone (exit, stop, idle timeout): the session becomes `stopped`."""
         rec = self.record
-        code = await self.proc.wait() if self.proc else None
+        code = await self.link.wait() if self.link else None
+        exited = f"agent exited ({code})"
+        if code in SANDBOX_EXITS and self.stderr is not None:  # its sandbox did not start
+            await asyncio.wait([self.stderr], timeout=STDERR_DRAIN)  # its launcher's last words
+            exited = self.launcher_said or exited
         for task in self.tasks:
             if task is not asyncio.current_task():
                 task.cancel()
         self.cancel_idle()
         for future in self.own.values():
             if not future.done():
-                future.set_exception(SessionError(f"agent exited ({code})"))
-        reason = self.stop_reason or f"agent exited ({code})"
+                future.set_exception(SessionError(exited))
+        reason = self.stop_reason or exited
         if self.busy:
             self.log.append("turn", phase="end", stopReason="stopped")
             self.prompt_id = self.turn_started_at = None
@@ -560,8 +671,8 @@ class LiveSession:
 
     async def stop(self, reason: str, how: StopHow) -> None:
         self.stop_reason, self.stop_how = reason, how
-        if self.proc is not None:
-            await stop(self.proc)
+        if self.link is not None:
+            await self.link.stop()
 
     # ── client side (F.4) ───────────────────────────────────────────────
 
@@ -753,6 +864,7 @@ class LiveSession:
             "turnStartedAt": self.turn_started_at.isoformat() if self.turn_started_at else None,
             "pendingPermissions": len(self.pending),
             "attached": len(self.clients),
+            "lastStopReason": self.record.last_stop_reason,
         }
 
     def broadcast(self, msg: Message, but: Attachment | None = None) -> None:
@@ -784,6 +896,11 @@ class LiveSession:
             self.idle = None
 
 
+def wait_label(seconds: float) -> str:
+    """ "30 min", "45 s"."""
+    return f"{seconds / 60:.0f} min" if seconds >= 60 else f"{seconds:.0f} s"
+
+
 def title_of(prompt: str) -> str:
     line = next((x.strip() for x in prompt.splitlines() if x.strip()), "")
     return line if len(line) <= TITLE_LENGTH else line[: TITLE_LENGTH - 1].rstrip() + "…"
@@ -813,6 +930,10 @@ class SessionStore:
         self.live: dict[str, LiveSession] = {}
         self.starting: dict[str, asyncio.Task[LiveSession]] = {}
         self.background: set[asyncio.Task[Any]] = set()
+        # runs take turns per agent (D.18): agent id → the run going on, the runs waiting
+        self.running_runs: dict[str, str] = {}
+        self.run_queues: dict[str, list[str]] = {}
+        self.waits: dict[str, asyncio.Task[Any]] = {}  # a waiting run's id → its task
         self.listeners: list[Callable[[], None]] = []  # told when sessions stop or are shared
         # told with its id when a session's `lifecycle stopped` event is written (automations)
         self.stop_listeners: list[Callable[[str], None]] = []
@@ -847,6 +968,7 @@ class SessionStore:
                     "lifecycle", event="stopped", detail="daemon restarted", how="daemon_restarted"
                 )
                 rec.state = "stopped" if rec.acp_session_id else "failed"
+                rec.waiting_for = None
                 self.save(rec)
 
     def save(self, rec: SessionRecord) -> None:
@@ -859,12 +981,16 @@ class SessionStore:
     def redactor(self, agent: AgentRecord, runs: RunsAs) -> Any:
         """Invariant 4: its account's or provider's and bindings' secret values never land in the
         event log."""
+        if agent.model_alone:
+            assert runs.provider is not None  # the model alone runs on a provider
+            return redactor(llm.secret_values(self.settings, runs.provider))
         return redactor(launcher.secret_values(self.settings, agent, runs))
 
-    def spawn(self, coro: Any) -> None:
+    def spawn(self, coro: Any) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(coro)
         self.background.add(task)
         task.add_done_callback(self.background.discard)
+        return task
 
     # ── API ─────────────────────────────────────────────────────────────
 
@@ -889,12 +1015,18 @@ class SessionStore:
             remote=bool(live and live.remote),
             can_resume=rec.can_resume,
             error=rec.error,
+            missing_image=rec.missing_image,
             harness_version=rec.harness_version,
             origin=rec.origin,
+            app=rec.app,
+            waiting_for=rec.waiting_for,
             last_stop_reason=rec.last_stop_reason,
             answer=rec.answer,
             input=SessionInput.model_validate(rec.input) if rec.input else None,
+            unattended=rec.interface is not None,
+            subject=SessionSubject.model_validate(rec.subject) if rec.subject else None,
             output=SessionOutput.model_validate(rec.output) if rec.output else None,
+            app_draft=SessionAppDraft.model_validate(rec.app_draft) if rec.app_draft else None,
             created_at=rec.created_at,
             last_activity_at=rec.last_activity_at,
             acp_url=self.settings.base_url.replace("http://", "ws://") + session_acp_path(rec.id),
@@ -918,6 +1050,21 @@ class SessionStore:
         """A folderless agent's session's own folder (D.18)."""
         return self.folder(session_id) / "work"
 
+    async def result_of(self, session_id: str) -> tuple[dict[str, Any] | None, str | None]:
+        """A run's valid result (D.18) once it ended, else why it has none."""
+        while True:
+            rec = self.records.get(session_id)
+            if rec is None:
+                return None, "its run was deleted"
+            ended = session_id not in self.live and session_id not in self.starting
+            if ended and rec.state in ("stopped", "failed") and rec.waiting_for is None:
+                break
+            await asyncio.sleep(RESULT_POLL)
+        output = SessionOutput.model_validate(rec.output) if rec.output else None
+        if output is None or not output.valid or not isinstance(output.value, dict):
+            return None, (output.error if output else None) or rec.error or "no valid result"
+        return output.value, None
+
     def create(
         self,
         agent: AgentRecord,
@@ -927,7 +1074,11 @@ class SessionStore:
         *,
         origin: SessionOrigin = "ui",
         run: SessionInput | None = None,
+        subject: SessionSubject | None = None,
         from_skill: str | None = None,
+        app_draft: tuple[SessionAppDraft, Path | None] | None = None,
+        app: str | None = None,
+        instructions: str | None = None,
     ) -> SessionRecord:
         """A new session, started in the background (F.3). With a `prompt` (the request), the
         daemon sends it once the agent runs, after the agent's instructions if it has any (a
@@ -936,8 +1087,14 @@ class SessionStore:
         request's first line is the title until the agent gives one. `runs`: the agent's model it
         runs with (one of its own).
 
-        `run`: an agent with an interface's checked input (D.18): an unattended run. A
-        folderless agent's session works in its own folder, a copy of `from_skill` if given."""
+        `run`: an agent with an interface's checked input (D.18), working on `subject` (the skill
+        its skill field names) when given: a job's unattended run, or a brief's session. A
+        folderless agent's session works in its own folder, a copy of `from_skill` if given, or a
+        draft of an app's code (`app_draft`: the draft, and the code it starts as a copy of; none
+        for a new app, H.15).
+        `app`: the app that started it (origin "app", H.11).
+        `instructions`: for a check's run only (D.20, an improvement's attempt), instead of the
+        agent's: the agent is not changed."""
         sid = "s_" + pysecrets.token_hex(8)
         scope = agent.scope
         if scope is None:
@@ -946,14 +1103,20 @@ class SessionStore:
             work.parent.chmod(0o700)
             if from_skill is not None:
                 skills.copy(self.settings.skills_dir / from_skill, work)
+            if app_draft is not None and app_draft[1] is not None:
+                shutil.copytree(app_draft[1], work, symlinks=True, dirs_exist_ok=True)
             scope = str(work)
-        interface = agent.interface if run is not None else None
+        assert instructions is None or origin == "check"
+        told = agent.instructions if instructions is None else instructions
+        form = agent.interface if run is not None else None
+        interface = form if form is not None and form.result is not None else None  # a job's run
         title = title_of(prompt) if prompt else None
-        timeout = None
-        if interface is not None and run is not None:
-            timeout = interface.timeout_sec
-            subject = run.subject.skill if run.subject else None
-            title = f"{agent.name or runs.harness}: {subject}" if subject else agent.name
+        if form is not None and run is not None:
+            title = f"{agent.name or runs.harness}: {subject.skill}" if subject else agent.name
+            asked = [v for v in run.fields.values() if isinstance(v, str) and v.strip()]
+            if interface is None and not subject and asked:  # a brief's: its first text
+                title = title_of(asked[0])
+        timeout = (interface.timeout_sec or RUN_TIMEOUT_SEC) if interface is not None else None
         rec = SessionRecord(
             id=sid,
             agent_id=agent.id,
@@ -961,14 +1124,18 @@ class SessionStore:
             account=runs.account,
             provider=runs.provider,
             model=runs.model,
+            agents_model=runs == agent.model,
             scope=scope,
             created_at=now(),
             last_activity_at=now(),
             acp_session_id=acp_session_id,
             title=title,
             origin=origin,
+            app=app,
             interface=interface.model_dump(mode="json", by_alias=True) if interface else None,
             input=run.model_dump(mode="json", by_alias=True) if run is not None else None,
+            subject=subject.model_dump(mode="json", by_alias=True) if subject else None,
+            app_draft=app_draft[0].model_dump(mode="json", by_alias=True) if app_draft else None,
             # with no request to go with, they go with the first prompt (a resumed one has had
             # its first turn)
             instructions=None if prompt or run or acp_session_id else agent.instructions,
@@ -976,9 +1143,9 @@ class SessionStore:
         self.records[rec.id] = rec
         self.save(rec)
         text = None
-        if interface is not None and run is not None:
-            notes = self.subject_notes(run)
-            text = interfaces.request(agent.instructions, interface, run, notes)
+        if form is not None and run is not None:
+            notes = self.subject_notes(subject)
+            text = interfaces.request(told, form, run, subject, notes)
         elif prompt:
             text = f"{agent.instructions}\n\n{prompt}" if agent.instructions else prompt
         # one block: every adapter reads it (some would drop a second one)
@@ -986,14 +1153,73 @@ class SessionStore:
         self.spawn(self._start_quietly(rec.id, blocks, timeout))
         return rec
 
-    def subject_notes(self, run: SessionInput) -> str | None:
+    def subject_notes(self, subject: SessionSubject | None) -> str | None:
         """What handlerd tells a run about its subject besides where it is: a skill's scan
         (D.17)."""
-        if run.subject is None:
+        if subject is None:
             return None
-        return skill_scan.notes(skill_scan.scan(self.settings.skills_dir / run.subject.skill))
+        return skill_scan.notes(skill_scan.scan(self.settings.skills_dir / subject.skill))
 
     async def _start_quietly(
+        self, session_id: str, prompt: Sequence[Message] = (), timeout: float | None = None
+    ) -> None:
+        rec = self.records[session_id]
+        if rec.interface is None:
+            await self._go(session_id, prompt, timeout)
+            return
+        if not await self._take_turn(rec):
+            return
+        try:
+            await self._go(session_id, prompt, timeout)
+        finally:
+            self.running_runs.pop(rec.agent_id, None)
+
+    async def _take_turn(self, rec: SessionRecord) -> bool:
+        """A run's turn among its agent's runs (D.18): False when it did not come (it waited
+        too long, or was stopped meanwhile)."""
+        agent_id, loop = rec.agent_id, asyncio.get_running_loop()
+        queue = self.run_queues.setdefault(agent_id, [])
+        queue.append(rec.id)
+        task = asyncio.current_task()
+        assert task is not None
+        self.waits[rec.id] = task
+        limit = self.settings.run_wait_timeout
+        deadline = loop.time() + limit
+        try:
+            while (ahead := self.running_runs.get(agent_id)) is not None or queue[0] != rec.id:
+                ahead = ahead or queue[0]
+                if rec.waiting_for != ahead:
+                    rec.waiting_for = ahead
+                    self.save(rec)
+                    self.changed()
+                if loop.time() > deadline:
+                    behind = self.records.get(ahead)
+                    what = behind.title if behind and behind.title else ahead
+                    self.not_started(
+                        rec, f"waited {wait_label(limit)}: its agent was still running {what}"
+                    )
+                    return False
+                await asyncio.sleep(RUN_POLL)
+            self.running_runs[agent_id] = rec.id
+        except asyncio.CancelledError:  # stopped while waiting (stop): not_started is done
+            return False
+        finally:
+            queue.remove(rec.id)
+            self.waits.pop(rec.id, None)
+        if rec.waiting_for is not None:
+            rec.waiting_for = None
+            self.save(rec)
+            self.changed()
+        return True
+
+    def not_started(self, rec: SessionRecord, reason: str) -> None:
+        """A run that never started: failed, with why (its `lifecycle stopped` event told)."""
+        rec.waiting_for, rec.state, rec.error = None, "failed", reason
+        self.save(rec)
+        self.event_log(rec.id).append("lifecycle", event="stopped", detail=reason, how="error")
+        self.changed()
+
+    async def _go(
         self, session_id: str, prompt: Sequence[Message] = (), timeout: float | None = None
     ) -> None:
         with contextlib.suppress(SessionError):
@@ -1011,6 +1237,7 @@ class SessionStore:
         rec = live.record
         assert rec.interface is not None
         schema = AgentInterface.model_validate(rec.interface).result
+        assert schema is not None
         output: SessionOutput | None = None
         for attempt in range(2):
             if rec.last_stop_reason != "end_turn":
@@ -1027,11 +1254,17 @@ class SessionStore:
         self.save(rec)
 
     async def cancel(self, session_id: str) -> None:
-        if (live := self.live.get(session_id)) is not None:
+        """Its turn cancelled; a run waiting for its turn (D.18) does not start."""
+        if session_id in self.waits:
+            await self.stop(session_id, "cancelled before its turn", "explicit")
+        elif (live := self.live.get(session_id)) is not None:
             await live.cancel_turn()
 
     async def ensure_running(self, session_id: str) -> LiveSession:
-        """The live session, started if needed — at most one start at a time (F.6.1)."""
+        """The live session, started if needed — at most one start at a time (F.6.1). A run
+        waiting for its turn (D.18) is not started before it comes."""
+        if session_id in self.waits:
+            raise SessionError("this run waits for its agent's run in progress")
         if (live := self.live.get(session_id)) is not None and live.record.state == "running":
             return live
         task = self.starting.get(session_id)
@@ -1048,8 +1281,10 @@ class SessionStore:
         if agent is None:
             raise SessionError("its agent was deleted")
         # its history belongs to the harness, login and folder it was started with
-        # (its project's context is checked when it starts, launcher.prepare)
-        runs = agent.resumes_as(rec.harness, rec.account, rec.provider, rec.model)
+        # (its project's area is checked when it starts, launcher.prepare)
+        runs = agent.resumes_as(
+            rec.harness, rec.account, rec.provider, rec.model, agents_model=rec.agents_model
+        )
         if (scope := agent.scope or str(self.work_folder(rec.id))) != rec.scope:
             raise SessionError(
                 f"the agent now works in {scope}; this conversation was in {rec.scope}: "
@@ -1072,7 +1307,12 @@ class SessionStore:
             await live.start()
         except (SessionError, launcher.AgentStartError, OSError) as e:
             log.warning("session %s: start failed: %s", rec.id, e)
-            rec.state, rec.error = ("failed" if first else "stopped"), str(e)
+            # an image not built: nothing was launched, it starts once the image is (F.1)
+            missing = e.target if isinstance(e, launcher.ImageMissingError) else None
+            rec.state = "failed" if first and missing is None else "stopped"
+            rec.error, rec.missing_image = str(e), missing
+            if missing is not None:  # when, for a build of it to be known as later (F.1)
+                rec.last_activity_at = now()
             live.stop_reason = str(e)
             self.save(rec)
             await live.stop(str(e), "error")
@@ -1098,6 +1338,10 @@ class SessionStore:
         self.changed()
 
     async def stop(self, session_id: str, reason: str, how: StopHow) -> None:
+        if (wait := self.waits.pop(session_id, None)) is not None:  # a run waiting for its turn
+            wait.cancel()
+            self.not_started(self.records[session_id], reason)
+            return
         if (task := self.starting.get(session_id)) is not None:
             with contextlib.suppress(SessionError):
                 await asyncio.shield(task)

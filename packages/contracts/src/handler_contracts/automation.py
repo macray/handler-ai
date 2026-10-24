@@ -1,7 +1,7 @@
 """Contract I — Automations (`handler.automation/v1`): *when this happens, run that*. When a session
 stops or a schedule comes, handlerd runs the automation's run: the user's script in a sandbox (which
 may call models through handlerd's `llm` service, and whose files handlerd appends to knowledge
-notes), an agent with an interface (its result goes to the inbox), or a mini app's route.
+notes), an agent with an interface (its result goes to the inbox), or an app's route.
 
 `Automation` is hand-written TOML (`<config>/automations/<name>/automation.toml`): unknown keys
 are errors. The rest is exchanged: the Control API's views and requests (I.9), and the `llm/v1`
@@ -13,8 +13,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AfterValidator, AwareDatetime, Field, model_validator
 
-from .common import Document, StrictDocument
-from .miniapp import AppName
+from .common import AppName, Document, StrictDocument
 
 AUTOMATION_API_VERSION = "handler.automation/v1"
 AUTOMATION_FILE = "automation.toml"
@@ -31,6 +30,7 @@ DEFAULT_TIMEOUT_SEC = 600  # a script's (I.3)
 MAX_LLM_INPUT = 256 * 1024  # system + prompt + input, in bytes (I.5)
 MAX_LLM_SCHEMA = 64 * 1024
 MAX_APPEND = 256 * 1024  # one `from` file (I.6)
+MAX_AUDIO = 1024 * 1024  # what transcribe/v1 takes, in bytes before base64 (I.11): a minute or more
 
 
 def _output_path(p: str) -> str:
@@ -91,19 +91,14 @@ class AutomationAppend(StrictDocument):
     to: Annotated[str, Field(min_length=1)]  # a markdown note, relative to the knowledge root
 
 
-class AutomationSubject(StrictDocument):
-    skill: Annotated[str, Field(min_length=1)]  # a skill of the library (D.17)
-
-
 class AutomationAgentInput(StrictDocument):
     """What the agent's run is started with (D.18 `SessionInput`)."""
 
-    fields: dict[str, Any] = {}
-    subject: AutomationSubject | None = None
+    fields: dict[str, Any] = {}  # a skill field's value: a skill of the library (D.17)
 
 
 class AutomationAgentRun(StrictDocument):
-    """`run = { agent, project?, input? }`: a run of an agent with an interface (I.3, D.18)."""
+    """`run = { agent, project?, input? }`: a run of a job, an agent with a result (I.3, D.18)."""
 
     agent: Annotated[str, Field(min_length=1)]  # its name
     project: str | None = None  # its project's name; absent: an agent of no project
@@ -111,7 +106,7 @@ class AutomationAgentRun(StrictDocument):
 
 
 class AutomationAppCall(StrictDocument):
-    """`run = { app, call }`: a call to a mini app's route, as the owner (I.3, H.9)."""
+    """`run = { app, call }`: a call to an app's route, as the owner (I.3, H.9)."""
 
     app: AppName
     call: Annotated[str, Field(pattern=r"^POST /api/[A-Za-z0-9/_.-]*$")]
@@ -129,6 +124,7 @@ class Automation(StrictDocument):
     timeout_sec: Annotated[int, Field(ge=1, le=3600)] | None = None  # a script's, default 600
     services: AutomationServices | None = None  # a script's
     append: list[AutomationAppend] = []  # a script's
+    app: AppName | None = None  # an agent run's: the app its inbox messages open (I.9)
 
     @model_validator(mode="after")
     def _fits(self) -> Self:
@@ -142,6 +138,8 @@ class Automation(StrictDocument):
             ):
                 if value is not None:
                     raise ValueError(f"'{key}' goes with a script run")
+        if self.app is not None and self.agent_run is None:
+            raise ValueError("'app' goes with an agent run")
         return self
 
     @property
@@ -212,6 +210,11 @@ class AutomationView(Document):
     behind: AutomationName | None = None  # what runs now, when its runs wait (one at a time)
     capped: bool = False  # the daily cap is reached
     last_run: AutomationRun | None = None
+    # what its names are bound to (I.1), by id: the agent its run runs (None: none found), the
+    # agents and projects `only` names
+    agent_id: str | None = None
+    only_agents: list[str] = []
+    only_projects: list[str] = []
 
 
 class AutomationExample(Document):
@@ -228,6 +231,7 @@ class CreateAutomationRequest(Document):
     name: AutomationName
     from_: Annotated[AutomationName | None, Field(alias="from")] = None  # a shipped example
     definition: Automation | None = None
+    agent_id: str | None = None  # its agent run's agent: its names written, bound by id (I.1)
     enable: bool = False
 
     @model_validator(mode="after")
@@ -244,6 +248,7 @@ class AutomationDefinitionRequest(Document):
     automation.toml (`PUT /v1/automations/{name}`: the web UI's form, I.1)."""
 
     definition: Automation
+    agent_id: str | None = None  # its agent run's agent: its names written, bound by id (I.1)
 
 
 class AutomationCheck(Document):
@@ -282,4 +287,23 @@ class LlmResponse(StrictDocument):
     text: str | None = None  # without one: the answer
     error: str | None = None  # why it is not valid (its JSON, after the repair turn)
     usage: LlmUsage
+    ms: int
+
+
+AudioFormat = Literal["webm", "ogg", "mp4", "wav", "mp3"]
+
+
+class TranscribeRequest(StrictDocument):
+    """`transcribe_audio`'s input (I.11): speech, written down by a provider's speech model."""
+
+    model: LlmModel  # "provider/model": a speech model (`speech = true`)
+    audio: Annotated[str, Field(min_length=1)]  # base64, at most MAX_AUDIO bytes once decoded
+    format: AudioFormat  # its container (Opus in webm or ogg from a browser)
+    language: Annotated[str, Field(pattern=r"^[a-z]{2}$")] | None = None  # a hint: "fr"
+
+
+class TranscribeResponse(StrictDocument):
+    """`transcribe_audio`'s output (I.11)."""
+
+    text: str  # what was heard; empty when nothing was
     ms: int

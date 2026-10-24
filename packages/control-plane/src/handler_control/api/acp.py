@@ -14,8 +14,8 @@ from handler_contracts import (
 
 from .. import (
     auth,
-    checks,
     launcher,
+    save_rules,
 )
 from ..agents import (
     AgentRecord,
@@ -39,8 +39,8 @@ def add_acp_endpoint(app: FastAPI, ctx: Context) -> None:
         record = ctx.get_agent(agent_id)
         try:
             runs = connection_model(ctx, record, ws)
-        except checks.CheckError as e:
-            status = 409 if isinstance(e, checks.ConflictError) else 400
+        except save_rules.CheckError as e:
+            status = 409 if isinstance(e, save_rules.ConflictError) else 400
             await ws.send_denial_response(Response(f"{e.title}: {e}", status_code=status))
             return
         await ws.accept(subprotocol=ACP_SUBPROTOCOL if ACP_SUBPROTOCOL in protocols else None)
@@ -90,7 +90,7 @@ def add_acp_endpoint(app: FastAPI, ctx: Context) -> None:
 
 def connection_model(ctx: Context, record: AgentRecord, ws: WebSocket) -> RunsAs:
     """The model a plain connection runs with (C.1): the one its URL names (`harness`, `account`
-    or `provider`, `model`: one of the agent's or any other, D.19), else the agent's first."""
+    or `provider`, `model`: the agent's or any other, D.19), else the agent's."""
     fields = ("harness", "account", "provider", "model")
     query = {k: v for k in fields if (v := ws.query_params.get(k))}
     if not query:
@@ -98,8 +98,8 @@ def connection_model(ctx: Context, record: AgentRecord, ws: WebSocket) -> RunsAs
     try:
         given = ModelAccess.model_validate(query)
     except ValidationError as e:
-        raise checks.CheckError("model access unusable", str(e)) from None
-    return checks.session_model(ctx.settings, record, given)
+        raise save_rules.CheckError("model access unusable", str(e)) from None
+    return save_rules.session_model(ctx.settings, record, given)
 
 
 def websocket_denial(

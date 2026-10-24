@@ -6,7 +6,7 @@
     handler-gateway remove-host ID  the host and its devices
 
 State: $HANDLER_GATEWAY_STATE (default ~/.local/state/handler-gateway/state.json), and next to it
-state.queue.json (what devices queued for when their host is back).
+state.queue/ (what devices queued for when their host is back, one file per envelope).
 Client: --client or $HANDLER_GATEWAY_CLIENT_DIR, the built remote client served at / (optional).
 Serve it over HTTPS (reverse proxy, `tailscale serve`): browsers only give the client its
 cryptography (WebCrypto) on https:// pages or localhost.
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     client = Path(args.client) if args.client else None
-    queue = Queue(state_path().with_name(state_path().stem + ".queue.json"))
+    queue = Queue(state_path().with_name(state_path().stem + ".queue"))
     app = create_app(State(registry, Limits(), queue=queue), client)
     uvicorn.run(
         app,

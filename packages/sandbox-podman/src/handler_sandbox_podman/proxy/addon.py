@@ -182,9 +182,12 @@ class Egress:
             _refuse(flow, f"handler: {_target(flow)} is not allowed\n")
 
     def requestheaders(self, flow: Any) -> None:
+        """A plain http:// request is judged here: its target is its host and port (mitmproxy has
+        already made its first line relative in regular mode). One inside a TLS tunnel was judged
+        with the tunnel (`http_connect`)."""
         target = _target(flow)
-        if flow.request.first_line_format == "absolute" and not self.judge(target):
-            _refuse(flow, f"handler: {target} is not allowed\n")  # a forwarded http:// request
+        if not flow.client_conn.tls and not self.judge(target):
+            _refuse(flow, f"handler: {target} is not allowed\n")
         elif self.secret_host(target):
             flow.request.headers.pop("accept-encoding", None)  # bodies the masker can read
 

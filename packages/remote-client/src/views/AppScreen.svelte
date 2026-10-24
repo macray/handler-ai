@@ -1,5 +1,5 @@
 <script lang="ts">
-  // One mini app, full screen: its page in the sandboxed frame (public/appframe.html), its
+  // One app, full screen: its page in the sandboxed frame (public/appframe.html), its
   // backend calls carried to handler by this client.
   import { carry, type FrameFetch } from "../lib/apps";
   import { app } from "../lib/app.svelte";

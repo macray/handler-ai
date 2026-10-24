@@ -1,0 +1,22 @@
+# An app (contract H, handler.app/v1). Change `name` (a-z, 0-9, '-': it becomes the app's
+# address, http://<name>.localhost:7430/) and `description`; raise `version` before each deploy.
+apiVersion = "handler.app/v1"
+name = "notes"
+version = "0.1.0"
+description = "Short notes"
+
+# [server]
+# entry = "server/main.ts"     # default; its directory is installed whole
+# [ui]
+# dir = "ui/dist"              # default; built by `bun run build` in ui/
+# [needs]
+# egress = ["api.example.com:443"]   # hosts the backend may reach; none by default
+# [needs.files.tasks]                # a folder of the person's, chosen when they install the app
+# description = "Where your tasks are kept"
+# mode = "rw"                        # server/handler.ts: files().tasks
+# [needs.agents.planner]             # a job it runs, given when the person installs the app
+# description = "Tells you what to do next"
+# from = "agent"                     # its definition: agent/agent.toml, instructions.md, interface.json
+# worksIn = "tasks"                  # it works in the folder given for `tasks`
+# [resources]
+# memory = "512m"

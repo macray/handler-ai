@@ -11,7 +11,7 @@
   import { sameRun } from "../lib/access";
   import { href } from "../lib/router.svelte";
   import { saveHosts } from "../lib/projects.svelte";
-  import { saveAdHoc, sandboxStatus, specOf } from "../lib/agents";
+  import { sandboxStatus } from "../lib/agents";
   import { Button } from "$lib/components/ui/button";
   import HostList from "./HostList.svelte";
   import StatusBadge from "./StatusBadge.svelte";
@@ -22,8 +22,9 @@
     onchange,
   }: { agent: Agent; session: Pick<Session, "harness" | "account" | "provider">; onchange: (agent: Agent) => void } = $props();
 
-  // the hosts required in this session: its model's, never the agent's other models' (D.1)
-  const required = $derived((agent.models.find((m) => sameRun(m, session)) ?? agent.models[0])?.requiredHosts ?? []);
+  // the hosts required in this session: its model's when it runs with the agent's (D.1); one
+  // picked for it alone has its own allowed too (D.19)
+  const required = $derived(sameRun(agent.model, session) ? (agent.model.requiredHosts ?? []) : []);
 
   let events = $state<EgressEvent[]>([]);
   let error = $state<string | null>(null);
@@ -73,11 +74,7 @@
     }
   }
 
-  async function saveAllow(allow: string[]): Promise<Agent> {
-    if (!agent.projectId) return saveAdHoc(agent.id, { ...specOf(agent), allow });
-    await saveHosts(agent, allow);
-    return api.agent(agent.id);
-  }
+  const saveAllow = (allow: string[]): Promise<Agent> => saveHosts(agent, allow);
 
   const setEgress = (egress: "enforce" | "log-only") => apply(() => api.setEgress(agent.id, egress));
   const setHosts = (allow: string[]) => apply(() => saveAllow(allow));
@@ -90,7 +87,7 @@
 
 <section class="flex flex-col gap-4 text-sm" data-testid="network-panel">
   <div class="space-y-2">
-    <h3 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Network</h3>
+    <h3 class="section-label">Network</h3>
     <div class="flex flex-wrap gap-1.5">
       <StatusBadge status={agent.network} />
       {#if agent.egress}<StatusBadge status={agent.egress} />{/if}
@@ -130,7 +127,7 @@
       <p class="text-xs text-muted-foreground">Applies at once to the running agents.</p>
     </div>
     <div class="space-y-1.5">
-      <h3 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Hosts of this agent</h3>
+      <h3 class="section-label">Hosts of this agent</h3>
       <HostList value={agent.allow ?? []} onchange={setHosts} {saving} suggestions={unallowed} empty="None: only the hosts below." />
     </div>
     {#if required.length}
@@ -156,7 +153,7 @@
 
   {#if agent.network !== "none" && (filtered || recent.length)}
     <div class="space-y-1.5">
-      <h3 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Recent</h3>
+      <h3 class="section-label">Recent</h3>
       <ul class="space-y-0.5 font-mono text-xs">
         {#each recent as e, i (i)}
           <li class={MARK[e.decision].class} title={MARK[e.decision].title}>

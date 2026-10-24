@@ -1,9 +1,9 @@
 """Remote control in real browsers: the handler web UI pairs a phone and shares a session; the
 remote client (served by a real gateway) drives it — WebCrypto envelopes, end to end.
 
-The "phone" is a second browser context with a phone viewport, on http://127.0.0.1 (a secure
-context, like the HTTPS a real gateway needs). Skipped when podman, the image or the built apps
-are missing.
+The "phone" is a second browser context with a phone's viewport and touch screen, on
+http://127.0.0.1 (a secure context, like the HTTPS a real gateway needs). Skipped when podman, the
+image or the built apps are missing.
 """
 
 from collections.abc import Iterator
@@ -16,7 +16,7 @@ from handler_control.settings import WEB_UI
 from ..support.daemon import REPO, Daemon, start_daemon
 from ..support.remote import Gateway, start_gateway
 from .browser import PW_IMAGE, image_present
-from .test_web_ui import open_run, say
+from .test_web_ui import open_run
 
 CLIENT = REPO / "packages" / "remote-client" / "dist"
 BUILT = (CLIENT / "index.html").is_file() and (WEB_UI / "index.html").is_file()
@@ -48,10 +48,21 @@ def desk(browser: Browser, daemon: Daemon) -> Iterator[Page]:
 
 @pytest.fixture
 def phone(browser: Browser) -> Iterator[Page]:
-    context = browser.new_context(viewport={"width": 390, "height": 800}, is_mobile=True)
+    context = browser.new_context(
+        viewport={"width": 390, "height": 800}, is_mobile=True, has_touch=True
+    )
     page = context.new_page()
     yield page
     context.close()
+
+
+def say(phone: Page, text: str) -> None:
+    """On a touch screen Return starts a new line (no Shift+Enter there): Send sends."""
+    prompt = phone.get_by_label("prompt")
+    prompt.fill(text)
+    prompt.press("Enter")
+    expect(prompt).to_have_value(f"{text}\n")
+    phone.get_by_test_id("send").click()
 
 
 def set_up_remote(desk: Page, daemon: Daemon, gateway: Gateway, name: str) -> str:
@@ -62,6 +73,7 @@ def set_up_remote(desk: Page, daemon: Daemon, gateway: Gateway, name: str) -> st
         settings.get_by_test_id("gateway-url").fill(gateway.url)
         settings.get_by_test_id("host-token").fill(gateway.host_token)
         settings.get_by_test_id("save-gateway").click()
+    settings.get_by_test_id("pair-open").click()
     settings.get_by_test_id("device-name").fill(name)
     settings.get_by_test_id("pair-device").click()
     expect(settings.get_by_test_id("qr")).to_be_visible()
@@ -82,7 +94,8 @@ def test_phone_drives_a_shared_session(
     toggle = desk.get_by_test_id("remote-toggle")
     toggle.click()
     expect(toggle).to_have_attribute("aria-pressed", "true")
-    expect(desk.get_by_test_id("remote-status")).to_be_visible()
+    # the menu says it on the session's line (a phone), not in a Remote row
+    expect(desk.get_by_test_id("session-item").get_by_test_id("session-shared")).to_have_count(1)
 
     # the phone pairs (the key leaves the address bar) and lists it
     phone.goto(link)
@@ -96,7 +109,7 @@ def test_phone_drives_a_shared_session(
     # a prompt from the phone: answered there, and shown on the desk (F.7)
     say(phone, "hello from the phone")
     expect(phone.get_by_test_id("agent-message").last).to_have_text("ok", timeout=20_000)
-    expect(phone.get_by_test_id("send-state")).to_have_text("delivered")
+    expect(phone.get_by_test_id("send-state")).to_have_count(0)  # delivered: nothing said
     expect(desk.get_by_test_id("user-message").last).to_have_text("hello from the phone")
 
     # a permission request: asked on both, answered on the phone, withdrawn on the desk
@@ -107,6 +120,16 @@ def test_phone_drives_a_shared_session(
     ask.get_by_role("button", name="Allow").click()
     expect(phone.get_by_test_id("agent-message").last).to_contain_text('"optionId": "yes"')
     expect(desk.get_by_role("alertdialog", name="permission request")).to_have_count(0)
+
+    # Interrupt takes a second tap on a touch screen; the timeline then says so, on both
+    say(phone, "sleep")  # the agent works until it is interrupted
+    interrupt = phone.get_by_test_id("interrupt")
+    interrupt.click()
+    expect(interrupt).to_have_text("Tap again to interrupt")
+    expect(phone.get_by_test_id("working")).to_be_visible()
+    interrupt.click()
+    expect(phone.get_by_test_id("turn-stopped")).to_contain_text("Interrupted", timeout=20_000)
+    expect(desk.get_by_test_id("turn-stopped")).to_contain_text("Interrupted")
 
     # unshared from the desk: the phone is told
     toggle.click()
@@ -139,7 +162,7 @@ def test_phone_starts_a_session(desk: Page, phone: Page, daemon: Daemon, gateway
         body = {
             "folder": str(folder),
             "name": "shop",
-            "agents": [{"models": [{"account": "fake"}], "name": "coder"}],
+            "agents": [{"model": {"account": "fake"}, "name": "coder"}],
         }
         project = c.post("/v1/projects", json=body).json()
     desk.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/{project['agents'][0]['id']}")
@@ -160,5 +183,7 @@ def test_phone_starts_a_session(desk: Page, phone: Page, daemon: Daemon, gateway
     expect(phone.get_by_test_id("session-group").filter(has_text="shop")).to_be_visible()
 
     desk.goto(f"{daemon.base_url}/#/projects/{project['id']}")
-    item = desk.get_by_label("projects").locator(f'[data-testid="session-item"][title$="{folder}"]')
+    item = desk.get_by_label("open sessions").locator(
+        f'[data-testid="session-item"][title$="{folder}"]'
+    )
     expect(item).to_contain_text("coder · report", timeout=15_000)  # listed there too (polled)

@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.remote/v1/transcription",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What was heard in a device's recording (D.25).",
+  "properties": {
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "RemoteTranscription",
+  "type": "object"
+}

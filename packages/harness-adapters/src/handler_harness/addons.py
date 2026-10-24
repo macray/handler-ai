@@ -1,9 +1,9 @@
 """Where addons live and how they are loaded (contract G.1, docs/dev/design/addons.md).
 
 Two folders: the built-in addons (this package's data, read-only) and the user's
-(`$HANDLER_ADDONS_DIR`, else `~/.config/handler-ai/addons/`: their own, or installed: from the
-catalog, also shipped here but not loaded, a folder or an archive). A user addon named as a built-in
-one overrides it. An addon is a directory `<name>/` containing:
+(`$HANDLER_ADDONS_DIR`, else `~/.config/handler-ai/addons/`: their own, or installed: from a
+source, a folder or an archive, G.5). A user addon named as a built-in one overrides it. An addon
+is a directory `<name>/` containing:
   addon.toml        the manifest (`handler.addon/v1`)
   Containerfile     the tool image, FROM the toolbox image; present iff the manifest has an `image`
   skills/<skill>/   zero or more skills, each with a SKILL.md
@@ -23,7 +23,6 @@ from handler_contracts import AddonManifest
 from .catalog import DATA, config_dir
 
 BUILTIN_DIR = DATA / "addons"
-CATALOG_DIR = DATA / "catalog"  # addons shipped with handler, installed only when the user asks
 
 
 def user_dir() -> Path:
@@ -122,8 +121,3 @@ def get(name: str) -> Addon:
     if (directory := locate(name)) is None:
         raise UnknownAddonError(f"unknown addon '{name}' (no {name}/addon.toml in {user_dir()})")
     return load(directory)
-
-
-def catalog_names() -> list[str]:
-    """The addons of the catalog (installable, G.5)."""
-    return sorted(_names(CATALOG_DIR))

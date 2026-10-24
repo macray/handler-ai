@@ -1,9 +1,10 @@
-"""What handlerd finds in a skill's files (D.17), built-in agents and their skills (D.18)."""
+"""What handlerd finds in a skill's files (D.17), the definitions of Handler's needs and their
+skills (D.18)."""
 
 import os
 from pathlib import Path
 
-from handler_control import builtin_agents, interfaces, skill_scan, skills
+from handler_control import definitions, handler_needs, interfaces, skill_scan, skills
 
 
 def make_skill(folder: Path, body: str = "Do it.\n") -> Path:
@@ -50,25 +51,30 @@ def test_a_skill_out_of_a_folder(tmp_path: Path) -> None:
     assert name == "tidy" and sorted(files) == ["SKILL.md"]
 
 
-def test_every_builtin_agent_is_valid(tmp_path: Path) -> None:
-    loaded = {b.agent.name: b for b in builtin_agents.load_all()}
-    assert set(loaded) >= {"skill-review", "skill-creator"}
-    for b in loaded.values():
-        if b.agent.interface is not None:
-            interfaces.check(b.agent.interface)
-    review = loaded["skill-review"].agent
-    assert review.interface is not None and review.interface.subject == "skill"
+def test_every_handler_need_is_valid(tmp_path: Path) -> None:
+    """The definitions of Handler's needs read, each with a description and a version."""
+    loaded = {n.name: n for n in handler_needs.load_all()}
+    assert {"skill-review", "skill-creator", "prompt-writer", "app-creator", "ask-router"} <= set(
+        loaded
+    )
+    for need in loaded.values():
+        assert need.description and need.version >= 1
+        if (interface := need.definition.interface) is not None:
+            interfaces.check(interface)
+    review = loaded["skill-review"].definition
+    assert review.interface is not None and interfaces.skill_field(review.interface) == "skill"
     assert review.permissions == "bypass"  # it runs unattended
-    creator = loaded["skill-creator"]
-    assert creator.agent.interface is None
-    assert creator.agent.skills == ["handler-skills", "skill-creator"]
-    for name in creator.agent.skills:
-        skill = skills.load(creator.folder / "skills" / name)
+    creator = loaded["skill-creator"].definition
+    folder = handler_needs.ROOT / "skill-creator"
+    assert creator.interface is None
+    assert creator.skills == ["handler-skills", "skill-creator"]
+    for name in creator.skills:
+        skill = skills.load(folder / "skills" / name)
         assert skill.error is None, skill.error
     library = tmp_path / "skills"
     make_skill(library / "handler-skills", "Mine.\n")  # the user's: kept
-    assert builtin_agents.install_skills(creator, library) == ["handler-skills", "skill-creator"]
+    assert definitions.install_skills(folder, library) == ["handler-skills", "skill-creator"]
     assert "Mine." in (library / "handler-skills" / "SKILL.md").read_text()
     assert skills.digest(library / "skill-creator") == skills.digest(
-        creator.folder / "skills" / "skill-creator"
+        folder / "skills" / "skill-creator"
     )

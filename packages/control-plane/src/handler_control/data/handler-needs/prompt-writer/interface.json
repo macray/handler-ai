@@ -1,0 +1,32 @@
+{
+  "fields": {
+    "type": "object",
+    "required": ["instructions", "goal"],
+    "properties": {
+      "instructions": { "type": "string", "title": "Its instructions now", "x-handler": "long-text" },
+      "goal": { "type": "string", "title": "What to improve", "x-handler": "long-text" },
+      "fields": {
+        "type": "string",
+        "title": "The form's fields it may name",
+        "description": "Each between double braces, then its title: one per line.",
+        "x-handler": "long-text"
+      },
+      "failures": {
+        "type": "string",
+        "title": "The checks that failed",
+        "description": "For each: its input, the right answer, what came back.",
+        "x-handler": "long-text"
+      }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["status", "summary", "instructions", "change"],
+    "properties": {
+      "status": { "title": "Status", "enum": ["ok", "attention", "failed"] },
+      "summary": { "title": "Summary", "type": "string" },
+      "instructions": { "title": "New instructions", "type": "string" },
+      "change": { "title": "What changed", "type": "string" }
+    }
+  }
+}

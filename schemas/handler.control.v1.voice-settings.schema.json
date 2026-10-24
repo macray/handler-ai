@@ -1,0 +1,32 @@
+{
+  "$id": "urn:handler.control/v1/voice-settings",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`PUT /v1/voice`: what writes down what you say, and when answers are read aloud.",
+  "properties": {
+    "model": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "readAloudSpoken": {
+      "default": true,
+      "title": "Readaloudspoken",
+      "type": "boolean"
+    },
+    "readAloudTyped": {
+      "default": false,
+      "title": "Readaloudtyped",
+      "type": "boolean"
+    }
+  },
+  "title": "VoiceSettings",
+  "type": "object"
+}

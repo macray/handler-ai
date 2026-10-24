@@ -25,9 +25,9 @@ export interface ToolEntry {
 }
 
 export type Entry =
-  | { kind: "user"; text: string; images: PromptImage[] }
+  | { kind: "user"; text: string; images: PromptImage[]; ms?: number } // ms: how long its turn took, when seen
   | { kind: "agent"; text: string }
-  | { kind: "thought"; text: string }
+  | { kind: "thought"; text: string; ms?: number } // ms: how long it thought, once it went on
   | ToolEntry
   | { kind: "plan"; entries: PlanEntry[] }
   | { kind: "notice"; text: string; severity?: string };
@@ -52,6 +52,10 @@ export class SessionState {
   configOptions = $state<SessionConfigOption[]>([]);
   commands = $state<AvailableCommand[]>([]);
   title = $state<string | null>(null);
+  /** The agent's current plan: its last plan update. */
+  plan = $state<PlanEntry[]>([]);
+  /** How the last turn ended when it did not end normally (`cancelled`…), until the next one. */
+  lastStop = $state<string | null>(null);
 
   /** A turn is in progress and its prompt is already shown: the agent's echo of it (if any,
    *  possibly after other updates) is skipped until the turn ends. */
@@ -61,8 +65,18 @@ export class SessionState {
   private appendText(kind: "user" | "agent" | "thought", text: string): void {
     const last = this.entries.at(-1);
     if (last && last.kind === kind) last.text += text;
-    else if (kind === "user") this.entries.push({ kind, text, images: [] });
-    else this.entries.push({ kind, text });
+    else if (kind === "user") this.push({ kind, text, images: [] });
+    else this.push({ kind, text });
+  }
+
+  private thinking = 0; // when the last thought started (ms)
+
+  /** A new entry; a thought before it has ended (replayed ones end at once: no time said). */
+  private push(entry: Entry): void {
+    const last = this.entries.at(-1);
+    if (last?.kind === "thought" && last.ms === undefined) last.ms = Date.now() - this.thinking;
+    if (entry.kind === "thought") this.thinking = Date.now();
+    this.entries.push(entry);
   }
 
   private tool(id: string): ToolEntry | undefined {
@@ -87,7 +101,7 @@ export class SessionState {
         this.appendText("thought", blockText(update.content));
         break;
       case "tool_call":
-        this.entries.push({
+        this.push({
           kind: "tool",
           id: update.toolCallId,
           title: update.title,
@@ -108,9 +122,10 @@ export class SessionState {
         break;
       }
       case "plan": {
+        this.plan = update.entries;
         const last = this.entries.at(-1);
         if (last?.kind === "plan") last.entries = update.entries;
-        else this.entries.push({ kind: "plan", entries: update.entries });
+        else this.push({ kind: "plan", entries: update.entries });
         break;
       }
       case "available_commands_update":
@@ -126,7 +141,7 @@ export class SessionState {
         if (update.title !== undefined) this.title = update.title ?? null;
         break;
       case "notice":
-        this.entries.push({ kind: "notice", text: noticeText(update), severity: severityOf(update) });
+        this.push({ kind: "notice", text: noticeText(update), severity: severityOf(update) });
         break;
       default:
         break; // usage, compaction…: not shown
@@ -137,13 +152,25 @@ export class SessionState {
     const last = this.entries.at(-1);
     const { mimeType, data } = image;
     if (last?.kind === "user") last.images.push({ mimeType, data });
-    else this.entries.push({ kind: "user", text: "", images: [{ mimeType, data }] });
+    else this.push({ kind: "user", text: "", images: [{ mimeType, data }] });
+  }
+
+  /** The turn in progress ended after `ms`: said under it. */
+  turnTook(ms: number): void {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i];
+      if (e?.kind === "user") {
+        e.ms = ms;
+        return;
+      }
+    }
   }
 
   /** The user's own prompt, shown immediately (agents do not always echo it). */
   addUserPrompt(text: string, images: PromptImage[] = []): void {
-    this.entries.push({ kind: "user", text, images });
+    this.push({ kind: "user", text, images });
     this.inTurn = true;
+    this.lastStop = null;
   }
 }
 

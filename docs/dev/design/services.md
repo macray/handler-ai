@@ -3,7 +3,7 @@
 Status: **proposal** (2026-10-02). Implemented (2026-10-06): the first interface, `llm/v1`, its
 built-in connector and the router, for automations' scripts (contracts §I.5); connectors in
 their own sandboxes, bindings of connectors, selection on agents and `handler-service` are not.
-Companion to `addons.md` (tools inside the sandbox) and `miniapps.md` (whose runtime connectors
+Companion to `addons.md` (tools inside the sandbox) and `apps.md` (whose runtime connectors
 reuse). Once accepted, the normative part moves to a new section of `contracts.md`.
 
 **As built (`llm/v1`).** The interface is data in `handler_control/data/interfaces/llm/v1/`
@@ -20,6 +20,16 @@ each call without its payload, and dispatches to the connector built into handle
 provider's `openai-chat` or `anthropic` endpoint, its key from the secret store). Its command-line
 client is `handler-llm` (`handler_control/data/automation/bin/`).
 
+**As built (`transcribe/v1`, 2026-10-21).** The second interface, same shape: data in
+`data/interfaces/transcribe/v1/` (one tool, `transcribe_audio`: `TranscribeRequest` →
+`TranscribeResponse`), its connector built into handlerd (`transcribe.py`), its bindings the
+providers' **speech models**: a provider gains the endpoint kind `transcriptions` (OpenAI's
+`/audio/transcriptions`, which vendors and local servers, vLLM, whisper.cpp, speaches, all speak)
+and a model the flag `speech`, never offered to harnesses (contracts E, I.11). Its only caller is
+handlerd itself, for Voice (D.25: speaking to Ask); the router does not serve it to sandboxes yet.
+A local model in a connector sandbox of its own (US2 with whisper.cpp in an image) is still to
+build: a server the person runs and declares as a provider covers it meanwhile.
+
 2026-10-06: services are what Handler offers to **whatever it runs**: agents,
 scripts (automations, contracts §I) and apps all call the same router. The first interface is
 `llm/v1` (a model call, for automations' scripts through `handler-llm`, I.5); its connector is built
@@ -28,11 +38,16 @@ agent X with this input": a status and a result, asynchronous), not one interfac
 interface of its own is only for a capability worth sharing or swapping. A part of a job that
 needs other privileges (a secret, network) is called as a service and runs in its own sandbox.
 
+2026-10-16: apps start runs of agents on their own Handler socket (`contracts.md` H.11), next
+to their notifications, not through the router: only on the owner's request (a start token) and
+only the jobs their manifest names. The router's agent-run service, for scripts and agents, is
+still to build; when it is, apps may move to it with the same rules.
+
 ## 1. Goal
 
 Let an agent (or a script, or an app) depend on a **capability** (OCR, transcription, web search, sending an email) without
 knowing **what provides it**. The agent calls a stable contract; which service fulfils it (a local
-container, a mini app, a vendor API) is decided outside the agent, and changed in one place without
+container, an app, a vendor API) is decided outside the agent, and changed in one place without
 touching the agent, its skills or its prompts.
 
 This is dependency inversion, as in an EJB container: the component declares a resource reference,
@@ -223,7 +238,7 @@ harness ──stdio──► handler-service ocr ──socket──► service r
                                               · applies limits, logs calls
 ```
 
-- **The connector runs in its own sandbox**, with the mini app runtime (`contracts.md` H.3): strict
+- **The connector runs in its own sandbox**, with the app runtime (`contracts.md` H.3): strict
   confinement, a socket folder, egress exactly its manifest's, secrets as env. The agent's sandbox
   holds no credential and no egress for the service; this is the "operation service outside the
   sandbox" of `addons.md` §8.3, so it is safe in `bypass` mode.
@@ -247,7 +262,7 @@ its results.
 ```
 connectors/ocr-mistral/
 ├── connector.toml
-├── main.ts            Deno, like a mini app backend: serves MCP on HANDLER_CONNECTOR_SOCKET
+├── main.ts            Bun, like an app backend: serves MCP on HANDLER_CONNECTOR_SOCKET
 └── PROVISIONING.md    how to get the least-privilege key a binding needs
 ```
 
@@ -336,9 +351,9 @@ interface.
 
 ## 10. Open questions
 
-1. Connector runtime: Deno only (the mini app runtime, cheapest), or any image (to wrap an existing
+1. Connector runtime: Bun only (the app runtime, cheapest), or any image (to wrap an existing
    OCR or speech container as is)? A local model needing a GPU pushes towards images.
-2. Should a mini app be able to *be* a connector (an app the person also uses, exposing an
+2. Should an app be able to *be* a connector (an app the person also uses, exposing an
    interface to agents)?
 3. ~~A CLI generated from the same schemas, or MCP only?~~ A CLI is needed: scripts call services
    through one (`handler-llm` is the first, hand-written); agents may use it too.

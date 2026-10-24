@@ -43,6 +43,9 @@ RUN setcap cap_setuid=ep /usr/bin/newuidmap \
 
 # Bun is not in the Arch repositories: official installer, into /usr/local (not ~/.bun, which is
 # a cache mount at runtime).
+# Handler needs it: the agents that write apps (the App creator, any agent with the app-builder
+# addon) build and test them with it. Without it they cannot, and a rebuild warns (Settings →
+# Images). Any version: apps themselves run on Handler's own Bun, which tests them again.
 ARG BUN_VERSION=bun-v1.4.2
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s "${BUN_VERSION}" \
     && rm -rf /usr/local/install

@@ -1,15 +1,23 @@
 <script lang="ts">
   // A new session from the phone: a project, one of its agents allowed from devices (their
-  // "Can be started from your phone" setting in handler), and the request — typed, or dictated where
-  // the browser can listen. The host starts it, shares it, and this screen opens it.
+  // "Can be started from your phone" setting in handler), or Chat and who you talk to there; and
+  // the request — typed (Ask's "Start a chat about it": what you asked), or dictated (tap to start,
+  // tap to stop: written down on the host with its speech model, D.25, when Voice is on). The host
+  // starts it, shares it, and this screen opens it.
   import { app } from "../lib/app.svelte";
+  import type { RemoteProject } from "../lib/remote.gen";
+  import { canRecord, record, type Recording } from "../lib/voice";
 
-  let projectId = $state(app.agents[0]?.projectId ?? "");
-  const project = $derived(app.agents.find((p) => p.projectId === projectId));
+  const CHAT = "chat"; // Chat's entry among the projects (none has this id: theirs are random)
+  const places = $derived<RemoteProject[]>([
+    ...(app.chats.length ? [{ projectId: CHAT, project: "Chat", agents: app.chats }] : []),
+    ...app.agents,
+  ]);
+  let projectId = $state(app.composeChat && app.chats.length ? CHAT : (app.agents[0]?.projectId ?? (app.chats.length ? CHAT : "")));
+  const project = $derived(places.find((p) => p.projectId === projectId));
   let agentId = $state("");
-  let request = $state("");
+  let request = $state(app.composeSay);
   let starting = $state(false);
-  let listening = $state(false);
 
   // the project's default agent, when it is one of those allowed
   $effect(() => {
@@ -18,29 +26,31 @@
     }
   });
 
-  type Recognition = {
-    lang: string;
-    interimResults: boolean;
-    onresult: (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
-    onend: () => void;
-    onerror: () => void;
-    start: () => void;
-  };
-  const Speech = (globalThis as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition })
-    .SpeechRecognition ?? (globalThis as unknown as { webkitSpeechRecognition?: new () => Recognition }).webkitSpeechRecognition;
+  let recording = $state<Recording | null>(null);
+  let hearing = $state(false);
+  const listens = $derived(app.voice.listens && canRecord());
 
-  function dictate(): void {
-    if (!Speech || listening) return;
-    const recognition = new Speech();
-    recognition.lang = navigator.language;
-    recognition.interimResults = false;
-    recognition.onresult = (e) => {
-      const said = Array.from(e.results, (r) => r[0]?.transcript ?? "").join(" ");
-      request = [request.trim(), said.trim()].filter(Boolean).join(" ");
-    };
-    recognition.onend = recognition.onerror = () => (listening = false);
-    listening = true;
-    recognition.start();
+  async function dictate(): Promise<void> {
+    if (recording) {
+      const r = recording;
+      recording = null;
+      hearing = true;
+      try {
+        const speech = await r.stop();
+        const said = speech ? await app.transcribe(speech) : "";
+        request = [request.trim(), said.trim()].filter(Boolean).join(" ");
+      } catch (e) {
+        app.startError = `Nothing was written down: ${(e as Error).message}`;
+      } finally {
+        hearing = false;
+      }
+      return;
+    }
+    try {
+      recording = await record(() => void dictate());
+    } catch (e) {
+      app.startError = `The microphone: ${(e as Error).message}`;
+    }
   }
 
   async function start(event: SubmitEvent): Promise<void> {
@@ -58,22 +68,22 @@
 </header>
 
 <form class="page" onsubmit={start} data-testid="new-session">
-  {#if !app.agents.length}
+  {#if !places.length}
     <p class="hint">
-      No agent can be started from a device yet: in Handler, edit an agent of a project and turn on
-      <strong>Can be started from your phone</strong>.
+      No agent can be started from a device yet: in Handler, add someone to talk to in Chat, or edit
+      an agent of a project and turn on <strong>Can be started from your phone</strong>.
     </p>
   {:else}
     <label>
-      <span>Project</span>
+      <span>Where</span>
       <select bind:value={projectId} data-testid="new-session-project">
-        {#each app.agents as p (p.projectId)}<option value={p.projectId}>{p.project}</option>{/each}
+        {#each places as p (p.projectId)}<option value={p.projectId}>{p.project}</option>{/each}
       </select>
     </label>
     <label>
-      <span>Agent</span>
+      <span>{projectId === CHAT ? "Who you talk to" : "Agent"}</span>
       <select bind:value={agentId} data-testid="new-session-agent">
-        {#each project?.agents ?? [] as a (a.id)}<option value={a.id}>{a.name}{a.default ? " (default)" : ""}</option>{/each}
+        {#each project?.agents ?? [] as a (a.id)}<option value={a.id}>{a.name}{a.default && projectId !== CHAT ? " (default)" : ""}</option>{/each}
       </select>
       {#if project?.agents.find((a) => a.id === agentId)?.description}
         <span class="hint">{project?.agents.find((a) => a.id === agentId)?.description}</span>
@@ -84,9 +94,9 @@
       <textarea bind:value={request} rows="5" placeholder="Empty: an empty chat" data-testid="new-session-request"></textarea>
     </label>
     <div class="actions">
-      {#if Speech}
-        <button type="button" class="secondary" onclick={dictate} disabled={listening} data-testid="dictate">
-          {listening ? "Listening…" : "🎤 Dictate"}
+      {#if listens}
+        <button type="button" class="secondary" onclick={dictate} disabled={hearing} data-testid="dictate">
+          {recording ? "Stop" : hearing ? "Writing it down…" : "Dictate"}
         </button>
       {/if}
       <button type="submit" class="primary" disabled={starting || !agentId} data-testid="new-session-start">

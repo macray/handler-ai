@@ -1,0 +1,74 @@
+{
+  "$id": "urn:handler.control/v1/check",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A run of a job kept with its right answer (D.20): run again with its input, it passes when\nevery field of `compare` comes back as in `answer`.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "input": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Input",
+      "type": "object"
+    },
+    "answer": {
+      "additionalProperties": true,
+      "title": "Answer",
+      "type": "object"
+    },
+    "compare": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Compare",
+      "type": "array"
+    },
+    "fromRun": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fromrun"
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "problem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Problem"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "answer",
+    "compare",
+    "createdAt"
+  ],
+  "title": "Check",
+  "type": "object"
+}

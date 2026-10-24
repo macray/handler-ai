@@ -5,6 +5,7 @@ terminal."""
 
 import time
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -69,6 +70,31 @@ def test_runs_on_the_client_s_terminal_with_its_settings_as_flags(
     term.type("quit")
     assert term.exit_code() == 3
     _until_no_connection(daemon, ad_hoc["id"])
+
+
+def test_a_folder_inside_the_agent_s_is_the_only_one_mounted(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """`handler terminal` in a project's sub-folder: that folder, not the project's."""
+    sub = Path(ad_hoc["scope"], "sub")
+    sub.mkdir()
+    started = _start(daemon, ad_hoc["id"], folder=str(sub))
+    term = Attached(started["attach"])
+    assert f"pwd:{sub}\r\n" in term.until("args:")
+    term.type("quit")
+    assert term.exit_code() == 3
+    _until_no_connection(daemon, ad_hoc["id"])
+
+
+def test_a_folder_outside_the_agent_s_is_refused(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
+    with daemon.http() as c:
+        outside = c.post(terminal_path(ad_hoc["id"]), json={"folder": str(daemon.make_scope())})
+        missing = c.post(terminal_path(ad_hoc["id"]), json={"folder": ad_hoc["scope"] + "/nope"})
+    assert outside.status_code == 409
+    assert "outside the agent's folder" in outside.json()["detail"]
+    assert missing.status_code == 409
+    assert "not a directory" in missing.json()["detail"]
+    assert not _connections(daemon, ad_hoc["id"])
 
 
 def test_stopping_handlerd_leaves_the_program_running() -> None:

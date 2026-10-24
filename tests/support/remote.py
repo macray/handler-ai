@@ -24,6 +24,9 @@ from handler_control import remote_crypto as rc
 
 REPO = Path(__file__).resolve().parents[2]
 GATEWAY_SRC = REPO / "remote-gateway" / "src"
+# what the remote client gives its envelopes (mailbox.svelte.ts), in seconds
+LIVE = 5 * 60.0
+QUEUED = 7 * 24 * 3600.0
 
 Frame = dict[str, Any]
 
@@ -119,22 +122,23 @@ class Device:
 
     # ── sending ─────────────────────────────────────────────────────────
 
-    def seal(self, frames: list[Frame], ts: int | None = None) -> dict[str, str]:
-        plain = {"ts": ts if ts is not None else int(time.time() * 1000), "frames": frames}
+    def seal(self, frames: list[Frame], lifetime: float = LIVE) -> dict[str, str]:
+        """Sealed to be taken within `lifetime` seconds (negative: expired already)."""
+        plain = {"expires": int((time.time() + lifetime) * 1000), "frames": frames}
         return rc.seal(self.key, self.host_id, self.id, "down", plain)
 
     def post(self, envelope: dict[str, Any]) -> httpx.Response:
         return self.http.post("/v1/device/down", json=envelope)
 
-    def send(self, frames: list[Frame], ts: int | None = None) -> dict[str, str]:
-        envelope = self.seal(frames, ts)
+    def send(self, frames: list[Frame], lifetime: float = LIVE) -> dict[str, str]:
+        envelope = self.seal(frames, lifetime)
         r = self.post(envelope)
         assert r.status_code == 202, r.text
         return envelope
 
-    def queue(self, frames: list[Frame], ts: int | None = None) -> dict[str, str]:
+    def queue(self, frames: list[Frame], lifetime: float = QUEUED) -> dict[str, str]:
         """Leave frames at the gateway for when the host is back (A5)."""
-        envelope = self.seal(frames, ts)
+        envelope = self.seal(frames, lifetime)
         r = self.http.post("/v1/device/queue", json=envelope)
         assert r.status_code == 202, r.text
         return envelope

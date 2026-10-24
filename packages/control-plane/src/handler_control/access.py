@@ -57,6 +57,6 @@ def resolve(
             f'"{harness}" accepts: {accepted}'
         )
     if model is not None and spec.model_named(model) is None:
-        served = ", ".join(m.id for m in spec.models)
+        served = ", ".join(m.id for m in spec.chat_models)
         raise ValueError(f"provider '{provider}' has no model '{model}' (it serves: {served})")
     return AgentSpec.resolve(harness, model, provider=(provider, spec))

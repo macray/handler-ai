@@ -32,27 +32,14 @@ def test_a_users_addon_replaces_a_builtin_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HANDLER_ADDONS_DIR", str(tmp_path))
-    builtin = addons.get("miniapp")
-    assert builtin.builtin and builtin.directory == addons.BUILTIN_DIR / "miniapp"
-    mine = tmp_path / "miniapp"
+    builtin = addons.get("app-builder")
+    assert builtin.builtin and builtin.directory == addons.BUILTIN_DIR / "app-builder"
+    mine = tmp_path / "app-builder"
     mine.mkdir()
-    (mine / "addon.toml").write_text('apiVersion = "handler.addon/v1"\nname = "miniapp"\n')
-    replaced = addons.get("miniapp")
+    (mine / "addon.toml").write_text('apiVersion = "handler.addon/v1"\nname = "app-builder"\n')
+    replaced = addons.get("app-builder")
     assert replaced.directory == mine and replaced.overrides_builtin and not replaced.builtin
-    assert addons.names().count("miniapp") == 1
-
-
-def test_catalog_addons_are_not_loaded_until_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """G.5: shipped with handler, but an agent can get one only once the user installed it."""
-    monkeypatch.setenv("HANDLER_ADDONS_DIR", str(tmp_path))
-    assert addons.catalog_names() == ["playwright", "shopify"]
-    assert addons.names() == ["miniapp"]
-    with pytest.raises(addons.UnknownAddonError):
-        addons.get("shopify")
-    for name in addons.catalog_names():
-        addons.load(addons.CATALOG_DIR / name)  # valid
+    assert addons.names().count("app-builder") == 1
 
 
 def test_the_default_toolbox_toml_is_as_handler_writes_it(

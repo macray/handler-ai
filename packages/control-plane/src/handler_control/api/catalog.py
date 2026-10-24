@@ -32,6 +32,7 @@ from .. import (
     runtime,
     webui,
 )
+from ..settings import Settings
 from .common import (
     Context,
     ProblemError,
@@ -63,7 +64,7 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.get("/v1/addons", dependencies=authed)
     async def list_addons() -> Response:
-        return dump(await asyncio.to_thread(addon_infos))
+        return dump(await asyncio.to_thread(addon_infos, ctx.settings))
 
     @app.get("/v1/knowledge", dependencies=authed)
     def list_knowledge() -> Response:
@@ -112,11 +113,11 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
             raise ProblemError(409, "folder exists", str(e)) from None
 
 
-def addon_infos() -> list[AddonInfo]:
+def addon_infos(settings: Settings) -> list[AddonInfo]:
     infos = []
     for name in addon_catalog.names():
         with contextlib.suppress(addon_catalog.UnknownAddonError):  # removed since listed
-            infos.append(addon_info(name))
+            infos.append(addon_info(settings, name))
     return infos
 
 
@@ -149,7 +150,7 @@ def login_file(descriptor: HarnessDescriptor) -> str | None:
     return os.path.basename(descriptor.state_slots[login.file].target)
 
 
-def addon_info(name: str) -> AddonInfo:
+def addon_info(settings: Settings, name: str) -> AddonInfo:
     """An addon and what `:latest` of its image holds — blocking calls to the runtime."""
     directory = str(addon_catalog.locate(name))
     try:
@@ -169,7 +170,7 @@ def addon_info(name: str) -> AddonInfo:
         directory=directory,
         builtin=addon.builtin,
         overrides_builtin=addon.overrides_builtin,
-        **installed_from(addon),
+        **installed_from(settings, addon),
     )
     if m.image is None:
         return info
@@ -183,14 +184,15 @@ def addon_info(name: str) -> AddonInfo:
     )
 
 
-def installed_from(addon: addon_catalog.Addon) -> dict[str, Any]:
-    """Where an installed addon came from (G.5), and whether the catalog now ships other content."""
+def installed_from(settings: Settings, addon: addon_catalog.Addon) -> dict[str, Any]:
+    """Where an installed addon came from (G.5), and whether its source (D.26), as read last,
+    now holds other content."""
     entry = None if addon.builtin else addon_install.lock().get(addon.name)
     if entry is None:
         return {}
-    catalog = entry.source.startswith(addon_install.CATALOG_PREFIX)
-    changed = catalog and addon_install.catalog_digest(addon.name) not in (None, entry.digest)
-    return {"source": entry.source, "update_available": changed}
+    from_source = entry.source.startswith(addon_install.SOURCE_PREFIX)
+    now = addon_install.source_digest(settings, entry.source) if from_source else None
+    return {"source": entry.source, "update_available": now not in (None, entry.digest)}
 
 
 def slot_info(name: str, slot: AddonSlot) -> AddonSlotInfo:

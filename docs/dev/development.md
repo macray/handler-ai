@@ -88,13 +88,15 @@ dev container, without real accounts) and still needs a run on a real host:
   automation try env-issues`; an hourly automation running an agent with an interface on a
   provider, its result in the Inbox page and on a phone. The e2e test
   (`test_an_agent_scheduled_from_its_settings`) needs the Playwright image.
+- **The model alone** (D.18): its tests use a stub provider; once, a chat and a job on a real
+  API (an `openai-chat` and an `anthropic` provider) from the web UI.
 - **Addons**: the Shopify addon against a real store (`tests/addons/test_shopify.py`, opt-in).
-- **Browser** and **mini apps**: the lists at the end of [`design/browser.md`](design/browser.md)
-  and [`design/miniapps.md`](design/miniapps.md) (real push services, iOS, Firefox, GNOME
-  shortcuts, pi's MCP servers).
+- **Browser** and **apps**: the lists at the end of [`design/browser.md`](design/browser.md)
+  and [`design/apps.md`](design/apps.md) (real push services, iOS, Firefox, pi's MCP
+  servers).
 
 ## Known gaps
 
-- The phone does not show project contexts yet.
-- Not built yet, by feature: the last section of each design note (addons, browser, mini apps,
+- The phone does not show areas yet.
+- Not built yet, by feature: the last section of each design note (addons, browser, apps,
   remote control) and the open part of [`design/services.md`](design/services.md).

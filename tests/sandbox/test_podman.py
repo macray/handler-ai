@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from handler_sandbox_podman.launch import instance_dir
+from handler_sandbox_podman.podman import PROXY_IMAGE
 
 from ..support import dev_env
 from ..support.dev_env import sandbox_gid, sandbox_uid
@@ -430,7 +431,8 @@ def test_missing_mounted_image_is_a_clear_setup_failure(scope: Path) -> None:
     doc = with_addon(spec(scope, ["true"]), "localhost/handler-ai-test-never-built:latest")
     r = run(BIN, doc)
     assert r.returncode == 66
-    assert b"handler-test-never-built:latest (for /opt/addons/handler-test) is missing" in r.stderr
+    missing = b"handler-ai-test-never-built:latest (for /opt/addons/handler-test) is missing"
+    assert missing in r.stderr
     assert leftovers(doc["name"]) == []
 
 
@@ -537,6 +539,48 @@ def test_filtered_plain_http_goes_through_the_proxy(scope: Path) -> None:
     assert tunnel not in ("", "000")
     r = run(BIN, spec(scope, sh(f"{CURL} http://www.example.org"), network=ALLOW))
     assert r.stdout.decode() in ("000", "403")  # only :443 listed
+
+
+@pytest.fixture
+def local_server() -> Iterator[str]:
+    """An HTTP server on podman's network (the proxy image's Python): its IP. A local
+    destination, as a model server on the LAN is: no internet needed."""
+    name = f"handler-test-http-{os.urandom(3).hex()}"
+    argv = ["podman", "run", "-d", "--rm", "--name", name, "--network", "podman"]
+    serve = ["--entrypoint", "python3", PROXY_IMAGE, "-m", "http.server", "8000"]
+    subprocess.run([*argv, *serve], check=True, capture_output=True)
+    try:
+        ip = subprocess.run(
+            ["podman", "inspect", name, "--format",
+             "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()  # fmt: skip
+        yield ip
+    finally:
+        subprocess.run(["podman", "rm", "-f", "-t", "0", name], capture_output=True, check=False)
+
+
+def test_filtered_plain_http_is_judged_on_a_real_host(scope: Path, local_server: str) -> None:
+    """A.3 with the proxy as on every host (not chained to a development proxy): each plain
+    http:// request is judged by its host and port, a tunnel by its target. (mitmproxy makes a
+    forwarded request's target relative before the addon sees it: such a request once went
+    through unjudged.)"""
+    net = {"mode": "filtered", "allow": [f"{local_server}:8000"], "enforcement": "enforce"}
+    probes = [
+        f"{CURL} --retry 5 --retry-connrefused http://{local_server}:8000/",  # listed
+        f"{CURL} http://{local_server}:8001/",  # not listed: the proxy answers, not the host
+        f"{CURL} -p http://{local_server}:8001/",  # a tunnel to it
+    ]
+    r = run(BIN, spec(scope, sh("; echo; ".join(probes)), network=net), unchained=True)
+    listed, other, tunnel = r.stdout.decode().split()
+    assert (listed, other, tunnel) == ("200", "403", "000"), r.stderr.decode()
+    events = [
+        json.loads(line.removeprefix("handler-egress "))
+        for line in r.stderr.decode().splitlines()
+        if line.startswith("handler-egress ")
+    ]
+    assert {"decision": "allowed", "host": f"{local_server}:8000"} in events
+    assert events.count({"decision": "denied", "host": f"{local_server}:8001"}) == 2
 
 
 @requires_egress

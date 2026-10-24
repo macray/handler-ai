@@ -11,7 +11,18 @@ from typing import Annotated
 from pydantic import Field
 
 from .common import Document
-from .control import MAX_REQUEST, DeviceScope, InboxMessage, SessionOrigin
+from .control import (
+    MAX_REQUEST,
+    ActionOption,
+    ActionRun,
+    AssistantAnswer,
+    AssistantRequest,
+    DeviceScope,
+    InboxMessage,
+    SessionOrigin,
+    SpeechRequest,
+    Transcription,
+)
 
 REMOTE_API_VERSION = "handler.remote/v1"
 
@@ -28,7 +39,7 @@ class SharedSession(Document):
     project: str | None = None
     agent: str | None = None  # the agent's name, for an agent of a project
     origin: SessionOrigin
-    harness: str
+    harness: str | None  # None: the model alone (D.18)
     scope: str
     acp_session_id: str | None = None
     busy: bool
@@ -36,12 +47,13 @@ class SharedSession(Document):
 
 
 class RemoteAgent(Document):
-    """An agent a device may start sessions with (its `remoteStart` is on, D.8)."""
+    """An agent a device may start sessions with (its `remoteStart` is on, D.8; or one you talk to
+    in Chat)."""
 
     id: str
     name: str
     description: str | None = None
-    default: bool  # its project's default agent
+    default: bool  # its project's default agent; in Chat, the one you talked to last
 
 
 class RemoteProject(Document):
@@ -51,7 +63,7 @@ class RemoteProject(Document):
 
 
 class SharedApp(Document):
-    """A deployed mini app shared with the device's person (H.8)."""
+    """A deployed app shared with the device's person (H.8)."""
 
     name: str
     description: str | None = None
@@ -73,11 +85,15 @@ class AgentList(Document):
     """`_handler/remote/list_agents` → this (owner's devices only; empty otherwise)."""
 
     projects: list[RemoteProject]
+    # who you talk to in Chat (D.1 `chat`), the one used last first (its `default`): no folder,
+    # so started from the owner's devices without a `remoteStart` of their own, as Ask (D.24)
+    chats: list[RemoteAgent] = []
 
 
 class StartSessionParams(Document):
-    """`_handler/remote/start_session` → StartedSession: a new session of a `remoteStart` agent,
-    `prompt` sent as its first turn, shared with the devices once it runs."""
+    """`_handler/remote/start_session` → StartedSession: a new session of a `remoteStart` agent or
+    of one you talk to in Chat, `prompt` sent as its first turn, shared with the devices once it
+    runs."""
 
     agent_id: str
     prompt: Annotated[str, Field(max_length=MAX_REQUEST)] | None = None
@@ -104,6 +120,46 @@ class InboxList(Document):
     """`_handler/remote/inbox` → this: the inbox of the device's person (H.9, I.3)."""
 
     messages: list[InboxMessage]
+
+
+class AskParams(AssistantRequest):
+    """`_handler/remote/ask` → AskAnswer: Ask (D.24) from one of the owner's devices: the
+    exchange so far, the person's words last, the device's time zone."""
+
+
+class AskAnswer(AssistantAnswer):
+    """What Ask did (D.24), as the web UI gets it."""
+
+
+class AskOptions(Document):
+    """`_handler/remote/ask_options` → this: the actions Ask can pick now (the owner's devices),
+    and whether it can be said (D.25: a speech model chosen) and the answers read aloud."""
+
+    actions: list[ActionOption]
+    listens: bool = False  # `_handler/remote/transcribe` writes down a recording
+    read_aloud_spoken: bool = True
+    read_aloud_typed: bool = False
+
+
+class TranscribeParams(SpeechRequest):
+    """`_handler/remote/transcribe` → Transcription: a recording from one of the owner's devices,
+    written down with the chosen speech model (D.25), never kept."""
+
+
+class RemoteTranscription(Transcription):
+    """What was heard in a device's recording (D.25)."""
+
+
+class ActionRunParams(Document):
+    """`_handler/remote/action_run` → RemoteActionRun: an agent's action read again (H.12)."""
+
+    app: str
+    action: str
+    run_id: str
+
+
+class RemoteActionRun(ActionRun):
+    """An action, done or under way (H.12)."""
 
 
 class PushKey(Document):

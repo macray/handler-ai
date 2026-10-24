@@ -1,0 +1,38 @@
+{
+  "$id": "urn:handler.source/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`handler-source.toml` at the root of a source's repository (D.26).",
+  "properties": {
+    "apiVersion": {
+      "const": "handler.source/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name"
+  ],
+  "title": "SourceManifest",
+  "type": "object"
+}

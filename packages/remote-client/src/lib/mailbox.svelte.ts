@@ -6,7 +6,7 @@
 // attachment to that session — exposed as an ACP transport (`transport(s)`), so the session view
 // is the same AcpConnection as the handler web UI's — `s: null` is the control channel
 // (list sessions and apps, ping, detach; `_handler/remote/closed`, `sessions_changed`, `apps_changed`
-// from the host), and `s: "app:<name>"` a mini app's requests (its UI, its backend calls).
+// from the host), and `s: "app:<name>"` an app's requests (its UI, its backend calls).
 //
 // The client is served by the gateway: requests go to this page's own origin.
 import type { AnyMessage } from "@agentclientprotocol/sdk";
@@ -28,6 +28,42 @@ export type SendState = "sending" | "sent" | "fetched" | "delivered" | "expired"
 const POLL_WAIT = 25;
 const PING_EVERY = 30_000;
 const HOST_ONLINE = 35_000; // a polling host is "seen now"; it stops polling when nothing is shared
+const LEASE = 90_000; // the host detaches a device that sent nothing for that long (remote.py)
+// Until when the host may take an envelope (`expires`): a command now or never, a queued call
+// whenever the host is back within 7 days. The host takes each one once, before it expires.
+const LIVE = 5 * 60_000;
+const QUEUED = 7 * 24 * 3600_000;
+const SEEN_KEY = "handler-remote-seen";
+
+/** Ids of the host's envelopes opened in this tab, each until it expires (then the host's own
+ *  `expires` refuses it): a gateway replaying one gets nothing. In sessionStorage, so a reload
+ *  keeps them; per tab, as each tab polls the gateway on its own. */
+class Seen {
+  private ids: Record<string, number>;
+
+  constructor() {
+    try {
+      this.ids = JSON.parse(sessionStorage.getItem(SEEN_KEY) ?? "{}");
+    } catch {
+      this.ids = {};
+    }
+  }
+
+  has(id: string): boolean {
+    return id in this.ids;
+  }
+
+  add(id: string, expires: number): void {
+    const now = Date.now();
+    this.ids = Object.fromEntries(Object.entries(this.ids).filter(([, until]) => until > now));
+    this.ids[id] = expires;
+    try {
+      sessionStorage.setItem(SEEN_KEY, JSON.stringify(this.ids));
+    } catch {
+      /* storage full: kept in memory for this page */
+    }
+  }
+}
 
 export class Mailbox {
   reachable = $state<boolean | null>(null); // the gateway answered the last poll
@@ -46,14 +82,21 @@ export class Mailbox {
   private cursor = "";
   private channels = new Map<string, (m: AnyMessage) => void>();
   private closers = new Map<string, (closed: Closed) => void>();
-  private replies = new Map<number | string, (m: Message) => void>();
-  private nextId = 1;
-  private seen = new Set<string>(); // ids of envelopes already opened (a replay is dropped)
+  // requests waiting for their answer: random ids, so an old answer (replayed) never matches one,
+  // and on the channel they were asked on
+  private replies = new Map<string, { s: string | null; resolve: (m: Message) => void }>();
+  private seen = new Seen();
   private states = new Map<string, SendState>();
   private stopped = false;
+  private lastDown = Date.now(); // the last envelope the gateway took from this device
   private timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(readonly device: Device) {}
+
+  /** Sent nothing for nearly the lease (the phone slept): the host may have detached it. */
+  get mayBeDetached(): boolean {
+    return Date.now() - this.lastDown > LEASE - 15_000;
+  }
 
   get hostOnline(): boolean {
     return this.hostSeen !== null && this.now - this.hostSeen < HOST_ONLINE;
@@ -91,7 +134,7 @@ export class Mailbox {
 
   /** `shown`: session traffic (a prompt, an answer), whose progress the composer shows. */
   async send(frames: Frame[], shown = false): Promise<void> {
-    const envelope = await seal(this.device.seal, this.device, "down", { ts: Date.now(), frames });
+    const envelope = await seal(this.device.seal, this.device, "down", { expires: Date.now() + LIVE, frames });
     if (shown) {
       this.states.set(envelope.id, "sending");
       this.lastSend = { id: envelope.id, state: "sending" };
@@ -100,6 +143,7 @@ export class Mailbox {
     try {
       const r = await fetch("/v1/device/down", { method: "POST", headers: this.headers(), body: JSON.stringify(envelope) });
       this.track(envelope.id, r.ok ? "sent" : "failed");
+      if (r.ok) this.lastDown = Date.now();
       if (r.status === 401) this.unauthorized = true;
       if (!r.ok) throw new Error(`the gateway refused it (${r.status})`);
     } catch (e) {
@@ -110,7 +154,7 @@ export class Mailbox {
 
   /** Leave frames at the gateway for when the host is back (only its "queued" routes). */
   async queue(frames: Frame[]): Promise<string> {
-    const envelope = await seal(this.device.seal, this.device, "down", { ts: Date.now(), frames });
+    const envelope = await seal(this.device.seal, this.device, "down", { expires: Date.now() + QUEUED, frames });
     const r = await fetch("/v1/device/queue", { method: "POST", headers: this.headers(), body: JSON.stringify(envelope) });
     if (!r.ok) throw new Error(`the gateway refused it (${r.status})`);
     this.queued = [...this.queued, envelope.id];
@@ -123,16 +167,19 @@ export class Mailbox {
 
   /** A request on the control channel (or `s`: an app's); its answer comes back through the poll. */
   async request<T>(method: string, params: object = {}, timeout = 30_000, s: string | null = null): Promise<T> {
-    const id = this.nextId++;
+    const id = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const reply = new Promise<Message>((resolve, reject) => {
       timer = setTimeout(() => {
         this.replies.delete(id);
         reject(new Error("the host did not answer (is it online?)"));
       }, timeout);
-      this.replies.set(id, (m) => {
-        clearTimeout(timer);
-        resolve(m);
+      this.replies.set(id, {
+        s,
+        resolve: (m) => {
+          clearTimeout(timer);
+          resolve(m);
+        },
       });
     });
     try {
@@ -189,7 +236,7 @@ export class Mailbox {
   }
 
   private async receive(envelope: Envelope): Promise<void> {
-    if (this.seen.has(envelope.id)) return;
+    if (this.seen.has(envelope.id)) return; // a replay
     let plain: Message;
     try {
       plain = await open(this.device.open, this.device, "up", envelope);
@@ -197,29 +244,33 @@ export class Mailbox {
       console.warn("dropped an envelope that does not open with this device's key");
       return;
     }
-    this.seen.add(envelope.id);
-    if (this.seen.size > 5_000) this.seen.delete(this.seen.values().next().value as string);
+    const expires = plain.expires as number;
+    if (expires < Date.now()) {
+      console.warn("dropped an expired envelope (held back, or replayed)");
+      return;
+    }
+    this.seen.add(envelope.id, expires);
     for (const id of (plain.acks as string[] | undefined) ?? []) this.track(id, "delivered");
     for (const r of (plain.rejected as { id: string }[] | undefined) ?? []) this.track(r.id, "expired");
     for (const frame of (plain.frames as Frame[] | undefined) ?? []) this.dispatch(frame);
   }
 
   private dispatch({ s, m }: Frame): void {
-    if (s?.startsWith("app:") && (typeof m.id === "number" || typeof m.id === "string") && !m.method) {
-      const waiting = this.replies.get(m.id);
-      if (waiting) waiting(m);
-      else if (typeof m.id === "string" && m.id.startsWith("q-")) this.onQueuedAnswer?.(m.id, m);
-      this.replies.delete(m.id);
+    const answer = typeof m.id === "string" && !m.method;
+    if (answer && (s === null || s.startsWith("app:"))) {
+      const id = m.id as string;
+      const waiting = this.replies.get(id);
+      if (waiting?.s === s) {
+        this.replies.delete(id);
+        waiting.resolve(m);
+      } else if (s !== null && id.startsWith("q-")) this.onQueuedAnswer?.(id, m);
       return;
     }
     if (s !== null) {
       this.channels.get(s)?.(m as AnyMessage);
       return;
     }
-    if (typeof m.id === "number" && !m.method) {
-      this.replies.get(m.id)?.(m);
-      this.replies.delete(m.id);
-    } else if (m.method === "_handler/remote/closed") {
+    if (m.method === "_handler/remote/closed") {
       const p = m.params as ClosedNotice;
       this.closers.get(p.s)?.({ code: p.code, reason: p.reason });
     } else if (typeof m.method === "string") {

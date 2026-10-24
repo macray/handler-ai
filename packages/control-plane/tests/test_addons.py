@@ -96,11 +96,11 @@ AGENT: dict[str, Any] = {
 def test_addon_catalog(addons_dir: Path) -> None:
     shop = addon_catalog.get("shopify")
     assert [s.name for s in shop.skills] == ["shopify"]
-    assert addon_catalog.names() == ["logs", "miniapp", "shopify"]  # + the built-in one
+    assert addon_catalog.names() == ["app-builder", "logs", "shopify"]  # + the built-in one
     assert not shop.builtin and not shop.overrides_builtin  # shopify is in the catalog only
-    logs, miniapp = addon_catalog.get("logs"), addon_catalog.get("miniapp")
+    logs, builder = addon_catalog.get("logs"), addon_catalog.get("app-builder")
     assert not logs.builtin and not logs.overrides_builtin
-    assert miniapp.builtin and miniapp.directory == addon_catalog.BUILTIN_DIR / "miniapp"
+    assert builder.builtin and builder.directory == addon_catalog.BUILTIN_DIR / "app-builder"
     with pytest.raises(addon_catalog.UnknownAddonError):
         addon_catalog.get("../shopify")
 

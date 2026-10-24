@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "type": "object",
+    "required": ["said", "now", "actions"],
+    "properties": {
+      "said": { "type": "string", "title": "What was said", "description": "The person's words, and the exchange before them.", "x-handler": "long-text" },
+      "now": { "type": "string", "title": "Now", "description": "The date, time and time zone where the person is." },
+      "actions": { "type": "string", "title": "What can be asked", "description": "Each app's actions: its name, the action's name, what it does, its form.", "x-handler": "long-text" }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["status", "summary", "kind"],
+    "properties": {
+      "status": { "title": "Status", "enum": ["ok", "attention", "failed"] },
+      "summary": { "title": "Summary", "type": "string" },
+      "kind": { "title": "Kind", "enum": ["pick", "needs", "none"] },
+      "app": { "title": "App", "type": "string" },
+      "action": { "title": "Action", "type": "string" },
+      "fields": { "title": "Its form, filled", "type": "object" },
+      "why": { "title": "Why this one", "type": "string" },
+      "question": { "title": "What it needs to know", "type": "string" }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 <script lang="ts">
   // A skill's trust panel (D.17, D.18): what handlerd's scan found in its files (no model involved),
-  // its reviews (runs of the built-in skill reviewer, D.18, or of your agents whose interface takes
-  // a skill), and Edit with an agent (a session of the built-in skill creator starting as a copy of
+  // its reviews (runs of the skill reviewer Handler uses, D.18, or of your agents whose interface takes
+  // a skill), and Edit with an agent (a session of the skill creator Handler uses starting as a copy of
   // it, saved back from there).
   import { Button } from "$lib/components/ui/button";
   import * as NativeSelect from "$lib/components/ui/native-select";
@@ -11,7 +11,7 @@
   import type { Agent, Session, SkillInfo } from "../lib/contracts.gen";
   import { agentLabel } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
-  import { runState } from "../lib/runs";
+  import { runState, skillField } from "../lib/runs";
   import { sessions } from "../lib/sessions.svelte";
 
   let { skill }: { skill: SkillInfo } = $props();
@@ -20,12 +20,15 @@
   let runs = $state<Session[]>([]);
   let reviewer = $state("");
   let error = $state<string | null>(null);
+  let given = $state<Record<string, string>>({}); // Handler's need → the agent given (D.18)
 
-  // the built-in reviewer first
+  // the one given for the built-in reviewer first
   const reviewers = $derived(
-    agents.filter((a) => a.interface?.subject === "skill").sort((a, b) => Number(b.origin === "skill-review") - Number(a.origin === "skill-review")),
+    agents
+      .filter((a) => a.interface?.result && skillField(a.interface))
+      .sort((a, b) => Number(b.id === given["skill-review"]) - Number(a.id === given["skill-review"])),
   );
-  const creator = $derived(agents.find((a) => a.origin === "skill-creator"));
+  const creator = $derived(agents.find((a) => a.id === given["skill-creator"]));
   const chosen = $derived(reviewers.find((a) => a.id === reviewer));
   const running = $derived(runs.some((r) => runState(r) === "running"));
   const scan = $derived(skill.scan);
@@ -35,7 +38,10 @@
 
   async function refresh(): Promise<void> {
     try {
-      [agents, runs] = await Promise.all([api.agents(), api.skillRuns(skill.name)]);
+      const [all, list, needs] = await Promise.all([api.agents(), api.skillRuns(skill.name), api.handlerNeeds()]);
+      agents = all;
+      runs = list;
+      given = Object.fromEntries(needs.filter((b) => b.agentId).map((b) => [b.name, b.agentId as string]));
       reviewer ||= reviewers[0]?.id ?? "";
     } catch (e) {
       error = (e as Error).message;
@@ -108,7 +114,7 @@
       </div>
     {:else}
       <p class="text-sm text-muted-foreground">
-        No agent reviews skills yet. <a class="text-link hover:underline" href={href({ view: "edit-ad-hoc", builtin: "skill-review" })} data-testid="make-reviewer">Set up the Skill reviewer</a>
+        No agent reviews skills yet. <a class="text-link hover:underline" href={href({ view: "set-up-helper", need: "skill-review" })} data-testid="make-reviewer">Set up the Skill reviewer</a>
         (choose its models): it reads the skill, never runs it, and says what it makes your agents do.
       </p>
     {/if}
@@ -125,7 +131,7 @@
       <p class="text-xs text-muted-foreground">A session working on a copy of the skill: nothing changes here until you save it back from the session (Save to library, Replace).</p>
     {:else}
       <p class="text-sm text-muted-foreground">
-        <a class="text-link hover:underline" href={href({ view: "edit-ad-hoc", builtin: "skill-creator" })}>Set up the Skill creator</a> (choose its models) to
+        <a class="text-link hover:underline" href={href({ view: "set-up-helper", need: "skill-creator" })}>Set up the Skill creator</a> (choose its models) to
         improve skills with it.
       </p>
     {/if}

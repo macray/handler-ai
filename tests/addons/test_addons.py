@@ -195,7 +195,7 @@ def test_g3_agent_selection_is_checked(daemon: Daemon, bindings: Path) -> None:
         ):
             r = c.post(
                 "/v1/agents",
-                json={"models": [{"account": account}], "scope": str(scope), "bindings": selected},
+                json={"model": {"account": account}, "scope": str(scope), "bindings": selected},
             )
             assert r.status_code == 400, r.text
             assert detail in r.json()["detail"]

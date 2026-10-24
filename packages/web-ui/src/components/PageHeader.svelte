@@ -20,17 +20,17 @@
   } = $props();
 </script>
 
-<header class="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+<header class="@container/header flex h-12 shrink-0 items-center gap-2 border-b px-3">
   <Sidebar.Trigger class="text-muted-foreground" />
   <Separator orientation="vertical" class="mr-1 data-vertical:h-4 data-vertical:self-center" />
   {#if parent}
-    <a href={parent.href} class="text-muted-foreground hover:text-foreground truncate text-sm no-underline max-sm:hidden">{parent.label}</a>
+    <a href={parent.href} class="text-muted-foreground hover:text-foreground min-w-0 shrink-[3] truncate text-sm no-underline max-sm:hidden">{parent.label}</a>
     <ChevronRight class="text-muted-foreground size-3.5 shrink-0 max-sm:hidden" />
   {/if}
   {#if titled}
-    <span class="truncate text-sm font-medium">{title}</span>
+    <span class="min-w-0 truncate text-sm font-medium">{title}</span>
   {:else}
-    <h1 class="truncate text-sm font-medium">{title}</h1>
+    <h1 class="min-w-0 truncate text-sm font-medium">{title}</h1>
   {/if}
   {@render meta?.()}
   <div class="ml-auto flex shrink-0 items-center gap-1.5">{@render actions?.()}</div>

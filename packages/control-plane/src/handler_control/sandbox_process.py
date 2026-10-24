@@ -27,6 +27,7 @@ from handler_contracts import Enforcement, SandboxSpec
 log = logging.getLogger("handler.sandbox")
 
 IMPLEMENTATION = "handler-sandbox-podman"
+LAUNCHER_PREFIX = f"{IMPLEMENTATION}: "  # a line of the launcher's own, not the sandbox's logs
 # tests only: another executable in its place (tests/support/fake_sandbox.py, which runs the fake
 # harness on the host so the daemon's tests need no container)
 TEST_SANDBOX_ENV = "HANDLER_TEST_SANDBOX"
@@ -103,7 +104,7 @@ async def start_async(spec: SandboxSpec, *, line_limit: int) -> asyncio.subproce
 
 
 async def start_piped(spec: SandboxSpec, *, line_limit: int) -> asyncio.subprocess.Process:
-    """Same, for a process that serves something else than its stdio (a mini app's backend):
+    """Same, for a process that serves something else than its stdio (an app's backend):
     no stdin, stdout and stderr merged into one pipe for its log."""
     prepare_host_dirs(spec)
     fd = _spec_fd(spec)
@@ -180,13 +181,19 @@ async def stop(proc: asyncio.subprocess.Process) -> None:
 
 
 async def read_stderr(
-    proc: asyncio.subprocess.Process, label: str, on_egress: Callable[[dict[str, str]], None]
+    proc: asyncio.subprocess.Process,
+    label: str,
+    on_egress: Callable[[dict[str, str]], None],
+    on_launcher: Callable[[str], None] | None = None,
 ) -> None:
     """The sandbox's logs, logged under `label`; its egress events go to `on_egress` (A.3
-    observability)."""
+    observability), what its launcher itself says (why it did not start, A.1) to `on_launcher`."""
     assert proc.stderr is not None
     async for raw in proc.stderr:
-        log_line(raw.decode(errors="replace").rstrip(), label, on_egress)
+        line = raw.decode(errors="replace").rstrip()
+        if on_launcher is not None and line.startswith(LAUNCHER_PREFIX):
+            on_launcher(line.removeprefix(LAUNCHER_PREFIX))
+        log_line(line, label, on_egress)
 
 
 def log_line(line: str, label: str, on_egress: Callable[[dict[str, str]], None]) -> None:

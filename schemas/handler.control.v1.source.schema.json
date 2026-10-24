@@ -1,0 +1,195 @@
+{
+  "$id": "urn:handler.control/v1/source",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SourceItem": {
+      "description": "Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an\nagents file's content) or an addon (`addons/<name>/`).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "app",
+            "agents",
+            "addon"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "installed": {
+          "default": false,
+          "title": "Installed",
+          "type": "boolean"
+        },
+        "update": {
+          "default": false,
+          "title": "Update",
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "notes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceNote"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "SourceItem",
+      "type": "object"
+    },
+    "SourceNote": {
+      "description": "One thing a source's item does, in a few words, for its card (D.26): \"uses 1 folder of\nyours\", \"reaches 2 sites\".",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "weakens": {
+          "default": false,
+          "title": "Weakens",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "SourceNote",
+      "type": "object"
+    }
+  },
+  "description": "A git repository Handler reads to offer things to install (D.26). The official one is\nHandler's; any other was added by the person, who trusts it.",
+  "properties": {
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    },
+    "official": {
+      "default": false,
+      "title": "Official",
+      "type": "boolean"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Commit"
+    },
+    "fetchedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fetchedat"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "items": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SourceItem"
+      },
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "url"
+  ],
+  "title": "Source",
+  "type": "object"
+}

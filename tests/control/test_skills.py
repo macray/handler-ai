@@ -16,7 +16,7 @@ def skill_md(name: str, description: str = "Checks things. Use when asked to che
 def new_project(daemon: Daemon, **agent: Any) -> dict[str, Any]:
     body = {
         "folder": str(daemon.make_scope()),
-        "agents": [{"models": [{"account": "fake"}], "name": "dev"} | agent],
+        "agents": [{"model": {"account": "fake"}, "name": "dev"} | agent],
     }
     with daemon.http() as c:
         r = c.post("/v1/projects", json=body)
@@ -75,9 +75,15 @@ def test_agents_choose_skills(daemon: Daemon) -> None:
         listed = c.get(f"/v1/agents/{agent['id']}").json()
         assert listed["skills"] == [] and listed["projectSkills"] == ["shop-wide"]
 
-        url = f"/v1/projects/{pid}/agents/{agent['id']}"
+        url = f"/v1/agents/{agent['id']}"
         r = c.put(
-            url, json={"models": [{"account": "fake"}], "name": "dev", "skills": ["everywhere"]}
+            url,
+            json={
+                "projectId": pid,
+                "model": {"account": "fake"},
+                "name": "dev",
+                "skills": ["everywhere"],
+            },
         )
         assert r.status_code == 200, r.text
         assert (r.json()["skills"], r.json()["projectSkills"]) == (["everywhere"], ["shop-wide"])
@@ -85,22 +91,20 @@ def test_agents_choose_skills(daemon: Daemon) -> None:
 
         # its own project's skill is not picked, nor an unknown one; another project's is
         r = c.put(
-            url, json={"models": [{"account": "fake"}], "name": "dev", "skills": ["shop-wide"]}
-        )
-        assert r.status_code == 400 and r.json()["title"] == "given by its project"
-        elsewhere = f"/v1/projects/{other['id']}/agents"
-        r = c.post(
-            elsewhere, json={"models": [{"account": "fake"}], "name": "b", "skills": ["nope"]}
-        )
-        assert r.status_code == 400 and r.json()["title"] == "skills unusable"
-        r = c.post(
-            elsewhere,
+            url,
             json={
-                "models": [{"account": "fake"}],
-                "name": "b",
-                "skills": ["shop-wide", "everywhere"],
+                "projectId": pid,
+                "model": {"account": "fake"},
+                "name": "dev",
+                "skills": ["shop-wide"],
             },
         )
+        assert r.status_code == 400 and r.json()["title"] == "given by its project"
+        elsewhere = "/v1/agents"
+        b = {"projectId": other["id"], "model": {"account": "fake"}, "name": "b"}
+        r = c.post(elsewhere, json=b | {"skills": ["nope"]})
+        assert r.status_code == 400 and r.json()["title"] == "skills unusable"
+        r = c.post(elsewhere, json=b | {"skills": ["shop-wide", "everywhere"]})
         assert r.status_code == 201, r.text
         theirs = r.json()["id"]
 
@@ -122,6 +126,44 @@ def test_agents_choose_skills(daemon: Daemon) -> None:
         taken = c.post("/v1/skills", json={"content": skill_md("taken")}).status_code
         r = c.put("/v1/skills/anywhere", json={"content": skill_md("taken"), "projects": [pid]})
         assert taken == 201 and r.status_code == 409
+
+
+def test_a_project_gives_skills_in_its_settings(daemon: Daemon) -> None:
+    """D.17 from the project's side: its settings say which skills it gives to all its agents
+    (the skill's page says it too); an agent that picked one drops it; an unknown or invalid
+    skill is refused; a full update without them takes them back."""
+    with daemon.http() as c:
+        for name in ("house-style", "release-notes"):
+            assert c.post("/v1/skills", json={"content": skill_md(name)}).status_code == 201
+    project = new_project(daemon, skills=["house-style"])
+    agent = project["agents"][0]
+    body = {"folder": project["folder"], "skills": ["house-style", "release-notes"]}
+    with daemon.http() as c:
+        r = c.put(f"/v1/projects/{project['id']}", json=body)
+        assert r.status_code == 200 and r.json()["skills"] == ["house-style", "release-notes"]
+        mine = c.get(f"/v1/agents/{agent['id']}").json()
+        assert (mine["skills"], mine["projectSkills"]) == ([], ["house-style", "release-notes"])
+        given = c.get("/v1/skills/release-notes").json()["projects"]
+        assert given == [project["id"]]
+        unknown = c.put(f"/v1/projects/{project['id']}", json=body | {"skills": ["nope"]})
+        assert unknown.status_code == 400 and unknown.json()["title"] == "skills unusable"
+        (daemon.config_dir / "skills" / "broken").mkdir()
+        broken = c.put(f"/v1/projects/{project['id']}", json=body | {"skills": ["broken"]})
+        assert broken.status_code == 400
+        shutil.rmtree(daemon.config_dir / "skills" / "broken")
+        r = c.put(f"/v1/projects/{project['id']}", json={"folder": project["folder"]})
+        assert r.json()["skills"] == []
+        assert c.get("/v1/skills/release-notes").json()["projects"] == []
+        made = c.post(
+            "/v1/projects",
+            json={
+                "folder": str(daemon.make_scope()),
+                "skills": ["release-notes"],
+                "agents": [{"model": {"account": "fake"}, "name": "dev"}],
+            },
+        )
+        assert made.status_code == 201 and made.json()["skills"] == ["release-notes"]
+        assert made.json()["agents"][0]["projectSkills"] == ["release-notes"]
 
 
 def test_an_agents_skills_go_to_its_harness(daemon: Daemon) -> None:

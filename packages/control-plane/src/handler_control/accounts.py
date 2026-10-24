@@ -144,12 +144,12 @@ def create(
     *,
     plan: str | None = None,
     connectors: bool = False,
-    contexts: list[str] | None = None,
+    areas: list[str] | None = None,
 ) -> LoadedAccount:
     target = directory / f"{name}.toml"
     if target.exists():
         raise AccountError(f"account '{name}' exists")
-    _write(target, harness, description, plan, connectors, contexts or [])
+    _write(target, harness, description, plan, connectors, areas or [])
     loaded = load(target)
     if loaded.account is None:
         target.unlink()
@@ -167,9 +167,9 @@ def update(
     description: str | None,
     plan: str | None = None,
     connectors: bool = False,
-    contexts: list[str] | None = None,
+    areas: list[str] | None = None,
 ) -> LoadedAccount:
-    """Its description, its plan, its connectors, its contexts, and its name: the file, the login
+    """Its description, its plan, its connectors, its areas, and its name: the file, the login
     and its token follow."""
     assert old.account is not None and old.login is not None
     if (error := plan_error(old.account.harness, old.login, plan)) is not None:
@@ -185,7 +185,7 @@ def update(
         if isinstance(token, StoreSecret) and token.secret == token_path(old.name):
             token = StoreSecret(secret=token_path(name))
         old.path.unlink()
-    _write(target, old.account.harness, description, plan, connectors, contexts or [], token)
+    _write(target, old.account.harness, description, plan, connectors, areas or [], token)
     loaded = load(target)
     if loaded.account is None:
         raise AccountError(loaded.error or "invalid account")
@@ -249,7 +249,7 @@ def forget_login(loaded: LoadedAccount, credentials: Path, store: secrets.Secret
 def _rewrite(loaded: LoadedAccount, token: SecretRef | None) -> None:
     a = loaded.account
     assert a is not None
-    _write(loaded.path, a.harness, a.description, a.plan, a.connectors, a.contexts, token)
+    _write(loaded.path, a.harness, a.description, a.plan, a.connectors, a.areas, token)
 
 
 def _write(  # noqa: PLR0917 — the account file's fields, in its order
@@ -258,7 +258,7 @@ def _write(  # noqa: PLR0917 — the account file's fields, in its order
     description: str | None,
     plan: str | None,
     connectors: bool,
-    contexts: list[str],
+    areas: list[str],
     token: SecretRef | None = None,
 ) -> None:
     doc = tomlkit.document()
@@ -270,8 +270,8 @@ def _write(  # noqa: PLR0917 — the account file's fields, in its order
         doc["plan"] = plan
     if connectors:
         doc["connectors"] = True
-    if contexts:
-        doc["contexts"] = list(dict.fromkeys(contexts))
+    if areas:
+        doc["areas"] = list(dict.fromkeys(areas))
     if token is not None:
         ref = tomlkit.inline_table()
         ref.update(token.model_dump(by_alias=True, exclude_none=True))

@@ -1,5 +1,10 @@
 <script lang="ts">
-  // The prompt line of the terminal: grows with its text, Enter sends. Meant for a `.term-surface`.
+  // The prompt box of the terminal: the input (grows with its text, Enter sends), under it a toolbar
+  // (the page's `tools`, the keys while it is empty and focused, images, Send); while the agent
+  // works, above it what it is doing and Interrupt. Meant for a `.term-surface`.
+  // On a touch screen (a phone: its keyboard has no Shift+Enter) Return starts a new line and the
+  // Send button sends; Interrupt takes a second tap, so a stray one (in a pocket) does not stop the
+  // agent.
   // While the agent works, a page that keeps a queue (`onqueue`) lets Enter queue the message: it
   // is shown above the input, sent when the turn ends, or now (interrupting the turn).
   // Images (pasted, dropped or picked) go with the text when the page passes `takesImages`; when
@@ -8,8 +13,11 @@
   // first, then those matching what follows the `@`): its path goes in the text, which every agent
   // reads (its folder is its working directory).
   import type { AvailableCommand } from "@agentclientprotocol/sdk";
+  import type { Snippet } from "svelte";
   import { MAX_IMAGES, isImage, readImage, type Prompt, type PromptImage } from "../lib/images";
   import { imageSrc } from "../lib/render";
+  import { duration } from "../lib/tools";
+  import { settled, touch } from "../lib/touch.svelte";
 
   let {
     busy,
@@ -28,6 +36,8 @@
     onsendnow,
     ondeletequeued,
     findFiles,
+    activity = null,
+    tools,
   }: {
     busy: boolean;
     autofocus?: boolean; // take the focus when shown, unless the user is typing elsewhere
@@ -45,16 +55,40 @@
     onsendnow?: () => void;
     ondeletequeued?: () => void;
     findFiles?: (query: string) => Promise<string[]>; // not given: no `@` here
+    activity?: string | null; // the step the agent is on, said while it works
+    tools?: Snippet; // the page's own controls, in the toolbar (the mode, the model)
   } = $props();
 
   let input: HTMLTextAreaElement | undefined = $state();
   let picker: HTMLInputElement | undefined = $state();
   let notice = $state<string | null>(null); // why an image was not attached
   let dragging = $state(false);
+  let focused = $state(false); // keyboard hints only then, and while the input is empty
   let reading = $state(0); // images being read: sending waits for them
   let frame = $state(0);
   let clock = $state(Date.now());
   const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+  const settle = settled();
+
+  // On a touch screen the first tap on Interrupt asks for a second one, for a few seconds.
+  let confirming = $state(false);
+  $effect(() => {
+    if (!confirming) return;
+    const timer = setTimeout(() => (confirming = false), 3000);
+    return () => clearTimeout(timer);
+  });
+  $effect(() => {
+    if (!busy) confirming = false;
+  });
+
+  function interrupt(): void {
+    if (touch && !confirming) {
+      confirming = true;
+      return;
+    }
+    confirming = false;
+    oncancel();
+  }
 
   // `@…` right before the caret: the files it may name
   let caret = $state(0);
@@ -136,14 +170,6 @@
   });
 
   const elapsed = $derived(turnStartedAt === null ? "" : duration(clock - turnStartedAt));
-
-  function duration(ms: number): string {
-    const s = Math.max(0, Math.floor(ms / 1000));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
-    return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
-  }
 
   $effect(() => {
     if (!busy || waiting || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -233,7 +259,7 @@
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !touch) {
       event.preventDefault();
       send();
     } else if (event.key === "Escape" && busy) {
@@ -241,6 +267,12 @@
     }
   }
 </script>
+
+{#snippet interruptButton()}
+  <button type="button" class="key" class:confirming onclick={interrupt} disabled={!settle.ready} data-testid="interrupt">
+    {confirming ? "Tap again to interrupt" : "Interrupt"}
+  </button>
+{/snippet}
 
 <div
   class="composer"
@@ -251,6 +283,24 @@
   ondragleave={() => (dragging = false)}
   ondrop={drop}
 >
+  {#if busy}
+    <div class="status-line">
+      {#if waiting && !interrupting}
+        <span class="waiting" data-testid="waiting">
+          <span aria-hidden="true">⏸</span> waiting for you{#if elapsed}&nbsp;<span class="tabular-nums">· {elapsed}</span>{/if}
+        </span>
+        {@render interruptButton()}
+      {:else}
+        <span class="working" data-testid="working">
+          <span class="spinner" aria-hidden="true">{SPINNER[frame]}</span>
+          {interrupting ? "interrupting…" : "working"}{#if elapsed}&nbsp;<span class="tabular-nums" data-testid="elapsed">{elapsed}</span>{/if}
+          {#if activity && !interrupting}· <span class="activity" data-testid="activity">{activity}</span>{/if}
+          {#if !interrupting && !touch}· <kbd>esc</kbd> to interrupt{/if}
+        </span>
+        {#if !interrupting}{@render interruptButton()}{/if}
+      {/if}
+    </div>
+  {/if}
   {#if queued}
     <div class="queued" data-testid="queued">
       <div class="queued-head">
@@ -287,87 +337,82 @@
       {/each}
     </ul>
   {/if}
-  {#if images.length}
-    <ul class="attached" data-testid="attached-images">
-      {#each images as image, n (n)}
-        <li>
-          <img src={imageSrc({ type: "image", ...image })} alt="image {n + 1}" />
-          <button type="button" aria-label="remove image {n + 1}" title="Remove" onclick={() => (images = images.filter((_, i) => i !== n))}>×</button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-  {#if reading}<p class="text-muted-foreground notice-line" role="status">reading image…</p>{/if}
-  {#if notice}<p class="notice notice-line" role="status" data-testid="image-notice">{notice}</p>{/if}
-  <div class="input" class:busy={busy && !onqueue}>
-    <span class="prompt" aria-hidden="true">❯</span>
-    <textarea
-      bind:this={input}
-      bind:value={text}
-      onkeydown={keydown}
-      onkeyup={() => (caret = input?.selectionStart ?? 0)}
-      oninput={() => {
-        caret = input?.selectionStart ?? 0;
-        closedAt = null;
-      }}
-      onclick={() => (caret = input?.selectionStart ?? 0)}
-      onpaste={paste}
-      rows="1"
-      spellcheck="false"
-      placeholder={queues ? "Add a detail: sent when the agent finishes…" : busy ? "the agent is working…" : "Ask the agent…"}
-      aria-label="prompt"
-    ></textarea>
-  </div>
-  <div class="hints">
-    {#if busy && waiting && !interrupting}
-      <span class="waiting" data-testid="waiting">
-        <span aria-hidden="true">⏸</span> waiting for you{#if elapsed}&nbsp;<span class="tabular-nums">· {elapsed}</span>{/if}
-      </span>
-      <button type="button" class="key" onclick={oncancel} data-testid="interrupt">Interrupt</button>
-    {:else if busy}
-      <span class="working" data-testid="working">
-        <span class="spinner" aria-hidden="true">{SPINNER[frame]}</span>
-        {interrupting ? "interrupting…" : "working"}{#if elapsed}&nbsp;<span class="tabular-nums" data-testid="elapsed">{elapsed}</span>{/if}
-        {#if !interrupting}· <kbd>esc</kbd> to interrupt{/if}
-      </span>
-      {#if !interrupting}<button type="button" class="key" onclick={oncancel} data-testid="interrupt">Interrupt</button>{/if}
-    {:else if picking}
-      <span class="text-muted-foreground"><kbd>↑↓</kbd> choose · <kbd>enter</kbd> or <kbd>tab</kbd> pick · <kbd>esc</kbd> close</span>
-    {:else}
-      <span class="text-muted-foreground">
-        <kbd>enter</kbd> send · <kbd>shift+enter</kbd> newline · <kbd>/</kbd> commands{#if findFiles}&nbsp;· <kbd>@</kbd> files{/if}
-      </span>
+  <div class="box" class:busy={busy && !onqueue}>
+    {#if images.length}
+      <ul class="attached" data-testid="attached-images">
+        {#each images as image, n (n)}
+          <li>
+            <img src={imageSrc({ type: "image", ...image })} alt="image {n + 1}" />
+            <button type="button" aria-label="remove image {n + 1}" title="Remove" onclick={() => (images = images.filter((_, i) => i !== n))}>×</button>
+          </li>
+        {/each}
+      </ul>
     {/if}
-    <span class="spacer"></span>
-    {#if takesImages !== undefined}
-      <input
-        bind:this={picker}
-        type="file"
-        accept="image/*"
-        multiple
-        hidden
-        onchange={() => {
-          void attach([...(picker?.files ?? [])]);
-          if (picker) picker.value = "";
+    {#if reading}<p class="text-muted-foreground notice-line" role="status">reading image…</p>{/if}
+    {#if notice}<p class="notice notice-line" role="status" data-testid="image-notice">{notice}</p>{/if}
+    <div class="input">
+      <span class="prompt" aria-hidden="true">❯</span>
+      <textarea
+        bind:this={input}
+        bind:value={text}
+        onkeydown={keydown}
+        onkeyup={() => (caret = input?.selectionStart ?? 0)}
+        oninput={() => {
+          caret = input?.selectionStart ?? 0;
+          closedAt = null;
         }}
-        data-testid="image-input"
-      />
-      <button
-        type="button"
-        class="key"
-        disabled={!takesImages}
-        title={takesImages
-          ? "Attach images (or paste or drop them). They are sent to the model's provider with your message."
-          : "This agent does not take images"}
-        onclick={() => picker?.click()}
-        data-testid="attach-image"
-      >
-        + image
+        onclick={() => (caret = input?.selectionStart ?? 0)}
+        onfocus={() => (focused = true)}
+        onblur={() => (focused = false)}
+        onpaste={paste}
+        rows="1"
+        enterkeyhint={touch ? "enter" : "send"}
+        spellcheck="false"
+        placeholder={queues ? "Add a detail: sent when the agent finishes…" : busy ? "the agent is working…" : "Ask the agent…"}
+        aria-label="prompt"
+      ></textarea>
+    </div>
+    <div class="toolbar">
+      {@render tools?.()}
+      <span class="hints">
+        {#if picking}
+          <kbd>↑↓</kbd> choose · <kbd>enter</kbd> or <kbd>tab</kbd> pick · <kbd>esc</kbd> close
+        {:else if focused && !text && !busy}
+          {#if !touch}<kbd>enter</kbd> send · <kbd>shift+enter</kbd> newline ·{/if}
+          <kbd>/</kbd> commands{#if findFiles}&nbsp;· <kbd>@</kbd> files{/if}
+        {/if}
+      </span>
+      <span class="spacer"></span>
+      {#if takesImages !== undefined}
+        <input
+          bind:this={picker}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onchange={() => {
+            void attach([...(picker?.files ?? [])]);
+            if (picker) picker.value = "";
+          }}
+          data-testid="image-input"
+        />
+        <button
+          type="button"
+          class="key"
+          disabled={!takesImages}
+          title={takesImages
+            ? "Attach images (or paste or drop them). They are sent to the model's provider with your message."
+            : "This agent does not take images"}
+          onclick={() => picker?.click()}
+          data-testid="attach-image"
+        >
+          + image
+        </button>
+      {/if}
+      <button type="button" class="key send" onclick={send} disabled={!sendable} data-testid="send">
+        {queues ? "Queue" : "Send"}{touch ? "" : " ↵"}
       </button>
-    {/if}
-    <button type="button" class="key send" onclick={send} disabled={!sendable} data-testid="send">
-      {queues ? "Queue ↵" : "Send ↵"}
-    </button>
+    </div>
   </div>
 </div>
 
@@ -375,22 +420,24 @@
   .composer {
     position: relative;
   }
+  .box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.45rem 0.6rem 0.35rem;
+    background: var(--card);
+    transition: border-color 0.15s;
+  }
+  .box:focus-within {
+    border-color: var(--prompt);
+  }
+  .box.busy {
+    opacity: 0.7;
+  }
   .input {
     display: grid;
     grid-template-columns: 2ch minmax(0, 1fr);
     column-gap: 0.5ch;
     align-items: start;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.45rem 0.6rem;
-    background: var(--card);
-    transition: border-color 0.15s;
-  }
-  .input:focus-within {
-    border-color: var(--prompt);
-  }
-  .input.busy {
-    opacity: 0.7;
   }
   .prompt {
     color: var(--prompt);
@@ -412,19 +459,47 @@
   textarea::placeholder {
     color: var(--muted-foreground);
   }
-  .hints {
+  .status-line,
+  .toolbar {
     display: flex;
     align-items: center;
     gap: 1ch;
-    margin-top: 0.35rem;
     font-size: max(0.9em, 12px);
+    min-width: 0;
+  }
+  .status-line {
+    margin-bottom: 0.35rem;
     min-height: 1.8em;
+  }
+  .toolbar {
+    flex-wrap: wrap; /* a narrow box: Send goes under the page's controls */
+    row-gap: 0.35rem;
+    margin-top: 0.35rem;
+    min-height: 1.8em;
+  }
+  .toolbar .hints {
+    flex: 1 1 0;
+  }
+  /* a narrow composer cuts its hints and status, never its buttons */
+  .hints,
+  .working,
+  .waiting {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hints {
+    color: var(--muted-foreground);
   }
   .spacer {
     flex: 1;
   }
   .working {
     color: var(--ok);
+  }
+  .activity {
+    color: var(--foreground);
   }
   .waiting {
     color: var(--warn);
@@ -439,12 +514,25 @@
     border-radius: 4px;
     padding: 0.1rem 0.6rem;
     font-size: 1em;
+    flex: none;
+    white-space: nowrap;
+  }
+  .key.confirming {
+    color: var(--warn);
+    border-color: var(--warn);
+    font-weight: 600;
+  }
+  @media (pointer: coarse) {
+    .key {
+      min-height: 2.5rem;
+      padding: 0.2rem 0.9rem;
+    }
   }
   .send:not(:disabled) {
     color: var(--prompt);
     border-color: var(--prompt);
   }
-  .composer.dragging .input {
+  .composer.dragging .box {
     border-color: var(--prompt);
     border-style: dashed;
   }

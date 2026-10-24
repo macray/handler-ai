@@ -17,7 +17,7 @@ _TERM = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 START_TIMEOUT = 600.0  # seconds: handlerd's own limit (a first start may build the proxy's image)
 
 
-def _start(args: list[str], model: dict[str, Any] | None) -> TerminalStart:
+def _start(args: list[str], model: dict[str, Any] | None, folder: str) -> TerminalStart:
     term = os.environ.get("TERM", "")
     colorterm = os.environ.get("COLORTERM", "")
     extra: dict[str, Any] = {"term": term} if _TERM.match(term) else {}
@@ -25,13 +25,15 @@ def _start(args: list[str], model: dict[str, Any] | None) -> TerminalStart:
         extra["colorterm"] = colorterm
     if model is not None:
         extra["model"] = model
-    return TerminalStart(args=args, **extra)
+    return TerminalStart(args=args, folder=folder, **extra)
 
 
-def run(d: Daemon, agent_id: str, args: list[str], model: dict[str, Any] | None = None) -> NoReturn:
-    """The agent's terminal, with `model` (one of the agent's; default: its first); ClientError
-    when it cannot start."""
-    body = _start(args, model).model_dump(mode="json", by_alias=True, exclude_none=True)
+def run(
+    d: Daemon, agent_id: str, args: list[str], folder: str, model: dict[str, Any] | None = None
+) -> NoReturn:
+    """The agent's terminal in `folder` (the agent's or one inside it, the only one mounted), with
+    `model` (the agent's or another; default: the agent's); ClientError when it cannot start."""
+    body = _start(args, model, folder).model_dump(mode="json", by_alias=True, exclude_none=True)
     raw = d.call("POST", terminal_path(agent_id), body, timeout=START_TIMEOUT)
     started = TerminalStarted.model_validate(raw)
     os.execvp(started.attach[0], started.attach)

@@ -1,0 +1,42 @@
+{
+  "$id": "urn:handler.control/v1/speech-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/voice/transcribe` (and the device's `transcribe`): a recording to write down\nwith the chosen model, never kept.",
+  "properties": {
+    "audio": {
+      "minLength": 1,
+      "title": "Audio",
+      "type": "string"
+    },
+    "format": {
+      "enum": [
+        "webm",
+        "ogg",
+        "mp4",
+        "wav",
+        "mp3"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z]{2}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language"
+    }
+  },
+  "required": [
+    "audio",
+    "format"
+  ],
+  "title": "SpeechRequest",
+  "type": "object"
+}

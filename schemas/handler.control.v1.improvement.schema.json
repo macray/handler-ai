@@ -1,0 +1,252 @@
+{
+  "$id": "urn:handler.control/v1/improvement",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Attempt": {
+      "description": "One version of a job's instructions in an improvement, and how its checks went (D.21).",
+      "properties": {
+        "n": {
+          "title": "N",
+          "type": "integer"
+        },
+        "instructions": {
+          "title": "Instructions",
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change"
+        },
+        "state": {
+          "enum": [
+            "writing",
+            "checking",
+            "done",
+            "error"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        },
+        "writerRun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Writerrun"
+        },
+        "results": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CheckResult"
+          },
+          "title": "Results",
+          "type": "array"
+        },
+        "passed": {
+          "default": 0,
+          "title": "Passed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "instructions",
+        "state"
+      ],
+      "title": "Attempt",
+      "type": "object"
+    },
+    "CheckResult": {
+      "description": "One check in a check run (D.20).",
+      "properties": {
+        "checkId": {
+          "title": "Checkid",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "passed",
+            "failed",
+            "error"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "got": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Got"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        }
+      },
+      "required": [
+        "checkId",
+        "name",
+        "state"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    }
+  },
+  "description": "A job's instructions rewritten by the prompt writer, again and again, judged by its checks,\nuntil they all pass or the budget is spent (D.21). Nothing changes until an attempt is kept.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "agentId": {
+      "title": "Agentid",
+      "type": "string"
+    },
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "maxAttempts": {
+      "title": "Maxattempts",
+      "type": "integer"
+    },
+    "maxMinutes": {
+      "title": "Maxminutes",
+      "type": "integer"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "done",
+        "stopped",
+        "failed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "why": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Why"
+    },
+    "attempts": {
+      "items": {
+        "$ref": "#/$defs/Attempt"
+      },
+      "title": "Attempts",
+      "type": "array"
+    },
+    "best": {
+      "default": 0,
+      "title": "Best",
+      "type": "integer"
+    },
+    "kept": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kept"
+    },
+    "startedAt": {
+      "format": "date-time",
+      "title": "Startedat",
+      "type": "string"
+    },
+    "endedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Endedat"
+    }
+  },
+  "required": [
+    "id",
+    "agentId",
+    "goal",
+    "maxAttempts",
+    "maxMinutes",
+    "state",
+    "attempts",
+    "startedAt"
+  ],
+  "title": "Improvement",
+  "type": "object"
+}

@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from handler_contracts import Build, BuildState, HarnessDescriptor
+from handler_contracts import Build, BuildState, HarnessDescriptor, NoNetwork
+from handler_control import compose
 from handler_control.builds import BuildStore, _Job
 from handler_control.image_check import (
     DUMMY_SECRET,
@@ -125,3 +126,9 @@ def test_log_lines_lose_terminal_escapes(tmp_path: Path) -> None:
         job.out = out
         job.line("\x1b[1;32mSTEP 1/3:\x1b[0m FROM toolbox\r\n")
     assert (store.dir / "b1.log").read_text() == "STEP 1/3: FROM toolbox\n"
+
+
+def test_the_toolbox_check_runs_like_an_agent() -> None:
+    s = compose.toolbox_check_spec(name="c", toolbox="t", scope="/s", argv=["bun", "--version"])
+    assert (s.image, s.confinement, s.workdir) == ("t", "strict", "/s")
+    assert isinstance(s.network, NoNetwork) and s.image_mounts == [] and s.path_append == []

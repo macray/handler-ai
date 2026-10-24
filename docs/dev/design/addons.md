@@ -144,8 +144,15 @@ Same flow as harness images (D.4), with a new target `addon:<name>`:
 3. tag it `:latest` (the image it replaces is removed once unused).
 
 Addons use the toolbox's runtimes, so **a toolbox rebuild also rebuilds and checks every addon
-image already built** (one never built is not in use), and switches all of them or none, as it
-does for harnesses.
+image already built**, and switches all of them or none, as it does for harnesses.
+
+An addon's image is first built when it is installed from the catalog, or, for any addon, once an
+agent uses it: handlerd builds the missing image of an addon a saved agent has a binding of, as it
+starts and when an agent starts using one. "Never built, so not in use" was the rule before
+(2026-10-21), and it was wrong for the built-in addons: nothing installs them, so the App creator,
+set up with the `app-builder` addon, could not start until someone found Settings → Images. An agent
+whose addon image is still missing does not start; its session says what to prepare and prepares
+it from there.
 
 Unlike a harness image, an addon image in use is not protected by podman: `podman image rm`
 refuses to remove a container's own image, but not an image the container only mounts (found

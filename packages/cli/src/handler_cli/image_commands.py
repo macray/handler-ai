@@ -83,6 +83,8 @@ def watch(d: Daemon, build: Any) -> int:
         build = d.call("POST", f"/v1/builds/{build['id']}/cancel")
     for name, version in build.get("versions", {}).items():
         print(f"{name}: {version}")
+    for warning in build.get("warnings", []):
+        print(f"warning: {warning}", file=sys.stderr)
     error = f" ({build['error']})" if build.get("error") else ""
     print(f"build {build['id']}: {build['state']}{error}")
     return 0 if build["state"] == "succeeded" else 1

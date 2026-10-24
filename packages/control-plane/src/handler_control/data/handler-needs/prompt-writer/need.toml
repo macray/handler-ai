@@ -1,0 +1,4 @@
+# One of Handler's needs (D.18): what the agent given for it does for Handler, and the
+# version of the definition beside this file (one more on each change of it).
+description = "Rewrites a job's instructions when you improve it: clearer, and fixing what its checks say goes wrong."
+version = 1

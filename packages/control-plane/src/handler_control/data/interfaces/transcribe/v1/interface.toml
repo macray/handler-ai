@@ -1,0 +1,19 @@
+# The `transcribe/v1` service (docs/dev/design/services.md, contracts I.11): speech written down.
+# Its tool is in tools.json (input TranscribeRequest, output TranscribeResponse of
+# handler_contracts.automation: a unit test keeps them equal). Its connector
+# (handler_control/transcribe.py) is built in, its bindings are the providers' speech models (a
+# vendor's API or a server on this machine speaking the OpenAI transcriptions endpoint). Its caller
+# today is handlerd itself (speaking to Ask, D.25).
+apiVersion = "handler.interface/v1"
+name = "transcribe"
+version = 1
+description = "Write down what is said in a recording, with a speech model"
+
+[limits]
+timeoutSeconds = 60
+maxAudioBytes = 1048576
+
+[errors]
+refused = "the model is not one this caller may use"
+limit = "the recording is larger than the limit"
+unavailable = "the provider failed, did not answer in time or cannot be reached; retrying later may work"

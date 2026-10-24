@@ -13,20 +13,19 @@
 
 Handler runs Claude Code, Codex, Mistral Vibe and pi in rootless Podman containers. A daemon
 keeps the sessions running, and you use them from a web UI, the terminal, your editor (over
-[ACP](https://agentclientprotocol.com), the Agent Client Protocol) or your phone.
+[ACP](https://agentclientprotocol.com), the Agent Client Protocol) or your phone. Small apps
+run the same way, each with its own agent: install one, or have an agent write it for you.
 
 <p align="center"><img src="docs/user/screenshots/demo.gif" alt="Starting a session in the web UI: the agent reaches a blocked host, which is then allowed in one click" width="720"></p>
 
-> **Status: alpha.** Linux only. It is used every day by its author, but has few other users so
-> far. Expect rough edges, and features that may still change. An update converts your settings
-> when their format changes; the [changelog](CHANGELOG.md) says what changed.
+> **Status: alpha.** Linux only.
 
 | Harness | Status |
 |---|---|
-| Claude Code | well tested |
-| Mistral Vibe | well tested |
-| Codex | little tested |
-| [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | little tested |
+| Claude Code | well tested - used daily |
+| Mistral Vibe | well tested - used daily |
+| Codex | used once |
+| [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | used once |
 
 ## What it does
 
@@ -42,12 +41,19 @@ keeps the sessions running, and you use them from a web UI, the terminal, your e
   the web UI, the terminal (`handler attach`), Zed (`handler acp`) or a phone.
 - **Any model access.** An API key, OpenRouter, a local llama.cpp or Ollama, or your own Claude,
   ChatGPT or Mistral subscription for your own interactive use.
-- **Work and personal kept apart.** Tag projects, accounts and providers with a context (Work,
+- **Work and personal kept apart.** Tag projects, accounts and providers with an area (Work,
   Personal, a client). A work account then never runs on a personal project, and the other way
   round.
-- **Optional extras:** addons (a Playwright browser, the Shopify CLI), skills, small web apps
-  written by an agent, automations (on a schedule or when a session ends), and phone access
-  through an end-to-end encrypted gateway that you host.
+- **Apps that work for you, Ask and Chat.** Small apps, each in its own sandbox with its agent
+  set up for it: Handler's own (Planner: your tasks and calendar in a markdown file), one from a source you
+  trust, or one the App creator writes with you. Say what you want in Ask, typed or spoken
+  ("tomorrow I call the bank at 10"), and Handler picks which app does it. Chat is for talking
+  about anything, with no folder.
+- **Sources and Discover.** A source is a git repository that offers apps, agents and addons:
+  Handler's own, or one you add. Each item says what it may touch before you install it.
+- **Optional extras:** addons (a Playwright browser, the Shopify CLI), skills, automations (on a
+  schedule or when a session ends), agents files (a project's agents, to set up in another
+  project), and phone access through an end-to-end encrypted gateway that you host.
 
 ## How it compares
 
@@ -89,7 +95,6 @@ curl -fsSL https://github.com/macray/handler-ai/releases/latest/download/install
 
 To update: `uv tool upgrade handler-ai`. `handler setup` says what your machine is missing and can be run
 again at any time.
-
 To build from a checkout instead: [development](docs/dev/development.md).
 
 ## First session
@@ -131,23 +136,27 @@ More: [`handler terminal`](docs/user/cli/terminal.md), [every command](docs/user
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/user/screenshots/projects.png"><img src="docs/user/screenshots/projects.png" alt="Projects list"></a><br>Projects, tagged by context (Work, Personal).</td>
-    <td width="50%"><a href="docs/user/screenshots/project.png"><img src="docs/user/screenshots/project.png" alt="A project's page"></a><br>A project: its agents, and a new session. An account that is not set up for Work is not offered.</td>
+    <td width="50%"><a href="docs/user/screenshots/projects.png"><img src="docs/user/screenshots/projects.png" alt="Projects list"></a><br>Projects, by area (Work, Personal), as the menu lists them.</td>
+    <td width="50%"><a href="docs/user/screenshots/project.png"><img src="docs/user/screenshots/project.png" alt="A project's page"></a><br>A project and its agents: what the chosen one runs on, is given and may do. Accounts and providers not for Work are not offered.</td>
   </tr>
   <tr>
-    <td><a href="docs/user/screenshots/agent-settings.png"><img src="docs/user/screenshots/agent-settings.png" alt="An agent's settings"></a><br>An agent's settings: goal, instructions, the account it runs on.</td>
-    <td><a href="docs/user/screenshots/model-access.png"><img src="docs/user/screenshots/model-access.png" alt="Model access"></a><br>Model access: accounts and providers, each for a context.</td>
+    <td><a href="docs/user/screenshots/session.png"><img src="docs/user/screenshots/session.png" alt="A session"></a><br>A session: the agent's steps and answers, its mode and model.</td>
+    <td><a href="docs/user/screenshots/session-network.png"><img src="docs/user/screenshots/session-network.png" alt="A session's sandbox and network panel"></a><br>Its sandbox and network panel: a blocked host, allowed in one click while the agent works.</td>
   </tr>
   <tr>
-    <td><a href="docs/user/screenshots/session-terminal.png"><img src="docs/user/screenshots/session-terminal.png" alt="A session"></a><br>A session: the agent's tool calls and answer, its mode, model and thinking level.</td>
-    <td><a href="docs/user/screenshots/session-network.png"><img src="docs/user/screenshots/session-network.png" alt="A session's network panel"></a><br>The network panel while learning hosts: what would have been blocked, allowed in one click.</td>
+    <td><a href="docs/user/screenshots/agent-settings.png"><img src="docs/user/screenshots/agent-settings.png" alt="An agent's settings"></a><br>An agent's settings: its safety preset and the hosts it may reach.</td>
+    <td><a href="docs/user/screenshots/model-access.png"><img src="docs/user/screenshots/model-access.png" alt="Model access"></a><br>Model access: accounts (subscriptions) and providers (API keys), each for an area.</td>
+  </tr>
+  <tr>
+    <td><a href="docs/user/screenshots/apps.png"><img src="docs/user/screenshots/apps.png" alt="Apps"></a><br>Apps: Chat, always there; Planner to start with, or one the App creator writes with you.</td>
+    <td><a href="docs/user/screenshots/discover.png"><img src="docs/user/screenshots/discover.png" alt="Discover"></a><br>Discover: what the sources offer, each item saying what it may touch.</td>
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <a href="docs/user/screenshots/gateway-not-pair.jpg"><img src="docs/user/screenshots/gateway-not-pair.jpg" alt="The phone page before pairing" width="220"></a>
-      <a href="docs/user/screenshots/gateway-homepage.jpg"><img src="docs/user/screenshots/gateway-homepage.jpg" alt="The phone home page: sessions, apps, inbox" width="220"></a>
-      <a href="docs/user/screenshots/gateway-terminal.jpg"><img src="docs/user/screenshots/gateway-terminal.jpg" alt="A session on a phone" width="220"></a>
-      <br>On a phone, through the remote gateway: before pairing, the home page (sessions, apps, inbox), a session.
+      <a href="docs/user/screenshots/phone-pairing.jpg"><img src="docs/user/screenshots/phone-pairing.jpg" alt="Pairing a phone" width="220"></a>
+      <a href="docs/user/screenshots/phone-home.jpg"><img src="docs/user/screenshots/phone-home.jpg" alt="The phone's home page: the sessions you share" width="220"></a>
+      <a href="docs/user/screenshots/phone-session.jpg"><img src="docs/user/screenshots/phone-session.jpg" alt="A session on a phone" width="220"></a>
+      <br>On a phone, through the gateway you host: pairing it, the sessions you share, a session.
     </td>
   </tr>
 </table>
@@ -158,7 +167,7 @@ More: [`handler terminal`](docs/user/cli/terminal.md), [every command](docs/user
  web UI · handler CLI · editor (handler acp) · phone
               │  HTTP + WebSocket (ACP)
               ▼
-          handlerd ── projects, agents, sessions; checks every message to and from the agent
+          handlerd ── projects, agents, sessions, apps; checks every message to and from the agent
               │
               ▼
    ┌──────────────── rootless Podman ─────────────────┐
@@ -172,9 +181,11 @@ More: [`handler terminal`](docs/user/cli/terminal.md), [every command](docs/user
 |---|---|
 | **Model access** | An **account** (a subscription) or a **provider** (an API key, a local server). |
 | **Project** | A folder and its agents. |
-| **Context** | What a project is for (Work, Personal, a client). Each account and provider says which contexts it may be used for. |
+| **Area** | What a project is for (Work, Personal, a client). Each account and provider says which areas it may be used for. |
 | **Agent** | A role on a project: its model, instructions, network, permissions and tools. |
 | **Session** | One conversation with an agent, in its own container, kept by the daemon. |
+| **App** | A small web app and its agent, each in its own sandbox: you open it, ask it, or it runs by itself. |
+| **Source** | A git repository that offers apps, agents and addons to install. |
 
 More: [concepts](docs/user/concepts.md).
 
@@ -192,17 +203,7 @@ More: [concepts](docs/user/concepts.md).
 
 ## Documentation
 
-- Using Handler: [getting started](docs/user/getting-started.md) ·
-  [concepts](docs/user/concepts.md) · [where things are kept](docs/user/configuration.md) ·
-  [security](docs/user/security.md) · [known limitations](docs/user/known-limitations.md)
-- Features: [addons](docs/user/addons.md) · [browser](docs/user/browser.md) ·
-  [knowledge folders](docs/user/knowledge.md) · [automations](docs/user/automations.md) ·
-  [mini apps](docs/user/mini-apps.md) · [phone](docs/user/phone.md)
-- Command line: [every `handler` command](docs/user/cli/index.md)
-- Working on Handler: [development](docs/dev/development.md) ·
-  [architecture](docs/dev/architecture.md) · [domain model](docs/dev/model.md) ·
-  [code map](docs/dev/code-map.md) ·
-  [contracts](docs/dev/contracts.md) · [design notes](docs/dev/design/index.md)
+- [Documentation web site](https://macray.github.io/handler-ai/)
 - [Changelog](CHANGELOG.md)
 
 ## Feedback

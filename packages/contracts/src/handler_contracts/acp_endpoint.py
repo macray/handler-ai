@@ -37,7 +37,7 @@ class SessionErrorCode(IntEnum):
 
     ONE_SESSION_PER_ATTACHMENT = -32010
     TURN_IN_PROGRESS = -32011
-    UNATTENDED = -32012  # a run of an agent with an interface takes no prompt (D.18)
+    UNATTENDED = -32012  # a run of a job takes no prompt (D.18)
 
 
 class PolicyErrorCode(IntEnum):

@@ -43,7 +43,7 @@ describe("envelopes", () => {
     const hostKey = await hostDownKey(base);
     expect(await open(hostKey, address, "down", vectors.down.envelope)).toEqual(vectors.down.plaintext);
 
-    const plain = { ts: 1, frames: [{ s: "s_1", m: { jsonrpc: "2.0", id: 3 } }] };
+    const plain = { expires: 1, frames: [{ s: "s_1", m: { jsonrpc: "2.0", id: 3 } }] };
     const envelope = await seal(down, address, "down", plain);
     expect(await open(hostKey, address, "down", envelope)).toEqual(plain);
     // reflected, relabelled, for another device, or altered: refused

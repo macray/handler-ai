@@ -1,4 +1,5 @@
-"""G.5: installing addons from the catalog, a folder or an archive, and removing them."""
+"""G.5: installing addons from a folder or an archive, and removing them (from a source:
+test_sources.py)."""
 
 import contextlib
 import io
@@ -67,6 +68,16 @@ def test_a_link_out_of_the_folder_is_refused(settings: Settings, tmp_path: Path)
         addon_install.preview(settings, str(folder))
 
 
+def test_a_name_that_is_a_path_is_refused_before_anything_is_copied(
+    settings: Settings, tmp_path: Path
+) -> None:
+    folder = own_addon(tmp_path / "src")
+    (folder / "addon.toml").write_text(MANIFEST.replace('"notes"', '"../../../ESCAPED"', 1))
+    with pytest.raises(AddonInstallError, match="name"):
+        addon_install.preview(settings, str(folder))
+    assert not list(tmp_path.rglob("ESCAPED"))
+
+
 def test_the_users_own_addon_is_never_replaced_nor_removed(
     settings: Settings, tmp_path: Path
 ) -> None:
@@ -79,18 +90,6 @@ def test_the_users_own_addon_is_never_replaced_nor_removed(
     with pytest.raises(AddonInstallError, match="not installed by handler"):
         addon_install.remove("notes")
     assert (addons.user_dir() / "notes" / "addon.toml").is_file()
-
-
-def test_from_the_catalog_then_removed(settings: Settings) -> None:
-    seen = addon_install.preview(settings, "catalog:shopify")
-    assert seen.image == "localhost/handler-ai-addon-shopify" and seen.commands == ["shopify"]
-    assert seen.digest == addon_install.catalog_digest("shopify")
-    addon_install.install(settings, "catalog:shopify", seen.digest)
-    assert not addons.get("shopify").builtin
-    addon_install.remove("shopify")
-    assert "shopify" not in addons.names() and addon_install.lock() == {}
-    with pytest.raises(AddonInstallError, match="no addon 'nope' in the catalog"):
-        addon_install.preview(settings, "catalog:nope")
 
 
 def test_a_relative_folder_or_plain_http_is_refused(settings: Settings) -> None:

@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .common import AccessContext, SecretRef, StrictDocument
+from .common import AccessArea, SecretRef, StrictDocument
 
 ACCOUNT_API_VERSION = "handler.account/v1"
 
@@ -27,9 +27,9 @@ class Account(StrictDocument):
     # a token login's token (E2): `{secret = "accounts/<name>/token"}` when pasted through handler,
     # or where the person keeps it (`env`, `file`, `command`); none until logged in
     token: SecretRef | None = None
-    # the project contexts it may be used in (D.19): their names, or `any`; none: only in
-    # projects without a context and outside projects
-    contexts: list[AccessContext] = []
+    # the areas it may be used in (D.19): their names, or `any`; none: only in
+    # projects without an area and outside projects
+    areas: list[AccessArea] = []
 
     @classmethod
     def from_toml(cls, text: str) -> "Account":

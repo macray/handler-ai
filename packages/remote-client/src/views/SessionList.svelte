@@ -1,6 +1,7 @@
 <script lang="ts">
-  // Home: what the host shares with this device's person — sessions (the owner only), mini apps,
-  // what apps told them, and calls waiting for the computer. The device itself is in Settings.
+  // Home: what the host shares with this device's person — sessions (the owner only), apps,
+  // what Handler told them (a message tied to a shared app opens it), and calls waiting for the
+  // computer. The device itself is in Settings.
   import { app } from "../lib/app.svelte";
   import type { SharedSession } from "../lib/remote.gen";
   import Lights from "./Lights.svelte";
@@ -102,8 +103,8 @@
     {/if}
   {/if}
 
-  {#if owner && app.agents.length}
-    <button type="button" class="new" onclick={() => (app.composing = true)} data-testid="new-session-open">+ New session</button>
+  {#if owner && (app.agents.length || app.chats.length)}
+    <button type="button" class="new" onclick={() => app.compose()} data-testid="new-session-open">+ New session</button>
   {/if}
 
   {#each groups as [project, list] (project)}
@@ -114,7 +115,7 @@
           <span class="dot {s.pendingPermissions ? 'needs' : s.busy ? 'busy' : ''}" aria-hidden="true"></span>
           <span class="text">
             <span class="title">{s.title ?? s.agent ?? s.label ?? basename(s.scope)}</span>
-            <span class="meta">{s.agent ?? s.label ?? basename(s.scope)} · {s.harness}</span>
+            <span class="meta">{s.agent ?? s.label ?? basename(s.scope)} · {s.harness ?? "the model alone"}</span>
           </span>
           {#if s.pendingPermissions}<span class="pill needs">needs you</span>
           {:else if s.busy}<span class="pill busy">working</span>
@@ -163,10 +164,14 @@
       <h2>Inbox</h2>
       <ul class="card">
         {#each app.inbox.slice(0, 5) as n (n.id)}
+          {@const opens = n.app ? app.apps.find((a) => a.name === n.app) : undefined}
           <li class="note" data-testid="notification">
             <span class="text">
               <span class="title">{n.status === "failed" ? `${n.title}: failed` : n.title}</span>
               <span class="meta">{n.summary ? `${n.name} — ${n.summary}` : n.name}</span>
+              {#if opens}
+                <button type="button" class="link open" onclick={() => app.openApp(opens)} data-testid="notification-open-app">Open {opens.name} ›</button>
+              {/if}
             </span>
             <time datetime={n.at}>{ago(n.at)}</time>
           </li>
@@ -262,6 +267,12 @@
     letter-spacing: 0;
     font-weight: 500;
     color: var(--link);
+  }
+  .link.open {
+    margin-left: 0;
+    align-self: flex-start;
+    padding: 0.5rem 0;
+    min-height: 40px;
   }
   .item {
     display: flex;

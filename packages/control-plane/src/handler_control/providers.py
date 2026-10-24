@@ -139,7 +139,7 @@ def save(
         api_key=key,
         models=request.models,
         files=files,
-        contexts=list(dict.fromkeys(request.contexts)),
+        areas=list(dict.fromkeys(request.areas)),
     )
     write_private(target, _toml(provider))
     if old is not None and old.name != name:
@@ -155,7 +155,7 @@ def delete(directory: Path, store: secrets.SecretStore, name: str) -> None:
 def _toml(provider: Provider) -> str:
     data = provider.model_dump(by_alias=True, exclude_defaults=True, mode="json")
     doc = tomlkit.document()
-    for field in ("apiVersion", "description", "contexts"):
+    for field in ("apiVersion", "description", "areas"):
         if field in data:
             doc[field] = data[field]
     if "apiKey" in data:

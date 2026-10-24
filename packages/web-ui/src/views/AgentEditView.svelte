@@ -8,6 +8,7 @@
   import PageHeader from "../components/PageHeader.svelte";
   import PageTitle from "../components/PageTitle.svelte";
   import { api } from "../lib/api";
+  import { deletionStops } from "../lib/apps";
   import type { Agent, Project } from "../lib/contracts.gen";
   import { agentLabel, duplicateAgent, projects } from "../lib/projects.svelte";
   import { href, navigate, type Route } from "../lib/router.svelte";
@@ -42,15 +43,16 @@
     void projects.refresh();
     if (then) navigate(then, !id);
     else if (id) back();
-    else navigate({ view: "project", id: projectId }, true);
+    else navigate({ view: "project", id: projectId, agent: a.id }, true); // the new one, chosen
   }
 
   async function remove(): Promise<void> {
     if (!project || !agent) return;
     const running = agent.connections.length ? ` Its ${agent.connections.length} running session(s) are stopped.` : "";
-    if (!confirm(`Remove the agent ${agentLabel(agent)} from ${project.name}?${running}`)) return;
+    const stops = await deletionStops(agent);
+    if (!confirm(`Remove the agent ${agentLabel(agent)} from ${project.name}?${running}${stops}`)) return;
     try {
-      await api.deleteAgent(project.id, agent.id);
+      await api.deleteAgent(agent.id);
       void projects.refresh();
       navigate({ view: "project", id: project.id }, true);
     } catch (e) {
@@ -77,7 +79,7 @@
 </PageHeader>
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-3xl space-y-8 px-8 pt-10">
-    <PageTitle title={agent ? agentLabel(agent) : original ? `Copy of ${agentLabel(original)}` : "New agent"} description="What it is for, what it runs as, what it is given and what it may do." />
+    <PageTitle title={agent ? agentLabel(agent) : original ? `Copy of ${agentLabel(original)}` : "New agent"} description="What it is for, who works, what it is given and what it may do." />
     {#if error}<p class="text-sm text-danger">{error}</p>{/if}
     {#if project && (agent || !id)}
       {#key agent?.id}

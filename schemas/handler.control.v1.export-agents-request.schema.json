@@ -1,0 +1,50 @@
+{
+  "$id": "urn:handler.control/v1/export-agents-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/agents-files/export`: agents of one project written as one file (D.23).",
+  "properties": {
+    "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "projectId": {
+      "title": "Projectid",
+      "type": "string"
+    },
+    "agentIds": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Agentids",
+      "type": "array"
+    },
+    "dryRun": {
+      "default": false,
+      "title": "Dryrun",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "projectId",
+    "agentIds"
+  ],
+  "title": "ExportAgentsRequest",
+  "type": "object"
+}

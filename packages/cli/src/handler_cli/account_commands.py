@@ -5,12 +5,12 @@ in your browser) and give handler the token it prints, or tell handler where you
 never runs that sign-in nor reads its output. A file login (Codex, Vibe): handler runs the harness's
 login here and keeps the credential file it leaves.
 
-handler account list                 accounts, their harness, plan, login and contexts
-handler account add NAME HARNESS [--description TEXT] [--plan PLAN] [--context CONTEXT …]
+handler account list                 accounts, their harness, plan, login and areas
+handler account add NAME HARNESS [--description TEXT] [--plan PLAN] [--area AREA …]
                 [--token | --token-env VAR | --token-file PATH | --token-command CMD]
                                      PLAN: its subscription's (e.g. pro, max for claude-code),
                                      told to the harness, which cannot learn it from a token.
-                                     --context: the project contexts it is made for (Work,
+                                     --area: the areas it is made for (Work,
                                      Personal…, or any; none: it runs nowhere a project has one)
                                      --token…: its token login at once (as `handler account token`)
 handler account token NAME [--env VAR | --file PATH | --command CMD]
@@ -62,11 +62,11 @@ def add_parser(sub: Any) -> None:
     add.add_argument("--description")
     add.add_argument("--plan")
     add.add_argument(
-        "--context",
+        "--area",
         action="append",
-        metavar="CONTEXT",
+        metavar="AREA",
         default=[],
-        help="a project context it is made for (Work, any…); repeatable",
+        help="an area it is made for (Work, any…); repeatable",
     )
     given = add.add_mutually_exclusive_group()
     given.add_argument("--token", action="store_true", help="ask for the token now")
@@ -91,11 +91,11 @@ def add_parser(sub: Any) -> None:
 def dispatch(args: argparse.Namespace) -> int:
     d = Daemon()
     if args.account_cmd == "list":
-        rows = [["NAME", "HARNESS", "PLAN", "LOGIN", "CONTEXTS", "AGENTS"]]
+        rows = [["NAME", "HARNESS", "PLAN", "LOGIN", "AREAS", "AGENTS"]]
         for a in d.call("GET", "/v1/accounts"):
             harness, plan = a.get("harness") or "?", a.get("plan") or "-"
-            contexts = ", ".join(a.get("contexts", [])) or "-"
-            rows.append([a["name"], harness, plan, login_status(a), contexts,
+            areas = ", ".join(a.get("areas", [])) or "-"
+            rows.append([a["name"], harness, plan, login_status(a), areas,
                          ", ".join(a["agents"])])  # fmt: skip
         table(rows) if len(rows) > 1 else print("no account")
         return 0
@@ -143,7 +143,7 @@ def add(d: Daemon, args: argparse.Namespace) -> int:
         "name": args.name,
         "harness": args.harness,
         "description": args.description,
-        "contexts": args.context,
+        "areas": args.area,
     }
     body |= {"plan": args.plan} if args.plan else {}
     made = d.call("POST", "/v1/accounts", body)

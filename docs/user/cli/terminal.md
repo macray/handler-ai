@@ -20,14 +20,15 @@ handler terminal AGENT|ACCOUNT|PROVIDER [FOLDER] [--anyway] [agent options] [-- 
 
 - `AGENT|ACCOUNT|PROVIDER`: in a project's folder, one of its agents by name, or an account or
   provider (as for `run`). Elsewhere: an account or a provider.
-- `FOLDER`: the folder the agent works in (default: the current one).
+- `FOLDER`: the folder the agent works in (default: the current one). In a project's sub-folder,
+  the sandbox sees only that sub-folder, not the rest of the project.
 - `-- ARGS …`: everything after `--` is given to the harness unchanged.
 
 ## Options
 
 | Option | |
 |---|---|
-| `--anyway` | in a project's folder, run outside the project (an account its context does not allow); asks you to type `yes` |
+| `--anyway` | in a project's folder, run outside the project (an account its area does not allow); asks you to type `yes` |
 | agent options | [agent options](agent-options.md); `--display` is needed to paste images |
 
 ## Your command, sandboxed

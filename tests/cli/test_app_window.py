@@ -1,4 +1,4 @@
-"""`handler app open`: which window a mini app opens in (docs/dev/design/miniapps.md §5.1), with
+"""`handler app open`: which window an app opens in (docs/dev/design/apps.md §5.1), with
 fake browsers."""
 
 import time

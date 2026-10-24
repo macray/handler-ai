@@ -39,7 +39,7 @@ token="$(cat ~/.config/handler-ai/token)"
 api() { curl -fs -H "Authorization: Bearer $token" "http://127.0.0.1:7430$1"; }
 ok "the API lists the harnesses" grep -q '"claude-code"' <(api /v1/harnesses)
 ok "the built-in addons" grep -q '"builtin":true' <(api /v1/addons)
-ok "the addon catalog" grep -q '"shopify"' <(api /v1/addon-catalog)
+ok "the official source is listed" grep -q '"official":true' <(api /v1/sources)
 ok "the runtime check sees no podman" grep -q '"ok":false' <(api /v1/runtime)
 ok "the default toolbox, copied to the user's" test -f ~/.config/handler-ai/toolbox/Containerfile
 ok "the toolbox editor reads it" grep -q 'handler toolbox' <(api /v1/toolbox/containerfile)

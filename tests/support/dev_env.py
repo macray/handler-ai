@@ -47,6 +47,13 @@ def scope_root() -> Path:
     return root
 
 
+def home_env() -> dict[str, str]:
+    """handlerd's HOME for the tests giving an app host files (H.9: only inside the home). In
+    DEV_MODE, the scope root, where those files are: root's own home is out of the dev uid's
+    reach."""
+    return {"HOME": str(scope_root())} if DEV_MODE else {}
+
+
 def make_scope() -> Path:
     path = Path(tempfile.mkdtemp(prefix="scope-", dir=scope_root()))
     if DEV_MODE:

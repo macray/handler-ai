@@ -43,8 +43,6 @@ def problems(env: dict[str, Path], loaded: config.Loaded) -> list[str]:
         providers_dir=env["providers"],
         store=SecretStore(env["root"].parent / "data"),
         knowledge_root=env["root"],
-        projects={"shop"},
-        agents={"dev"},
     )
 
 
@@ -74,8 +72,6 @@ def test_a_good_automation_has_no_problems(env: dict[str, Path]) -> None:
         (("handler/env-issues.md", "missing/x.md"), "its folder does not exist"),
         (("handler/env-issues.md", "../x.md"), "outside the knowledge root"),
         (("handler/env-issues.md", "handler/x.txt"), "not a markdown note"),
-        (('project = ["shop"]', 'project = ["old"]'), "only.project: no project named old"),
-        (('agent = ["dev"]', 'agent = ["gone"]'), "only.agent: no agent named gone"),
         (('when = "session.stopped"', 'when = "nope"'), "automation.toml: when"),
         (("run =", "runs ="), "automation.toml"),
         (("[[append]]", "[[append"), "automation.toml"),  # TOML syntax

@@ -75,7 +75,7 @@ def missing_proxy(spec: SandboxSpec) -> bool:
 
 
 def pull_argv(ref: str) -> list[str]:
-    """Pulls a published image (the mini apps' runtime, H.3)."""
+    """Pulls a published image (the apps' runtime, H.3)."""
     return [sandbox_process.binary(), "image", "pull", ref]
 
 

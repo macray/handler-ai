@@ -152,14 +152,10 @@ def test_agents_follow_their_skills(tmp_path: Path) -> None:
     blog = projects.add(ProjectRecord(id="p_blog", name="blog", folder="/code/blog"))
 
     def agent(project: ProjectRecord, chosen: list[str]) -> AgentRecord:
-        return projects.add_agent(
-            project,
-            CheckedSettings(models=[RunsAs(harness="claude", account="a")], scope=project.folder),
-            name="a",
-            description=None,
-            instructions=None,
-            skills=chosen,
-        )
+        settings = CheckedSettings(model=RunsAs(harness="claude", account="a"), scope=None)
+        record = AgentRecord(**settings.model_dump(), name="a", skills=chosen)
+        projects.add_agent(project, record)
+        return record
 
     in_shop, in_blog = agent(shop, ["deploy", "review"]), agent(blog, ["deploy"])
     projects.give_skill(None, "deploy", [])  # a new skill, given by no project

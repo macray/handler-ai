@@ -12,12 +12,14 @@ from urllib.parse import urlparse
 
 from pydantic import AfterValidator, Field, model_validator
 
-from .common import AccessContext, FileSource, SecretRef, StrictDocument
+from .common import AccessArea, FileSource, SecretRef, StrictDocument
 
 PROVIDER_API_VERSION = "handler.provider/v1"
 
-Protocol = Literal["anthropic", "openai-chat", "responses"]
-PROTOCOLS: tuple[Protocol, ...] = ("anthropic", "openai-chat", "responses")
+# the protocols a harness or handlerd speaks to a provider; `transcriptions` is the OpenAI-style
+# speech to text (`POST <endpoint>/audio/transcriptions`), spoken by handlerd only (transcribe/v1)
+Protocol = Literal["anthropic", "openai-chat", "responses", "transcriptions"]
+PROTOCOLS: tuple[Protocol, ...] = ("anthropic", "openai-chat", "responses", "transcriptions")
 
 
 def _endpoint(url: str) -> str:
@@ -43,6 +45,9 @@ class ProviderModel(StrictDocument):
     max_output: Annotated[int, Field(gt=0)] | None = None
     reasoning: bool = False
     images: bool = False
+    # it turns speech into text, at the provider's `transcriptions` endpoint (transcribe/v1): never
+    # a model a harness or the model alone runs on
+    speech: bool = False
     temperature: Annotated[float, Field(ge=0, le=2)] | None = None
     # what only one harness knows about this model, merged into the entry written for it:
     # `[models.native.pi]`, `[models.native.codex]`… (a chat template, a compat flag)
@@ -60,22 +65,33 @@ class Provider(StrictDocument):
     # how one harness talks to this model: content for its config file slots (B.1 configFiles),
     # `[files.codex] instructions_md = { file = "…" }`
     files: dict[str, dict[str, FileSource]] | None = None
-    # the project contexts it may be used in (D.19), as an account's
-    contexts: list[AccessContext] = []
+    # the areas it may be used in (D.19), as an account's
+    areas: list[AccessArea] = []
 
     @model_validator(mode="after")
     def _unique_models(self) -> Self:
         ids = [m.id for m in self.models]
         if duplicates := sorted({i for i in ids if ids.count(i) > 1}):
             raise ValueError(f"two models have the id {', '.join(duplicates)}")
+        if any(m.speech for m in self.models) and "transcriptions" not in self.endpoints:
+            raise ValueError("a speech model needs a transcriptions endpoint")
         return self
+
+    @property
+    def chat_models(self) -> list[ProviderModel]:
+        """The models a harness or the model alone runs on (not the speech ones)."""
+        return [m for m in self.models if not m.speech]
 
     def endpoint_for(self, accepted: Sequence[Protocol]) -> tuple[Protocol, str] | None:
         """The first of the protocols `accepted` (in order of preference) it has an endpoint for."""
         return next(((p, self.endpoints[p]) for p in accepted if p in self.endpoints), None)
 
     def model_named(self, model_id: str) -> ProviderModel | None:
-        return next((m for m in self.models if m.id == model_id), None)
+        """A chat model of that id (a speech model is never one, see `speech_model`)."""
+        return next((m for m in self.chat_models if m.id == model_id), None)
+
+    def speech_model(self, model_id: str) -> ProviderModel | None:
+        return next((m for m in self.models if m.id == model_id and m.speech), None)
 
     @classmethod
     def from_toml(cls, text: str) -> Self:

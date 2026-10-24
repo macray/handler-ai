@@ -1,0 +1,5 @@
+# The definition of the agent the coach needs (H.2): set up from it, or one of yours that fits.
+[agent]
+name = "Coach"
+description = "Answers what the coach asks"
+permissions = "bypass"

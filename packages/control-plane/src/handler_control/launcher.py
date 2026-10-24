@@ -3,14 +3,14 @@
 agent spec (E) ─► bindings (G), skills (D.17) ─► secrets + config files ─► render (B)
                ─► compose (B+G → A) ─► sandbox (A)
 
-The agent spec is the harness of the model the connection runs with (one of the agent's), with
+The agent spec is the harness of the model the connection runs with (the agent's or another), with
 its account or provider resolved (access.py); the harness's own state is kept in agent_state.py.
 """
 
 import asyncio
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from handler_contracts import (
     DEFAULT_MAX_MESSAGE_BYTES,
@@ -31,10 +31,10 @@ from . import (
     accounts,
     addons,
     agent_state,
+    areas,
     caches,
     compose,
     config_files,
-    contexts,
     display,
     folders,
     knowledge,
@@ -52,16 +52,38 @@ class AgentStartError(RuntimeError):
     """The connection cannot be served (bad account or provider, scope, secret, render…)."""
 
 
+class ImageMissingError(AgentStartError):
+    """An image the sandbox needs is not built (A.7: a launch never builds one). `target`: the
+    build that makes it (D.4)."""
+
+    def __init__(self, target: str) -> None:
+        self.target = target
+        if target == NETWORK_FILTER:
+            what = "the network filter is"
+        elif target.startswith(ADDON):
+            what = f"the tools of addon {target.removeprefix(ADDON)} are"
+        else:
+            what = f"the image of {target} is"
+        super().__init__(
+            f"{what} not built yet: Settings → Images, or `handler image rebuild {target}`"
+        )
+
+
+NETWORK_FILTER, ADDON = "network-filter", "addon:"  # build targets (D.4)
 # agents with a network allow-list or a secret need it; handlerd builds it as it starts (D.4)
-NETWORK_FILTER_MISSING = (
-    "the network filter is not built yet: Settings → Images, "
-    "or `handler image rebuild network-filter`"
-)
+NETWORK_FILTER_MISSING = str(ImageMissingError(NETWORK_FILTER))
 
 
-def _require_network_filter(spec: SandboxSpec) -> None:
+def _require_images(spec: SandboxSpec, harness: str) -> None:
+    """Each image the sandbox needs is built: the network filter when it needs one, its harness's,
+    its addons' (each mounted at <ADDONS_ROOT>/<its name>, G.2)."""
     if runtime.missing_proxy(spec):
-        raise AgentStartError(NETWORK_FILTER_MISSING)
+        raise ImageMissingError(NETWORK_FILTER)
+    if not runtime.exists(spec.image):
+        raise ImageMissingError(harness)
+    for mount in spec.image_mounts:
+        if not runtime.exists(mount.image):
+            raise ImageMissingError(f"{ADDON}{PurePosixPath(mount.target).name}")
 
 
 @dataclass
@@ -76,7 +98,8 @@ class StartedAgent:
 
 
 def agent_spec(settings: Settings, runs: RunsAs) -> AgentSpec:
-    """One of the agent's models: its harness with its account or provider, resolved (E1)."""
+    """A model the agent runs with: its harness with its account or provider, resolved (E1)."""
+    assert runs.harness is not None  # an agent program's: the model alone has no sandbox (D.18)
     try:
         return access.resolve(
             settings.sources,
@@ -109,10 +132,12 @@ def prepare(
     `folder`: a folderless agent's session's own folder (D.18), where it works.
     `subject`: what a run of an agent with an interface works on, mounted read-only (D.18).
     """
+    if agent.model_alone:  # its sessions talk to handlerd's model agent (sessions.py)
+        raise AgentStartError("an agent on the model alone works in sessions only (D.18)")
     resolved = agent_spec(settings, runs)
     try:
-        contexts.check(settings.sources, agent.context, runs.account, runs.provider)
-    except contexts.ContextError as e:
+        areas.check(settings.sources, agent.area, runs.account, runs.provider)
+    except areas.AreaError as e:
         raise AgentStartError(str(e)) from None
     roots: tuple[str, ...] = ()
     if agent.scope is None:
@@ -121,6 +146,8 @@ def prepare(
         roots = (str(sessions_root(settings)),)
     try:
         scope = compose.check_scope(folders.roots(settings), agent.scope or folder or "", roots)
+        if terminal is not None and terminal.folder is not None:
+            scope = compose.narrowed_scope(scope, terminal.folder)
         store = secrets.SecretStore(settings.data_dir)
         selected = addons.check(settings.bindings_dir, agent.bindings)
         extra = addons.resolve(selected, store)
@@ -307,6 +334,7 @@ async def harness_version(harness: str) -> str | None:
 
 
 def _ensure_state(settings: Settings, agent: AgentRecord, runs: RunsAs) -> None:
+    assert runs.harness is not None  # an agent program's
     descriptor = catalog.get(runs.harness).descriptor
     agent_state.ensure(descriptor, agent_state.root(settings.data_dir, agent, runs))
 
@@ -337,7 +365,8 @@ async def start(
         folder=folder,
         subject=subject,
     )
-    await asyncio.to_thread(_require_network_filter, spec)
+    assert runs.harness is not None  # an agent program's (prepare)
+    await asyncio.to_thread(_require_images, spec, runs.harness)
     _ensure_state(settings, agent, runs)
     process = await sandbox_process.start_async(spec, line_limit=DEFAULT_MAX_MESSAGE_BYTES)
     return StartedAgent(connection_id, spec, launch, process, egress_base=base)
@@ -350,7 +379,8 @@ def start_terminal(
     (`sandbox_process.start_detached`); also returns the file of its launcher's output."""
     connection_id = uuid.uuid4().hex[:8]
     spec, launch, base = prepare(settings, agent, runs, connection_id, terminal=terminal)
-    _require_network_filter(spec)
+    assert runs.harness is not None  # an agent program's (prepare)
+    _require_images(spec, runs.harness)
     _ensure_state(settings, agent, runs)
     process, output = sandbox_process.start_detached(spec)
     return StartedAgent(connection_id, spec, launch, process, egress_base=base), output

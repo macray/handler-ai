@@ -20,8 +20,8 @@ UI.
 
 | Option | |
 |---|---|
-| `--harness NAME` | with a provider: the harness to run (`claude-code`, `codex`, `vibe`, `pi`), needed when several speak its protocol. In a project: which of the agent's models |
-| `--model MODEL` | the model (default: the harness's or the provider's). In a project: which of the agent's models |
+| `--harness NAME` | with a provider: the harness to run (`claude-code`, `codex`, `vibe`, `pi`), needed when several speak its protocol. In a project: which agent, the one running it |
+| `--model MODEL` | the model (default: the harness's or the provider's). In a project: which agent, the one running it |
 | `--name NAME` | outside projects: another agent for the same folder, e.g. one per use case or to try settings without changing the first. Refused in a project's folder (name an agent instead) |
 
 The account or provider and the model are for this time only: never saved to the agent.

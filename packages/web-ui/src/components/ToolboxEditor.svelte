@@ -53,7 +53,7 @@
   }
 </script>
 
-<div class="space-y-3 rounded-lg border bg-card p-3.5" data-testid="toolbox-editor">
+<div class="enter space-y-3 rounded-[10px] border bg-card p-4 shadow-panel" data-testid="toolbox-editor">
   <div class="text-sm">
     <span class="font-medium">Toolbox Containerfile</span>
     <span class="ml-2 font-mono text-xs text-muted-foreground">{directory}/Containerfile</span>

@@ -1,0 +1,8 @@
+# Handler's Ask router (for its need: need.toml). Its instructions: instructions.md (edit the agent
+# set up from it to change them); its interface: interface.json. Ask runs it once per question.
+
+[agent]
+name = "Ask router"
+description = "Understands what you ask, and picks the app that does it"
+# text in, text out: the model alone (no program, no sandbox, no tools): fast
+model_alone = true

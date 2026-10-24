@@ -1,11 +1,14 @@
 <script lang="ts">
   // Providers (D.12): where a harness sends its model calls (a local llama.cpp, the Anthropic API
   // with a key…). New ones start from a template (templates/providers/) or empty, from Model access
-  // (start); every one is edited in a form (ProviderForm), renamed while no agent uses it, deleted
-  // anyway once confirmed (its agents then cannot start until given another provider). Shown once
-  // there is one, or one being made. The list comes from Model access.
+  // (start); every one is edited in a form (ProviderForm) in a dialog, renamed while no agent uses
+  // it, deleted anyway once confirmed (its agents then cannot start until given another provider).
+  // Listed once there is one. The list comes from Model access.
   import { productName } from "../lib/harnesses.svelte";
-  import ContextTag from "./ContextTag.svelte";
+  import AreaTag from "./AreaTag.svelte";
+  import KeyRound from "@lucide/svelte/icons/key-round";
+  import Plus from "@lucide/svelte/icons/plus";
+  import Dialog from "./Dialog.svelte";
   import { Button } from "$lib/components/ui/button";
   import { api } from "../lib/api";
   import type { ProviderInfo, ProviderRequest, ProviderTemplate } from "../lib/contracts.gen";
@@ -13,9 +16,13 @@
 
   let {
     providers,
+    listed,
+    onadd,
     onchange,
   }: {
     providers: ProviderInfo[];
+    listed: boolean; // the section shown, even empty (once there is an account or a provider)
+    onadd: () => void; // its Add: Model access's picker of APIs
     onchange: () => Promise<void>; // reloads `providers`
   } = $props();
 
@@ -50,6 +57,18 @@
     return name;
   }
 
+  /** Who can use it, in one line: its models, the programs speaking it, the config files it gives. */
+  const reach = (p: ProviderInfo) =>
+    [
+      p.models?.map((m) => m.id).join(", "),
+      p.harnesses?.length ? `for ${p.harnesses.map((h) => productName(h)).join(", ")}` : null,
+      p.files?.length ? `files for ${p.files.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  /** What uses it, said in its Edit (and before it is deleted), not on its line. */
+  const use = (p: ProviderInfo) => (p.agents?.length ? `Used by ${p.agents.join(", ")}.` : "No agent uses it.");
+
   const create = (body: ProviderRequest) => run(() => api.createProvider(body));
   const update = (name: string, body: ProviderRequest) => run(() => api.updateProvider(name, body));
   function remove(p: ProviderInfo): void {
@@ -60,55 +79,59 @@
   }
 </script>
 
-{#if providers.length || panel?.kind === "new"}
-  <section class="scroll-mt-6 space-y-4" id="providers" data-testid="providers">
-    <div class="space-y-1">
-      <h2 class="flex items-center gap-2 text-base font-semibold">
-        Providers <span class="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">API key</span>
-      </h2>
-      <p class="max-w-2xl text-sm text-muted-foreground">An API and its key, or a model server on this computer: used by the agent programs each one lists.</p>
+{#if providers.length || listed}
+  <section class="enter space-y-4" id="providers" data-testid="providers">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div class="space-y-1">
+        <h2 class="flex items-center gap-2 text-base font-semibold">
+          Providers <span class="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">API key</span>
+        </h2>
+        <p class="max-w-2xl text-sm text-muted-foreground">An API and its key, or a model server on this computer: used by the agent programs each one lists.</p>
+      </div>
+      <Button variant="outline" size="sm" onclick={onadd} data-testid="add-provider"><Plus />Add a provider</Button>
     </div>
-    {#if error}<p class="text-sm text-danger" data-testid="provider-error">{error}</p>{/if}
-    {#if panel?.kind === "new"}
-      <ProviderForm start={panel.start} onsave={create} oncancel={() => (panel = null)} />
-    {/if}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-3">
+    {#if error && !panel}<p class="text-sm text-danger" data-testid="provider-error">{error}</p>{/if}
+    {#if providers.length}
+    <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
       {#each providers as p (p.name)}
-        {#if panel?.kind === "edit" && panel.provider.name === p.name}
-          <div class="col-span-full">
-            <ProviderForm start={p} editing={p} onsave={(body) => update(p.name, body)} oncancel={() => (panel = null)} />
-          </div>
-        {:else}
-          <div class="flex flex-col gap-2 rounded-lg border bg-card p-3.5 text-sm" data-testid="provider-card">
-            <div class="min-w-0">
-              <div class="truncate font-medium">{p.name}</div>
-              {#if p.description}<div class="truncate text-xs text-muted-foreground">{p.description}</div>{/if}
-            </div>
-            {#if p.contexts?.length}<div class="flex flex-wrap gap-1">{#each p.contexts as c (c)}<ContextTag name={c} />{/each}</div>{/if}
+        <li class="flex flex-wrap items-start gap-x-4 gap-y-3 px-4 py-4" data-testid="provider-card">
+          <span class="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground sm:flex"><KeyRound class="size-4" /></span>
+          <div class="min-w-0 flex-1 basis-60 space-y-1">
+            <p class="flex flex-wrap items-center gap-2">
+              <span class="truncate font-medium">{p.name}</span>
+              {#if p.description}<span class="truncate text-xs text-muted-foreground">{p.description}</span>{/if}
+              {#each p.areas ?? [] as c (c)}<AreaTag name={c} />{/each}
+            </p>
             <p class="text-xs {p.status === 'ready' ? 'text-ok' : p.status === 'incomplete' ? 'text-warn' : 'text-danger'}" data-testid="provider-status">
               {p.status === "ready" ? "● ready" : p.status === "incomplete" ? "● to finish" : "● invalid"}
             </p>
             {#if p.error}<p class="text-xs whitespace-normal text-danger">{p.error}</p>{/if}
             {#each p.problems ?? [] as problem (problem)}<p class="text-xs whitespace-normal text-warn">{problem}</p>{/each}
-            <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-              {#if p.models?.length}
-                <dt class="text-muted-foreground">models</dt>
-                <dd class="truncate font-mono" title={p.models.map((m) => m.id).join(", ")}>{p.models.map((m) => m.id).join(", ")}</dd>
-              {/if}
-              {#if p.harnesses?.length}<dt class="text-muted-foreground">for</dt><dd class="truncate">{p.harnesses.map((h) => productName(h)).join(", ")}</dd>{/if}
-              <dt class="text-muted-foreground">agents</dt>
-              <dd class="truncate">{p.agents?.length ? p.agents.join(", ") : "none"}</dd>
-              {#if p.files?.length}<dt class="text-muted-foreground">files for</dt><dd class="truncate font-mono">{p.files.join(", ")}</dd>{/if}
-            </dl>
-            {#if p.status !== "invalid"}
-              <div class="flex gap-1">
-                <Button variant="outline" size="sm" onclick={() => (panel = { kind: "edit", provider: p })} data-testid="provider-edit">Edit</Button>
-                <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={() => remove(p)} data-testid="provider-delete">Delete</Button>
-              </div>
-            {/if}
+<p class="fact truncate" title={reach(p)}>{reach(p)}</p>
           </div>
-        {/if}
+          {#if p.status !== "invalid"}
+            <Button variant="ghost" size="sm" class="ml-auto" onclick={() => (error = null, panel = { kind: "edit", provider: p })} data-testid="provider-edit">Edit</Button>
+          {/if}
+        </li>
       {/each}
-    </div>
+    </ul>
+    {:else}
+      <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">No provider yet. An API key, or a model running on this computer.</p>
+    {/if}
   </section>
 {/if}
+
+<Dialog
+  bind:open={() => panel !== null, (v) => (v ? null : (panel = null))}
+  title={panel?.kind === "edit" ? `Edit ${panel.provider.name}` : "New provider"}
+  description={panel?.kind === "new" ? "An API and its key, or a model server on this computer." : panel?.kind === "edit" ? use(panel.provider) : undefined}
+  wide
+  testid="provider-dialog"
+>
+  {#if panel?.kind === "new"}
+    <ProviderForm start={panel.start} onsave={create} oncancel={() => (panel = null)} {error} />
+  {:else if panel?.kind === "edit"}
+    {@const p = panel.provider}
+    <ProviderForm start={p} editing={p} onsave={(body) => update(p.name, body)} oncancel={() => (panel = null)} ondelete={() => remove(p)} {error} />
+  {/if}
+</Dialog>

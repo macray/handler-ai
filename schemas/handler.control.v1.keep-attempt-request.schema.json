@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/keep-attempt-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "attempt": {
+      "minimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "attempt"
+  ],
+  "title": "KeepAttemptRequest",
+  "type": "object"
+}

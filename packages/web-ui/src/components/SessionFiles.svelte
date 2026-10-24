@@ -17,10 +17,11 @@
   import Folder from "@lucide/svelte/icons/folder";
   import Link from "@lucide/svelte/icons/link";
   import X from "@lucide/svelte/icons/x";
-  import { diffLines } from "diff";
+  import { untrack } from "svelte";
   import { Button } from "$lib/components/ui/button";
   import { api } from "../lib/api";
   import type { SessionChanges, SessionFile, SessionFileChange, SessionFolder, SessionMount, SessionMounts } from "../lib/contracts.gen";
+  import Diff from "@handler/acp-view/components/Diff.svelte";
   import When from "./When.svelte";
 
   let {
@@ -28,7 +29,14 @@
     folder: root,
     changes,
     onclose,
-  }: { sessionId: string; folder: string; changes: SessionChanges | null; onclose: () => void } = $props();
+    request = null,
+  }: {
+    sessionId: string;
+    folder: string;
+    changes: SessionChanges | null;
+    onclose: () => void;
+    request?: { path: string; n: number } | null; // a file to show (a path clicked in the conversation), a new `n` each time
+  } = $props();
 
   type Change = SessionFileChange["change"];
   const CHANGE: Record<Change, { label: string; tone: string }> = {
@@ -46,7 +54,7 @@
     state: { label: "The agent's own settings and history", icon: Settings },
     cache: { label: "Cache kept between sessions", icon: Database },
     tools: { label: "Addon tools", icon: Package },
-    app: { label: "Mini app", icon: Box },
+    app: { label: "App", icon: Box },
   };
 
   let tab = $state<"changes" | "all" | "access">("changes");
@@ -110,6 +118,17 @@
         mountsError = null;
       })
       .catch((e: Error) => (mountsError = e.message));
+  });
+
+  $effect(() => {
+    if (!request) return;
+    const path = request.path;
+    untrack(() => {
+      mount = null;
+      tab = changed.has(path) ? "changes" : "all";
+      at = folderOf(path).replace(/\/$/, "");
+      show(path);
+    });
   });
 
   /** Browse a mount (null: the session's folder) in "All files". */
@@ -259,10 +278,7 @@
             </p>
           {/if}
           {#if file.before != null}
-            <pre class="code" data-testid="file-diff">{#each diffLines(file.before, file.text ?? "") as part, i (i)}<span
-                  class:add={part.added}
-                  class:del={part.removed}>{part.value}</span
-                >{/each}</pre>
+            <div class="text-[0.78rem]" data-testid="file-diff"><Diff oldText={file.before} newText={file.text ?? ""} scroll={false} /></div>
           {:else if file.text != null}
             <pre class="code">{file.text}</pre>
           {:else if file.image}
@@ -440,15 +456,5 @@
     border: 1px solid var(--border);
     border-radius: 0.375rem;
     background: var(--code-bg);
-  }
-  .add {
-    display: block;
-    background: var(--diff-add);
-  }
-  .del {
-    display: block;
-    background: var(--diff-del);
-    text-decoration: line-through;
-    opacity: 0.8;
   }
 </style>

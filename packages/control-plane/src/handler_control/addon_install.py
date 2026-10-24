@@ -1,5 +1,5 @@
-"""Installing addons into the user's folder (contract G.5): from the catalog handler ships, a
-folder, or a `.tar.gz` archive over HTTPS.
+"""Installing addons into the user's folder (contract G.5): from a source (D.26), a folder, or a
+`.tar.gz` archive over HTTPS.
 
     preview(source)          fetch it into <state>/addon-staging/<digest>/<name>/, validate it
                              (G.1), say what it brings; `digest` names exactly that content
@@ -9,8 +9,8 @@ folder, or a `.tar.gz` archive over HTTPS.
                              ~/.config/handler-ai/addons.lock.toml
     remove(name)             an installed addon (never a folder the user wrote: not in the lock)
 
-The lock records where each installed addon came from and its digest: an addon installed from the
-catalog has an update when the catalog handler ships holds other content. The daemon builds an
+The lock records where each installed addon came from and its digest: an addon installed from a
+source has an update when the source, as read last, holds other content. The daemon builds an
 installed addon's image afterwards (G.4), as any rebuild: checked before agents get it.
 """
 
@@ -28,13 +28,15 @@ from typing import Literal
 
 import httpx
 import tomlkit
+from pydantic import ValidationError
 
-from handler_contracts import AddonPreview, AddonSlot, AddonSlotInfo
+from handler_contracts import AddonManifest, AddonPreview, AddonSlot, AddonSlotInfo
 from handler_harness import addons
 
+from . import files, sources
 from .settings import Settings
 
-CATALOG_PREFIX = "catalog:"
+SOURCE_PREFIX = "source:"  # source:<source>/<name>, an addon of a source (D.26)
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 MAX_FILES = 2000
 DOWNLOAD_TIMEOUT = 60.0
@@ -107,9 +109,12 @@ def _links_stay_inside(root: Path) -> None:
             raise AddonInstallError(f"{path.relative_to(root)} links outside the addon")
 
 
-def catalog_digest(name: str) -> str | None:
-    folder = addons.CATALOG_DIR / name
-    return digest(folder) if (folder / "addon.toml").is_file() else None
+def source_digest(settings: Settings, source: str) -> str | None:
+    """What a source now holds for `source:<source>/<name>` (None: no such addon there)."""
+    try:
+        return digest(_from_source(settings, source))
+    except (AddonInstallError, sources.SourceError):
+        return None
 
 
 # ── fetching a source ───────────────────────────────────────────────────
@@ -154,19 +159,24 @@ def _download(url: str, into: Path) -> Path:
     return tree
 
 
-def _fetch(source: str, into: Path) -> Path:
+def _from_source(settings: Settings, source: str) -> Path:
+    source_id, _, name = source.removeprefix(SOURCE_PREFIX).partition("/")
+    try:
+        return sources.item(settings, source_id, "addon", name)
+    except sources.SourceError as e:
+        raise AddonInstallError(str(e)) from None
+
+
+def _fetch(settings: Settings, source: str, into: Path) -> Path:
     """The source's addon folder, copied or unpacked under `into`."""
-    if source.startswith(CATALOG_PREFIX):
-        name = source.removeprefix(CATALOG_PREFIX)
-        if name not in addons.catalog_names():
-            raise AddonInstallError(f"no addon '{name}' in the catalog")
-        return addons.CATALOG_DIR / name
+    if source.startswith(SOURCE_PREFIX):
+        return _from_source(settings, source)
     if source.startswith(("https://", "http://")):
         return _addon_root(_download(source, into))
     path = Path(source)
     if not path.is_absolute() or not path.is_dir():
         raise AddonInstallError(
-            f"{source}: not a folder (give an absolute path), a URL or catalog:"
+            f"{source}: not a folder (give an absolute path), a URL or source:<source>/<name>"
         )
     return _addon_root(path)
 
@@ -176,14 +186,16 @@ def _stage(settings: Settings, source: str) -> tuple[Path, str]:
     staging = settings.state_dir / "addon-staging"
     staging.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=staging) as tmp:
-        root = _fetch(source, Path(tmp))
+        root = _fetch(settings, source, Path(tmp))
+        _links_stay_inside(root)
+        # validated before its name makes a path: "../x" would copy it outside the staging
         try:
-            name = tomllib.loads((root / "addon.toml").read_text()).get("name")
+            text = (root / "addon.toml").read_text()
+            name = AddonManifest.model_validate(tomllib.loads(text)).name
         except (OSError, tomllib.TOMLDecodeError) as e:
             raise AddonInstallError(f"addon.toml: {e}") from None
-        if not isinstance(name, str) or not name:
-            raise AddonInstallError("addon.toml has no name")
-        _links_stay_inside(root)
+        except ValidationError as e:
+            raise AddonInstallError(f"addon.toml: {files.describe(e)}") from None
         candidate = Path(tmp) / "candidate" / name
         shutil.copytree(root, candidate, symlinks=True)
         found = digest(candidate)

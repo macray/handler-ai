@@ -9,7 +9,7 @@ import json
 import os
 import tomllib
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from handler_contracts import (
     KnowledgeFolderView,
@@ -177,6 +177,36 @@ def read_note(root: Path, relative: str) -> KnowledgeNote:
     if not path.endswith(".md") or not os.path.isfile(path):
         raise KnowledgeError(f"{relative}: not a markdown file in the knowledge root")
     return KnowledgeNote(path=rel, text=_read(Path(path)))
+
+
+# ── the model alone (D.18) ──────────────────────────────────────────────
+
+
+class Note(NamedTuple):
+    path: str  # as an agent program sees it under /knowledge: `<folder name>/<path>`
+    text: str
+
+
+def notes(root: Path, folders: list[str]) -> list[Note]:
+    """The markdown notes of `folders` (checked), each named as an agent program sees it
+    (`<folder name>/<path>`): what an agent on the model alone is given, in each call. Hidden and
+    `_` folders and files are left out, and links that lead out of the folder."""
+    base = os.path.realpath(root)
+    found: list[Note] = []
+    for folder in folders:
+        top, _ = _folder(base, folder)
+        name = mount_name(base, folder)
+        for here, dirs, files in os.walk(top):
+            dirs[:] = sorted(d for d in dirs if _visible(Path(d)))
+            for file in sorted(files):
+                path = os.path.join(here, file)
+                if not file.endswith(".md") or not _visible(Path(file)):
+                    continue
+                if not is_within(os.path.realpath(path), top) or not os.path.isfile(path):
+                    continue
+                rel = os.path.relpath(path, top)
+                found.append(Note(f"{name}/{rel}", _read(Path(path))))
+    return found
 
 
 # ── appends (automations, I.6) ──────────────────────────────────────────

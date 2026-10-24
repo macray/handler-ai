@@ -1,0 +1,14 @@
+# A speech-to-text server on this machine, for Voice: anything speaking OpenAI's
+# /v1/audio/transcriptions, e.g. vLLM (`vllm serve openai/whisper-large-v3 --port 8000`),
+# whisper.cpp's server (`whisper-server -m ggml-large-v3.bin --port 8000 --inference-path
+# /v1/audio/transcriptions`) or speaches. What you say does not leave this machine.
+apiVersion = "handler.provider/v1"
+description = "Speech to text on this machine (vLLM, whisper.cpp, speaches)"
+
+[endpoints]
+transcriptions = "http://127.0.0.1:8000/v1"
+
+[[models]]
+id = "openai/whisper-large-v3"
+name = "Whisper large v3 (local)"
+speech = true

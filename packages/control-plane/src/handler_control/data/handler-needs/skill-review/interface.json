@@ -1,0 +1,85 @@
+{
+  "fields": {
+    "type": "object",
+    "required": ["skill"],
+    "properties": {
+      "skill": { "type": "string", "title": "Skill to review", "x-handler": "skill" },
+      "expectation": {
+        "type": "string",
+        "title": "What you expect it to do",
+        "description": "Optional: the reviewer compares the skill with it.",
+        "x-handler": "long-text"
+      }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["verdict", "summary", "whenUsed", "capabilities", "mismatches", "findings"],
+    "properties": {
+      "verdict": {
+        "title": "Verdict",
+        "enum": ["no-concerns", "caution", "do-not-install"],
+        "x-handler": "verdict"
+      },
+      "summary": { "title": "What it does", "type": "string" },
+      "whenUsed": { "title": "When an agent would use it", "type": "string" },
+      "expectation": {
+        "title": "Against what you expect",
+        "type": "string",
+        "description": "Only when the person said what they expect."
+      },
+      "capabilities": {
+        "title": "What it makes an agent do",
+        "type": "object",
+        "required": ["commands", "hosts", "files", "env"],
+        "properties": {
+          "commands": { "title": "Commands it runs", "type": "array", "items": { "type": "string" } },
+          "hosts": { "title": "Hosts it reaches", "type": "array", "items": { "type": "string" } },
+          "files": {
+            "title": "Files it reads or writes outside its folder",
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "env": {
+            "title": "Environment variables and secrets it reads",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "mismatches": {
+        "title": "Where it does not do what it says",
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "findings": {
+        "title": "Findings",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["severity", "where", "text"],
+          "properties": {
+            "severity": { "title": "Severity", "enum": ["info", "warn", "high"], "x-handler": "verdict" },
+            "where": {
+              "title": "Where",
+              "x-handler": "code-ref",
+              "type": "object",
+              "required": ["path", "lines"],
+              "properties": {
+                "path": { "type": "string" },
+                "lines": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 1 },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              }
+            },
+            "text": { "title": "What", "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "timeoutSec": 1200
+}

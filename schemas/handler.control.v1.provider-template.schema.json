@@ -101,6 +101,11 @@
           "title": "Images",
           "type": "boolean"
         },
+        "speech": {
+          "default": false,
+          "title": "Speech",
+          "type": "boolean"
+        },
         "temperature": {
           "anyOf": [
             {
@@ -165,7 +170,8 @@
         "enum": [
           "anthropic",
           "openai-chat",
-          "responses"
+          "responses",
+          "transcriptions"
         ]
       },
       "title": "Endpoints",

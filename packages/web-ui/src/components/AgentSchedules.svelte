@@ -7,9 +7,9 @@
   import { href } from "../lib/router.svelte";
   import When from "./When.svelte";
 
-  let { automations, name, project }: { automations: AutomationView[]; name: string | null | undefined; project: string | null } = $props();
+  let { automations, agentId }: { automations: AutomationView[]; agentId: string } = $props();
 
-  const found = $derived(schedulesOf(automations, name, project));
+  const found = $derived(schedulesOf(automations, agentId));
 </script>
 
 {#each found as a (a.name)}

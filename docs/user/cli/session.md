@@ -10,7 +10,8 @@ held by the daemon.
 - To stop a session you are done with, freeing its sandbox; its conversation is kept.
 - To share a running session with your phone after it started.
 
-Sessions are started with [`run`](run.md) (or in the web UI, on your phone, by an automation).
+Sessions are started with [`run`](run.md) (or in the web UI, on your phone, by an automation, by
+one of your apps). A job's run waiting for the agent's other run says `waiting`.
 
 ## Usage
 

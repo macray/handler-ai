@@ -15,7 +15,7 @@ import { token } from "./auth";
 import { api, ApiError } from "./api";
 import type { Agent, ModelAccess, Session } from "./contracts.gen";
 
-export type SessionStatus = "starting" | "needs-you" | "working" | "replied" | "idle" | "elsewhere" | "stopped";
+export type SessionStatus = "starting" | "needs-you" | "working" | "replied" | "idle" | "elsewhere" | "stopped" | "failed";
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
   starting: "starting",
@@ -25,6 +25,7 @@ export const STATUS_LABEL: Record<SessionStatus, string> = {
   idle: "idle",
   elsewhere: "open elsewhere",
   stopped: "stopped",
+  failed: "failed",
 };
 
 /** Close code of an attachment closed because too many clients were attached (F.7). */
@@ -35,9 +36,11 @@ export class LiveSession {
   agent = $state() as Agent;
   conn = $state<AcpConnection | null>(null);
   starting = $state(false);
+  /** While starting, where it is (both real: the daemon answers once the agent runs, then the
+   *  conversation is replayed); `reattach`: its sandbox was already running; `since`: ms. */
+  startup = $state<{ step: "sandbox" | "conversation"; reattach: boolean; since: number } | null>(null);
   error = $state<string | null>(null);
   unread = $state(false); // a turn ended while the user was looking elsewhere
-  lastStop = $state<string | null>(null);
   draft = $state(""); // composer text, kept while switching sessions
   draftImages = $state<PromptImage[]>([]); // and its images
   queued = $state<Prompt | null>(null); // typed while the agent works: sent when its turn ends
@@ -72,7 +75,8 @@ export class LiveSession {
       if (this.info.pendingPermissions) return "needs-you";
       return this.info.busy ? "working" : "idle";
     }
-    if (!this.live || !this.conn) return "stopped";
+    // not running: failed (its first start failed: it never runs) or stopped (resumable)
+    if (!this.live || !this.conn) return this.info.state === "failed" ? "failed" : "stopped";
     if (this.conn.permissions.length) return "needs-you";
     if (this.conn.busy) return "working";
     if (this.unread) return "replied";
@@ -153,7 +157,8 @@ class SessionStore {
     }
     const byId = new Map(all.map((s) => [s.id, s]));
     this.list = this.list.filter((s) => !s.discovered || byId.get(s.key)?.state === "running");
-    const running = (s: Session) => (s.state === "running" || s.state === "starting") && !this.closed.has(s.id);
+    // a check's run (D.20) is the agent's checks', not a session of yours
+    const running = (s: Session) => (s.state === "running" || s.state === "starting") && !this.closed.has(s.id) && s.origin !== "check";
     const unknown = all.filter((s) => running(s) && !this.get(s.id));
     let agents = new Map<string, Agent>();
     try {
@@ -168,7 +173,8 @@ class SessionStore {
       session.discovered = true;
       this.list.push(session);
     }
-    for (const s of this.list) if (!s.conn && byId.has(s.key)) s.info = byId.get(s.key)!;
+    // not attached, or its attachment closed: what the daemon says (why the agent stopped)
+    for (const s of this.list) if (!s.live && byId.has(s.key)) s.info = byId.get(s.key)!;
   }
 
   /** An agent changed (e.g. renamed): show it so in its open sessions. */
@@ -178,33 +184,43 @@ class SessionStore {
 
   /** (Re)attach: the daemon replays the conversation; a stopped session is restarted. */
   async connect(session: LiveSession): Promise<void> {
-    session.conn?.close();
+    const before = session.conn; // its conversation stays shown while it restarts, and if that fails
+    before?.close();
     session.starting = true;
     session.error = null;
+    const startup = { step: "sandbox", reattach: session.info.state === "running", since: Date.now() } as const;
+    session.startup = startup;
     const conn = new AcpConnection();
-    conn.onTurnEnded = (stop) => this.turnEnded(session, stop);
+    conn.onTurnEnded = () => this.turnEnded(session);
     try {
       await conn.connect(websocketTransport(session.info.acpUrl, token() ?? "")); // answered once the agent runs
+      session.startup = { ...startup, step: "conversation" };
       session.info = await api.session(session.key);
       await conn.loadSession(session.info.acpSessionId ?? "", session.info.scope);
       session.conn = conn;
     } catch (e) {
       session.error = conn.closed?.reason || (e as Error).message;
-      session.conn = conn;
+      session.info = await api.session(session.key).catch(() => session.info); // failed, or stopped with why
+      const shown = before?.session.entries.length && conn.closed?.code !== ATTACHED_ELSEWHERE;
+      session.conn = shown ? before : conn;
       conn.close();
     } finally {
       session.starting = false;
+      session.startup = null;
     }
   }
 
   async send(session: LiveSession, prompt: Prompt): Promise<void> {
     if (!session.conn) return;
-    session.lastStop = null;
     session.error = null;
     try {
-      this.turnEnded(session, await session.conn.prompt(prompt.text, prompt.images));
+      await session.conn.prompt(prompt.text, prompt.images); // how it ended: shown by the timeline
+      this.turnEnded(session);
     } catch (e) {
-      session.error = (e as Error).message;
+      const back = session.conn.closed ? "It goes back in the input when the agent runs again" : "It is back in the input";
+      session.error = `Your message failed (${(e as Error).message}). ${back}.`;
+      session.draft = [prompt.text, session.draft].filter(Boolean).join("\n\n");
+      session.draftImages = [...prompt.images, ...session.draftImages];
     }
   }
 
@@ -226,8 +242,7 @@ class SessionStore {
     }
   }
 
-  private turnEnded(session: LiveSession, stop: string): void {
-    if (stop !== "end_turn") session.lastStop = stop;
+  private turnEnded(session: LiveSession): void {
     if (session.queued) return void this.sendQueued(session);
     if (this.viewing !== session.key || document.hidden) session.unread = true;
   }

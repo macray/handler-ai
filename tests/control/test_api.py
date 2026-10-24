@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 
-from ..support.daemon import UI_ORIGIN, Daemon
+from ..support.daemon import UI_ORIGIN, Daemon, require_echo_box
 
 
 def test_auth(daemon: Daemon) -> None:
@@ -34,12 +34,12 @@ def test_what_an_agent_runs_as(daemon: Daemon) -> None:
     )
     scope = daemon.make_scope()
     on_account = daemon.create_ad_hoc("fake", scope, model="big-model")
-    assert (on_account["models"][0]["harness"], on_account["models"][0]["model"]) == (
+    assert (on_account["model"]["harness"], on_account["model"]["model"]) == (
         "fake",
         "big-model",
     )
     on_provider = daemon.create_ad_hoc(None, scope, provider="local", harness="pi", name="pi")
-    model = on_provider["models"][0]
+    model = on_provider["model"]
     assert (model["harness"], model.get("account"), model["provider"]) == ("pi", None, "local")
     with daemon.http() as c:
         for wrong, detail in (
@@ -48,23 +48,18 @@ def test_what_an_agent_runs_as(daemon: Daemon) -> None:
             ({"provider": "local", "harness": "claude-code"}, "accepts: anthropic"),
             ({"provider": "local", "harness": "pi", "model": "m9"}, "has no model 'm9'"),
         ):
-            r = c.post("/v1/agents", json={"scope": str(scope), "models": [wrong]})
+            r = c.post("/v1/agents", json={"scope": str(scope), "model": wrong})
             assert r.status_code == 400 and detail in r.json()["detail"], (wrong, r.text)
         for invalid in (
             {},
             {"account": "fake", "provider": "local", "harness": "pi"},
             {"provider": "local"},
         ):
-            r = c.post("/v1/agents", json={"scope": str(scope), "models": [invalid]})
+            r = c.post("/v1/agents", json={"scope": str(scope), "model": invalid})
             assert r.status_code == 422, invalid
-        twice = [{"account": "fake"}, {"account": "fake"}]
-        for invalid_list in ([], twice):
-            r = c.post("/v1/agents", json={"scope": str(scope), "models": invalid_list})
-            assert r.status_code == 422, invalid_list
-        # the same model once its harness is resolved
-        same = [{"account": "fake"}, {"account": "fake", "harness": "fake"}]
-        r = c.post("/v1/agents", json={"scope": str(scope), "models": same})
-        assert r.status_code == 400 and "listed twice" in r.json()["detail"]
+        # one model, not a list of them (D.1)
+        r = c.post("/v1/agents", json={"scope": str(scope), "models": [{"account": "fake"}]})
+        assert r.status_code == 422
 
 
 def test_harnesses(daemon: Daemon) -> None:
@@ -79,7 +74,7 @@ def test_one_ad_hoc_agent_per_folder_and_name_starting_nothing(daemon: Daemon) -
     scope = daemon.make_scope()
     first = daemon.create_ad_hoc("fake", scope)
     with daemon.http() as c:
-        body = {"models": [{"account": "fake"}], "scope": str(scope), "network": "none"}
+        body = {"model": {"account": "fake"}, "scope": str(scope), "network": "none"}
         r = c.post("/v1/agents", json=body)
         assert r.status_code == 409 and r.json()["title"] == "agent exists"
         assert f"agent {first['id']} (unnamed) works in {scope}" in r.json()["detail"]
@@ -92,12 +87,12 @@ def test_one_ad_hoc_agent_per_folder_and_name_starting_nothing(daemon: Daemon) -
 def test_run_errors(daemon: Daemon, tmp_path: Path) -> None:
     scope = daemon.make_scope()
     with daemon.http() as c:
-        fake = [{"account": "fake"}]
-        outside = c.post("/v1/agents", json={"models": fake, "scope": str(tmp_path)})
+        fake = {"account": "fake"}
+        outside = c.post("/v1/agents", json={"model": fake, "scope": str(tmp_path)})
         assert outside.status_code == 403 and outside.json()["title"] == "scope not allowed"
         assert (
             c.post(
-                "/v1/agents", json={"models": [{"account": "nope"}], "scope": str(scope)}
+                "/v1/agents", json={"model": {"account": "nope"}, "scope": str(scope)}
             ).status_code
             == 400
         )
@@ -118,7 +113,7 @@ def test_rename_agent(daemon: Daemon) -> None:
     ad_hoc = daemon.create_ad_hoc("fake", daemon.make_scope())
     assert ad_hoc.get("name") is None
     url = f"/v1/agents/{ad_hoc['id']}"
-    body = {"models": [{"account": "fake"}], "scope": ad_hoc["scope"], "confirmRisks": True}
+    body = {"model": {"account": "fake"}, "scope": ad_hoc["scope"], "confirmRisks": True}
     with daemon.http() as c:
         renamed = c.put(url, json=body | {"name": " my project "})
         assert renamed.json()["name"] == "my project"
@@ -138,7 +133,7 @@ def test_named_agents_of_one_folder(daemon: Daemon) -> None:
     review = daemon.create_ad_hoc("fake", scope, name="review")
     assert review["id"] != plain["id"] and review["name"] == "review"
     with daemon.http() as c:
-        again = {"models": [{"account": "fake"}], "scope": str(scope), "name": " Review "}
+        again = {"model": {"account": "fake"}, "scope": str(scope), "name": " Review "}
         assert c.post("/v1/agents", json=again).status_code == 409
 
 
@@ -148,12 +143,12 @@ def test_update_ad_hoc_agent(daemon: Daemon, tmp_path: Path) -> None:
     scope = daemon.make_scope()
     ad_hoc = daemon.create_ad_hoc("fake", scope)
     (daemon.config_dir / "bindings" / "apps.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "miniapp"\n'
+        'apiVersion = "handler.binding/v1"\naddon = "app-builder"\n'
     )
     url = f"/v1/agents/{ad_hoc['id']}"
     with daemon.http() as c:
         body = {
-            "models": [{"account": "echo-box"}],
+            "model": {"account": "echo-box"},
             "scope": str(scope),
             "name": "tests",
             "allow": ["a.test:443"],
@@ -162,22 +157,22 @@ def test_update_ad_hoc_agent(daemon: Daemon, tmp_path: Path) -> None:
         r = c.put(url, json=body)
         assert r.status_code == 200, r.text
         updated = r.json()
-        assert (updated["id"], updated["name"], updated["models"][0]["account"]) == (
+        assert (updated["id"], updated["name"], updated["model"]["account"]) == (
             ad_hoc["id"],
             "tests",
             "echo-box",
         )
         assert (updated["network"], updated["egress"]) == ("filtered", "enforce")  # preset
         assert updated["allow"] == ["a.test:443"]
-        required = updated["models"][0]["requiredHosts"]
-        assert {"host": "jsr.io:443", "by": "addon miniapp: apps"} in required
+        required = updated["model"]["requiredHosts"]
+        assert {"host": "registry.npmjs.org:443", "by": "addon app-builder: apps"} in required
         assert c.get(url).json()["allow"] == ["a.test:443"]
         # checked like a new one
-        echo = [{"account": "echo-box"}]
-        outside = c.put(url, json={"models": echo, "scope": str(tmp_path)})
+        echo = {"account": "echo-box"}
+        outside = c.put(url, json={"model": echo, "scope": str(tmp_path)})
         assert outside.status_code == 403
         assert (
-            c.put(url, json={"models": echo, "scope": str(scope), "allow": ["nope"]}).status_code
+            c.put(url, json={"model": echo, "scope": str(scope), "allow": ["nope"]}).status_code
             == 422
         )
         assert c.put("/v1/agents/nope", json=body).status_code == 404
@@ -193,7 +188,7 @@ def test_agent_confinement(daemon: Daemon) -> None:
     root = daemon.create_ad_hoc("echo-box", scope, confinement="privileged", name="root")
     assert root["confinement"] == "privileged"
     with daemon.http() as c:
-        bad = {"models": [{"account": "echo-box"}], "scope": str(scope), "confinement": "none"}
+        bad = {"model": {"account": "echo-box"}, "scope": str(scope), "confinement": "none"}
         assert c.post("/v1/agents", json=bad).status_code == 422
 
 
@@ -201,7 +196,7 @@ def test_saves_that_widen_an_ad_hoc_agent_need_confirming(daemon: Daemon) -> Non
     """D.8 outside projects too: beyond the preset (a new agent) or beyond what it had (an
     update), a save is refused until confirmed; one that widens nothing needs no confirmation."""
     scope = str(daemon.make_scope())
-    body = {"models": [{"account": "fake"}], "scope": scope, "name": "wide"}
+    body = {"model": {"account": "fake"}, "scope": scope, "name": "wide"}
     wide = body | {"network": "open", "confinement": "privileged"}
     with daemon.http() as c:
         r = c.post("/v1/agents", json=wide)
@@ -230,6 +225,7 @@ def _wait(predicate: object, timeout: float = 60) -> None:
 
 def test_live_egress_switch_and_events(daemon: Daemon) -> None:
     """A.4 through the API: a live container connection switches enforcement; denials are listed."""
+    require_echo_box()
     ad_hoc = daemon.create_ad_hoc(
         "echo-box", daemon.make_scope(), egress="enforce", allow=["example.org:443"]
     )
@@ -249,7 +245,7 @@ def test_live_egress_switch_and_events(daemon: Daemon) -> None:
             assert c.patch(url, json={"egress": "enforce"}).json()["egress"] == "enforce"
             # a full update applies the allow-list and enforcement to the running sandbox
             body = {
-                "models": [{"account": "echo-box"}],
+                "model": {"account": "echo-box"},
                 "scope": ad_hoc["scope"],
                 "allow": ["a.test:443"],
             }

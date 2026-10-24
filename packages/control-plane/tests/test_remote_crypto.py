@@ -14,7 +14,7 @@ VECTORS = json.loads(
 )
 KEY = rc.unb64(VECTORS["key"])
 HOST, DEV = VECTORS["hostId"], VECTORS["deviceId"]
-PLAIN: dict[str, Any] = {"ts": 1, "frames": [{"s": "s_1", "m": {"jsonrpc": "2.0", "id": 1}}]}
+PLAIN: dict[str, Any] = {"expires": 1, "frames": [{"s": "s_1", "m": {"jsonrpc": "2.0", "id": 1}}]}
 
 
 def test_vectors() -> None:

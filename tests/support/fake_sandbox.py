@@ -13,7 +13,11 @@ one: no terminal of the sandbox's own) and tells `launch` how it ended. An autom
 spec labelled `handler.automation`, I.3) runs on the host too, its `pathAppend` on PATH, in a
 process group of its own that SIGTERM kills (as the real sandbox stops its container: a cancelled
 run's processes all end); with
-HANDLER_TEST_FAKE_TOOLBOX=1, `image inspect` of the toolbox answers as if it were built. The network
+HANDLER_TEST_FAKE_TOOLBOX=1, `image inspect` of the toolbox answers as if it were built. The images
+the fake ignores (the fake harness's, those of the addons the test daemon binds) are built for
+`image inspect` (a launch's check, A.7), the fake harness's unless HARNESS_MISSING is in
+HANDLER_TEST_FAKE_RAN; with SETUP_FAILS there, `launch` fails as the real one does before the
+sandboxed process starts (66, its reason on stderr). The network
 filter (`image proxy`) is built, so handlerd never builds it (D.4); with
 HANDLER_TEST_FAKE_NETWORK_FILTER=broken it is not, and `image build-proxy` fails. Any other spec,
 and every other verb (set-egress, sweep), goes to the real handler-sandbox-podman (the real
@@ -29,6 +33,10 @@ import time
 from pathlib import Path
 
 FAKE_IMAGE = "localhost/handler-ai-test-fake"
+ADDON_IMAGES = ("localhost/handler-ai-addon-fake-browser", "localhost/handler-ai-addon-fake-shop")
+IGNORED_IMAGES = tuple(f"{image}:" for image in (FAKE_IMAGE, *ADDON_IMAGES))
+HARNESS_MISSING = "harness-image-missing"  # a file: the fake harness's image is not built
+SETUP_FAILS = "setup-fails"  # a file: its launches fail
 SPEC_FD = 3
 INHERITED_ENV = ("PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ", "XDG_RUNTIME_DIR")
 REAL = Path(sys.executable).parent / "handler-sandbox-podman"
@@ -86,26 +94,35 @@ def real_sandbox() -> None:
     os.execv(REAL, [str(REAL), *sys.argv[1:]])
 
 
+def image_verb(ran: Path, args: list[str]) -> int | None:
+    """What the fake answers itself of `image …`; None: the real one's."""
+    broken_filter = os.environ.get("HANDLER_TEST_FAKE_NETWORK_FILTER") == "broken"
+    if args == ["proxy"]:
+        image = None if broken_filter else {"id": "0" * 64, "created": "2026-10-09T00:00:00Z"}
+        print(json.dumps({"ref": PROXY} | ({"image": image} if image else {})))
+        return 0
+    if args == ["build-proxy"] and broken_filter:
+        print("STEP 1/2: FROM docker.io/library/python:3.13-slim", flush=True)
+        print("handler-sandbox-podman: build failed (podman exit code 125)", file=sys.stderr)
+        return 1
+    built = args == ["inspect", TOOLBOX] and os.environ.get("HANDLER_TEST_FAKE_TOOLBOX")
+    if args[:1] == ["inspect"] and (built or args[1].startswith(IGNORED_IMAGES)):
+        if args[1].startswith(f"{FAKE_IMAGE}:") and (ran / HARNESS_MISSING).exists():
+            print(f"handler-sandbox-podman: no image {args[1]}", file=sys.stderr)
+            return 1
+        print(json.dumps({"id": ("0" if built else "1") * 64, "created": "2026-10-06T00:00:00Z"}))
+        return 0
+    return None
+
+
 def main() -> int:
     ran = Path(os.environ["HANDLER_TEST_FAKE_RAN"])
     if sys.argv[1] in LIVE_VERBS and (ran / sys.argv[2]).exists():
         return 0
     if sys.argv[1] == "attach" and (ran / f"{sys.argv[2]}.tty").exists():
         return attach(ran, sys.argv[2])
-    broken_filter = os.environ.get("HANDLER_TEST_FAKE_NETWORK_FILTER") == "broken"
-    if sys.argv[1:] == ["image", "proxy"]:
-        image = None if broken_filter else {"id": "0" * 64, "created": "2026-10-09T00:00:00Z"}
-        print(json.dumps({"ref": PROXY} | ({"image": image} if image else {})))
-        return 0
-    if sys.argv[1:] == ["image", "build-proxy"] and broken_filter:
-        print("STEP 1/2: FROM docker.io/library/python:3.13-slim", flush=True)
-        print("handler-sandbox-podman: build failed (podman exit code 125)", file=sys.stderr)
-        return 1
-    if sys.argv[1:] == ["image", "inspect", TOOLBOX] and os.environ.get(
-        "HANDLER_TEST_FAKE_TOOLBOX"
-    ):
-        print(json.dumps({"id": "0" * 64, "created": "2026-10-06T00:00:00Z"}))
-        return 0
+    if sys.argv[1] == "image" and (code := image_verb(ran, sys.argv[2:])) is not None:
+        return code
     if sys.argv[1:2] != ["launch"]:
         real_sandbox()
     with os.fdopen(SPEC_FD, "rb", closefd=False) as f:  # a file (sandbox_process): seekable
@@ -118,6 +135,9 @@ def main() -> int:
 
 
 def launch(ran: Path, spec: dict, automation: bool) -> int:
+    if (ran / SETUP_FAILS).exists():
+        print("handler-sandbox-podman: setup failed: the fake was told to", file=sys.stderr)
+        return 66
     (ran / spec["name"]).touch()
     if spec.get("tty"):
         (ran / f"{spec['name']}.tty").write_text(json.dumps(spec))

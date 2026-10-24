@@ -9,12 +9,13 @@ from handler_contracts import (
 )
 
 from .. import (
+    llm,
     providers,
     secrets,
 )
 from .accounts import references
+from .areas import check_areas
 from .common import Context, ProblemError, dump, log, parse_body
-from .contexts import check_contexts
 
 
 def add_provider_routes(app: FastAPI, ctx: Context) -> None:
@@ -37,7 +38,7 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
     @app.post("/v1/providers", dependencies=authed)
     async def create_provider(request: Request) -> Response:
         body = parse_body(ProviderRequest, await request.body())
-        check_contexts(ctx, body.contexts)
+        check_areas(ctx, body.areas)
         try:
             providers.save(settings.providers_dir, store, body, None)
         except providers.ProviderError as e:
@@ -50,7 +51,7 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
         """Replace it, and rename it while no agent uses it; its agents follow at their next
         start. Without `key`, its key is kept (a hand-written reference too)."""
         body = parse_body(ProviderRequest, await request.body())
-        check_contexts(ctx, body.contexts)
+        check_areas(ctx, body.areas)
         old = providers.get(settings.providers_dir, name)
         if not old.path.is_file():
             raise ProblemError(404, "provider not found", name)
@@ -100,8 +101,9 @@ def provider_infos(ctx: Context) -> list[ProviderInfo]:
                 problems=problems,
                 agents=names,
                 harnesses=providers.harnesses(spec),
+                model_alone=spec.endpoint_for(llm.PROTOCOLS) is not None,
                 files=sorted(spec.files or {}),
-                contexts=spec.contexts,
+                areas=spec.areas,
             )
         )
     return infos

@@ -1,0 +1,46 @@
+{
+  "$id": "urn:handler.control/v1/keep-check-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A run of the agent kept as a check (D.20).",
+  "properties": {
+    "fromRun": {
+      "minLength": 1,
+      "title": "Fromrun",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "compare": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compare"
+    }
+  },
+  "required": [
+    "fromRun"
+  ],
+  "title": "KeepCheckRequest",
+  "type": "object"
+}

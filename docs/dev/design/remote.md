@@ -91,7 +91,7 @@ Implementation: `packages/control-plane/src/handler_control/remote_crypto.py` (h
 // what the gateway sees (it adds `dev` and `cursor` when it hands envelopes to the host)
 { "id": "<128 random bits>", "nonce": "<96 bits>", "ct": "<ciphertext + tag>" }   // base64url
 // ct = AES-256-GCM(key[dir], nonce, plaintext, aad = "handler-remote/v1|hostId|deviceId|dir|id")
-{ "ts": 1790000000000,                                   // unix ms, when it was sealed
+{ "expires": 1790000300000,                              // unix ms: taken before it, once
   "frames": [ { "s": "s_…" | null, "m": { /* JSON-RPC */ } } ],
   "acks": ["<id>"…], "rejected": [{ "id": "…", "reason": "expired" }] }   // up only
 ```
@@ -100,11 +100,18 @@ Implementation: `packages/control-plane/src/handler_control/remote_crypto.py` (h
   device → host, up is host → device: an envelope sent back to its sender does not open.
 - The AAD binds the envelope to its host, device, direction and id: the gateway cannot relabel
   one or move it to another device.
-- **Replays:** handlerd keeps the ids it accepted for 10 min (`<state>/remote-replay.json`, so a
-  daemon restart does not reopen the window) and drops any id seen before. Ids rather than
-  counters: several tabs of the client may share a device key.
-- **Held back:** handlerd refuses a `down` envelope whose `ts` is more than 5 min away from its clock,
-  and says so in the next `up` envelope (`rejected`); the client shows the command as expired.
+- **Expiry, replays:** each envelope says until when its reader may take it (`expires`, set by
+  its sender): the reader takes it once, before then, whichever way it came. A device's command
+  expires in 5 min (now or never), a call it queues for an offline host in 7 days (§5, `apps.md`
+  §5.3), handlerd's own envelopes in 15 min. handlerd keeps each id it took until it expires
+  (`<state>/remote-replay.json`, so a restart does not forget them), refuses one that expires more
+  than 7 days ahead, and says when it refused an expired one in its next `up` envelope
+  (`rejected`): the client shows the command as expired. The client keeps the ids it opened in
+  its tab's `sessionStorage` (a reload keeps them; each tab polls on its own) and gives its
+  requests random ids, so an old answer replayed never answers a new request. Why an expiry
+  rather than one replay window per way in: the gateway chooses the way (it can keep a command
+  and hand it over later as queued), the expiry is sealed. Ids rather than counters: several
+  tabs of the client may share a device key.
 - **Frames:** `s` is the Handler session id: the frame is ACP traffic of the device's attachment to
   that session. `s: null` is the control channel (§5).
 - **Up** traffic is batched (~250 ms, ≤ 512 KiB of plaintext per envelope).
@@ -131,13 +138,22 @@ Implementation: `packages/control-plane/src/handler_control/remote.py`; Control 
   label ("project · agent"), projectId, project, agent, origin, harness, scope, acpSessionId,
   busy, pendingPermissions}]}` (shared ones only; the client groups them by project);
   `_handler/remote/list_agents` → `{projects: [{projectId, project, agents: [{id, name, description,
-  default}]}]}` (the agents marked `remoteStart`; empty for an `apps` device);
-  `_handler/remote/start_session {agentId, prompt?}` → `{session}` (a `remoteStart` agent only, an
+  default}]}], chats: [{id, name, description, default}]}` (the agents marked `remoteStart`; and
+  who you talk to in Chat, D.1 `chat`, the one used last the default: no folder, so started as
+  Ask runs, with no `remoteStart`; both empty for an `apps` device);
+  `_handler/remote/start_session {agentId, prompt?}` → `{session}` (a listed agent only, an
   `all` device only, -32602 otherwise): a session of that agent, origin `phone`, its request sent
   first, shared with the devices once it runs (`sessions_changed` then lists it and the device
-  attaches); `_handler/remote/ping` (notification: renews the lease); `_handler/remote/detach {s}`. From the host:
-  `_handler/remote/sessions_changed {sessions}` (the new shared list: with nothing shared handlerd stops
-  polling, so a device could not ask), `_handler/remote/closed {s, code, reason}` (an
+  attaches); Ask (D.24), an `all` device only (-32602 otherwise: Ask runs actions as the owner):
+  `_handler/remote/ask_options` → `{actions: [{app, action, description}]}`, `_handler/remote/ask
+  {turns, timezone?}` → the `AssistantAnswer` (answered once the router decided and the pick ran:
+  the client waits up to 2 minutes), `_handler/remote/action_run {app, action, runId}` → the
+  `ActionRun` (an agent's action read again); `ask_options` also says whether the host `listens` (a speech model
+  chosen, D.25) and `readAloudSpoken`/`readAloudTyped`; `_handler/remote/transcribe {audio,
+  format, language?}` → `{text}` (an `all` device only; answered once the provider wrote it down;
+  16 kbit/s Opus for at most 60 s keeps the envelope under the gateway's 256 KiB); `_handler/remote/ping` (notification: renews the lease); `_handler/remote/detach {s}`. From the host:
+  `_handler/remote/sessions_changed {sessions}` (the new shared list: with nothing shared, no
+  agent startable and nothing to Ask, handlerd stops polling, so a device could not ask), `_handler/remote/closed {s, code, reason}` (an
   attachment was closed: F.4/F.7 codes, 4004 unshared, 4003 too far behind).
 - **Session channel** (`s: <id>`): `initialize` attaches (again), then `session/load` (with
   `afterSeq`), `session/prompt`, `session/cancel`, `session/set_mode`,
@@ -146,13 +162,19 @@ Implementation: `packages/control-plane/src/handler_control/remote.py`; Control 
   remotely (anything else, e.g. `session/new`).
 - **Lease:** a device that sent nothing for 90 s is detached (so an idle session can still stop)
   and told so (`_handler/remote/closed`, code 1001 "device idle"): it re-attaches when it wakes up.
-  The client pings every 30 s while it is open.
+  The client pings every 30 s while it is open. A phone that slept may not have the notice yet
+  when it is used again, so the client does not wait for it: back on after nearly 90 s without
+  sending, it re-attaches at once, and a prompt refused with -32021 is sent again on a new
+  attachment (the agent never got it). A prompt that still fails goes back into the input, and
+  the input is kept on the phone for each session until it is sent.
 - **Polling:** one loop, only while a gateway is set and at least one session (or app) is shared,
   or an agent is marked `remoteStart` (so a device can start one):
   `GET /v1/host/poll` held up to 25 s (a quick poll first when the light is not green), given up
   as soon as nothing is shared any more. Output goes up with `POST /v1/host/up`; a device more than
   16 MiB behind is detached (it re-syncs).
-- **Status light** (`GET /v1/remote`, shown in the sidebar and by each session's switch):
+- **Status light** (`GET /v1/remote`, shown in Settings → Remote and by each session's switch;
+  the menu has no Remote row: a phone on each shared session, and a line only when the gateway is
+  unreachable or refused while a session is shared, since that is when it costs you):
   ⚪ `off` no gateway · ⚪ `idle` nothing shared, not polling · 🟢 `ok` the last poll succeeded ·
   🔴 `unreachable` (with the error, since when) · 🟠 `unauthorized` host token refused. The
   gateway keeps "host last seen", so the client shows the host online or offline.
@@ -186,9 +208,9 @@ strict Content-Security-Policy.
 | Web UI | `packages/web-ui/src/lib/remote.svelte.ts`, `components/RemoteSettings.svelte` | `tests/e2e/test_remote_ui.py` |
 | Remote client | `packages/remote-client/` (+ `packages/acp-view`) | its vitest, `tests/e2e/test_remote_ui.py` |
 
-## 7b. Mini apps
+## 7b. Apps
 
-Devices also reach **mini apps** (docs/dev/design/miniapps.md §5.2, contract H.8): frames on `s:
+Devices also reach **apps** (docs/dev/design/apps.md §5.2, contract H.8): frames on `s:
 "app:<name>"`, a device person and scope (`apps`-only devices for family members), and handlerd polls
 while a session or an app is shared.
 
@@ -200,5 +222,5 @@ while a session or an app is shared.
 - Restart a stopped remote-enabled session from remote.
 - Restrict some permission answers (e.g. "always allow") to the local UI.
 - Push notifications for sessions ("agent waiting for permission"), content-free through Web Push
-  like the inbox's (`miniapps.md` §7).
+  like the inbox's (`apps.md` §7).
 - PIN / passphrase lock of the key on the device; forward secrecy (ephemeral ECDH per connection).

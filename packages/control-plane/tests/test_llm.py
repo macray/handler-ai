@@ -3,18 +3,14 @@ against a stub provider speaking `openai-chat` and `anthropic`, and the router o
 
 import asyncio
 import json
-import threading
-import time
-from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import pytest
+from provider_stub import Stub
 
 from handler_contracts import LlmRequest, LlmResponse
 from handler_control import llm, service_router, services
-from handler_control.secrets import SecretStore
 from handler_control.services import ServiceError
 from handler_control.settings import Settings
 
@@ -26,87 +22,9 @@ SCHEMA = {
 }
 
 
-class Stub:
-    """A provider: answers each request with the next of `answers` (text, or an int: that HTTP
-    status, or None: never in time), in the protocol it was asked in."""
-
-    def __init__(self) -> None:
-        self.answers: list[Any] = []
-        self.requests: list[tuple[str, dict[str, str], dict[str, Any]]] = []
-        stub = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                stub.requests.append((self.path, dict(self.headers), body))
-                answer = stub.answers.pop(0)
-                if answer is None:
-                    time.sleep(1.5)
-                    return
-                if isinstance(answer, int):
-                    self.send_response(answer)
-                    self.end_headers()
-                    self.wfile.write(b'{"error": "overloaded"}')
-                    return
-                if self.path.endswith("/chat/completions"):
-                    data = {
-                        "choices": [{"message": {"role": "assistant", "content": answer}}],
-                        "usage": {"prompt_tokens": 10, "completion_tokens": 3},
-                    }
-                else:
-                    data = {
-                        "content": [{"type": "text", "text": answer}],
-                        "usage": {"input_tokens": 7, "output_tokens": 2},
-                    }
-                raw = json.dumps(data).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-
-            def log_message(self, format: str, *args: Any) -> None:
-                pass
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.port = self.server.server_address[1]
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-
 @pytest.fixture
-def stub() -> Iterator[Stub]:
-    s = Stub()
-    yield s
-    s.server.shutdown()
-
-
-@pytest.fixture
-def settings(tmp_path: Path, stub: Stub) -> Settings:
-    providers = tmp_path / "providers"
-    providers.mkdir()
-    base = f"http://host.containers.internal:{stub.port}"  # as a container sees the host
-    for name, endpoint in (
-        ("chat", f'openai-chat = "{base}/v1"'),
-        ("claude", f'anthropic = "{base}"'),
-    ):
-        (providers / f"{name}.toml").write_text(
-            'apiVersion = "handler.provider/v1"\n'
-            f'apiKey = {{ secret = "providers/{name}/apiKey" }}\n'
-            f'[endpoints]\n{endpoint}\n[[models]]\nid = "m"\n'
-        )  # fmt: skip
-    store = SecretStore(tmp_path / "data")
-    store.put("providers/chat/apiKey", "sk-chat-secret")
-    store.put("providers/claude/apiKey", "sk-claude-secret")
-    return Settings(
-        port=0,
-        config_dir=tmp_path,
-        state_dir=tmp_path,
-        bindings_dir=tmp_path,
-        allowed_origins=frozenset(),
-        web_ui_dir=tmp_path,
-        data_dir=tmp_path / "data",
-        providers_dir=providers,
-    )
+def settings(stub_settings: Settings) -> Settings:
+    return stub_settings
 
 
 def complete(settings: Settings, timeout: float = 5, **request: Any) -> llm.Completion:

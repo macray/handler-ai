@@ -21,8 +21,8 @@ from .. import (
 )
 from ..agents import AgentRecord
 from ..settings import Settings
+from .areas import check_areas
 from .common import Context, ProblemError, dump, log, parse_body
-from .contexts import check_contexts
 
 
 def add_account_routes(app: FastAPI, ctx: Context) -> None:
@@ -39,7 +39,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
     @app.post("/v1/accounts", dependencies=authed)
     async def create_account(request: Request) -> Response:
         body = parse_body(AccountRequest, await request.body())
-        check_contexts(ctx, body.contexts)
+        check_areas(ctx, body.areas)
         try:
             accounts.create(
                 settings.accounts_dir,
@@ -48,7 +48,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
                 body.description,
                 plan=body.plan,
                 connectors=body.connectors,
-                contexts=body.contexts,
+                areas=body.areas,
             )
         except accounts.AccountError as e:
             raise ProblemError(409, "cannot create the account", str(e)) from None
@@ -57,10 +57,10 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.put("/v1/accounts/{name}", dependencies=authed)
     async def update_account(name: str, request: Request) -> Response:
-        """Its description, plan, connectors and contexts, and its name while no agent uses it.
+        """Its description, plan, connectors and areas, and its name while no agent uses it.
         Not its harness."""
         body = parse_body(AccountRequest, await request.body())
-        check_contexts(ctx, body.contexts)
+        check_areas(ctx, body.areas)
         old = account_or_404(settings, name)
         if old.account is None:
             raise ProblemError(409, "invalid account: fix its file", old.error)
@@ -78,7 +78,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
                 description=body.description,
                 plan=body.plan,
                 connectors=body.connectors,
-                contexts=body.contexts,
+                areas=body.areas,
             )
         except accounts.AccountError as e:
             raise ProblemError(409, "cannot change the account", str(e)) from None
@@ -168,11 +168,11 @@ def references(ctx: Context) -> dict[str, dict[str, list[str]]]:
     found: dict[str, dict[str, list[str]]] = {"account": {}, "provider": {}}
     for record in ctx.registry.agents.values():
         label = ctx.projects.label(record) if record.project_id else ad_hoc_label(record)
-        for m in record.models:
-            kind, name = ("account", m.account) if m.account else ("provider", m.provider or "")
-            users = found[kind].setdefault(name, [])
-            if (label or record.id) not in users:
-                users.append(label or record.id)
+        m = record.model
+        kind, name = ("account", m.account) if m.account else ("provider", m.provider or "")
+        users = found[kind].setdefault(name, [])
+        if (label or record.id) not in users:
+            users.append(label or record.id)
     return found
 
 
@@ -218,7 +218,7 @@ def account_infos(ctx: Context) -> list[AccountInfo]:
                 description=a.account.description,
                 plan=a.account.plan,
                 connectors=a.account.connectors,
-                contexts=a.account.contexts,
+                areas=a.account.areas,
                 login=a.login.kind,
                 token=None if token is None else secrets.kind(token),
                 logged_in_at=since,

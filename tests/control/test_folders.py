@@ -11,7 +11,7 @@ def test_work_folders(daemon: Daemon) -> None:
     outside.mkdir()
     with daemon.http() as c:
         assert [f["root"] for f in c.get("/v1/folders").json()["folders"]] == [root]
-        body = {"models": [{"account": "fake"}], "scope": str(outside)}
+        body = {"model": {"account": "fake"}, "scope": str(outside)}
         r = c.post("/v1/agents", json=body)
         assert r.status_code == 403 and "outside the work folders" in r.json()["detail"]
         try:
@@ -22,7 +22,7 @@ def test_work_folders(daemon: Daemon) -> None:
             assert c.post("/v1/agents", json=body).status_code == 201
             project = {
                 "folder": str(outside / "shop"),
-                "agents": [{"models": [{"account": "fake"}], "name": "dev"}],
+                "agents": [{"model": {"account": "fake"}, "name": "dev"}],
             }
             (outside / "shop").mkdir()
             made = c.post("/v1/projects", json=project | {"name": "shop-in-outside"})

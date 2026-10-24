@@ -1,0 +1,15 @@
+{
+  "$id": "urn:handler.control/v1/action-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/apps/{name}/actions/{action}`: the action's form, filled.",
+  "properties": {
+    "fields": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Fields",
+      "type": "object"
+    }
+  },
+  "title": "ActionRequest",
+  "type": "object"
+}

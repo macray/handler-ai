@@ -1,4 +1,4 @@
-"""Web Push without content (RFC 8030, VAPID RFC 8292) — docs/dev/design/miniapps.md §7.
+"""Web Push without content (RFC 8030, VAPID RFC 8292) — docs/dev/design/apps.md §7.
 
 handlerd signs with its own key (`<config>/vapid.json`, 0600): no account with any push service.
 The push carries nothing; the phone's service worker shows "something new" and the text is
@@ -68,11 +68,31 @@ class Vapid:
         return f"vapid t={token}, k={self.public_key}"
 
 
+# The push services browsers subscribe with (Chrome, Android: Google; Firefox: Mozilla; Safari:
+# Apple; Edge: Windows). handlerd POSTs to a device's endpoint whenever its person gets a message:
+# any other address would let a paired device (a family member's too) have handlerd call one of
+# your network's.
+PUSH_HOSTS = frozenset(
+    {"fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"}
+)
+PUSH_DOMAINS = (".notify.windows.com",)
+
+
 def valid_endpoint(endpoint: object) -> bool:
     if not isinstance(endpoint, str) or len(endpoint) > 2048:
         return False
     parts = urlsplit(endpoint)
-    return parts.scheme == "https" and bool(parts.netloc)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    host = parts.hostname or ""
+    return (
+        parts.scheme == "https"
+        and port is None
+        and parts.username is None
+        and (host in PUSH_HOSTS or host.endswith(PUSH_DOMAINS))
+    )
 
 
 async def push(http: httpx.AsyncClient, vapid: Vapid, endpoint: str, contact: str) -> int:

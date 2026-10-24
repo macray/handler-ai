@@ -62,10 +62,17 @@ class Daemon:
         return self.request("GET", path).text
 
     def request(
-        self, method: str, path: str, json: Any = None, timeout: float | None = None
+        self,
+        method: str,
+        path: str,
+        json: Any = None,
+        timeout: float | None = None,
+        content: bytes | None = None,  # a file sent as the body (an app file, H.15)
     ) -> httpx.Response:
         try:
-            r = self.http.request(method, path, json=json, timeout=timeout or self.http.timeout)
+            r = self.http.request(
+                method, path, json=json, content=content, timeout=timeout or self.http.timeout
+            )
         except httpx.ConnectError:
             raise ClientError(
                 f"handlerd is not reachable at {self.url} (handler daemon status)"

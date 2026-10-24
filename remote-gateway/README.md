@@ -18,12 +18,14 @@ uv run pytest                             # its own tests
 ```
 
 State: `$HANDLER_GATEWAY_STATE` (default `~/.local/state/handler-gateway/state.json`, 0600): hosts
-(hash of their token) and the devices each host registered (hash of their gateway token).
+(hash of their token) and the devices each host registered (hash of their gateway token);
+the CLI and the server change it in turn (`state.lock`), so neither undoes the other.
 Envelopes in transit live in memory only (10 min, bounded): a restart loses them, and readers
 start over (their cursors belong to the previous run).
-Next to it, `state.queue.json` (0600): envelopes a device queued for when its host is back
-(Handler's mini apps, "queued" routes), kept up to 7 days until the host takes them; still opaque.
-`/appframe.html` of the client is served with its own policy (no connection at all): a mini app
+Next to it, `state.queue/` (one file per envelope, 0600): envelopes a device queued for when its
+host is back (Handler's apps, "queued" routes), kept up to 7 days until the host takes them;
+still opaque.
+`/appframe.html` of the client is served with its own policy (no connection at all): an app
 runs in it on the phone.
 
 ## Deploying

@@ -1,6 +1,6 @@
 <script lang="ts">
   // What runs now, apart from what can be started: live sessions (opened here) and terminals
-  // (`handler terminal`, D.16: their page, the network). Shown by a project and by the Agents page.
+  // (`handler terminal`, D.16: their page, the network). Shown by a project and by Other folders.
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import SessionStatus from "./SessionStatus.svelte";
   import When from "./When.svelte";
@@ -32,7 +32,7 @@
 
 {#if live.length || terminals.length}
   <section class="space-y-2">
-    <h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Live</h2>
+    <h2 class="section-label">Live</h2>
     <ul class="divide-y overflow-hidden rounded-lg border bg-card" data-testid="live-list">
       {#each live as s (s.id)}
         {@const on = agents.find((a) => a.id === s.agentId)}

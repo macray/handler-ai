@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "AgentInterface": {
-      "description": "What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and\nthe result its final message holds. An agent with one runs unattended, so in permission mode\n`bypass`: no one is there to answer its requests.",
+      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
       "properties": {
         "fields": {
           "anyOf": [
@@ -18,10 +18,62 @@
           "default": null,
           "title": "Fields"
         },
-        "subject": {
+        "result": {
           "anyOf": [
             {
-              "const": "skill",
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "timeoutSec": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 86400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
+        }
+      },
+      "title": "AgentInterface",
+      "type": "object"
+    },
+    "AgentOrigin": {
+      "description": "What an agent was set up from, kept for good: the definition of an app's need (H.2), an\nagents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it\ncame from: where the agent lives is its home (`projectId`, `app`, `chat`).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "app",
+            "agents-file",
+            "handler-need"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
               "type": "string"
             },
             {
@@ -29,37 +81,34 @@
             }
           ],
           "default": null,
-          "title": "Subject"
+          "title": "Agent"
         },
-        "result": {
-          "additionalProperties": true,
-          "title": "Result",
-          "type": "object"
-        },
-        "timeoutSec": {
-          "default": 1800,
-          "exclusiveMinimum": 0,
-          "maximum": 86400,
-          "title": "Timeoutsec",
-          "type": "integer"
+        "version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
         }
       },
       "required": [
-        "result"
+        "kind",
+        "name"
       ],
-      "title": "AgentInterface",
+      "title": "AgentOrigin",
       "type": "object"
     },
     "AgentRequest": {
-      "description": "An agent of a project: its settings (all its own, never followed from its project; it\nworks in its project's folder) and what it is in the project. The body of create (POST) and\nof a full update (PUT).",
+      "description": "An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a\nproject (`projectId`: it works in the project's folder), an app (`app`: one of its parts,\nH.14), Chat (`chat`: someone you talk to, with no folder), or none (outside projects, in its\nown folder or a folder per session). The home is given at creation and never changes.",
       "properties": {
-        "models": {
-          "items": {
-            "$ref": "#/$defs/ModelAccess"
-          },
-          "minItems": 1,
-          "title": "Models",
-          "type": "array"
+        "model": {
+          "$ref": "#/$defs/ModelAccess"
         },
         "network": {
           "default": "filtered",
@@ -144,10 +193,64 @@
           ],
           "default": null
         },
+        "modelAlone": {
+          "default": false,
+          "title": "Modelalone",
+          "type": "boolean"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App"
+        },
+        "chat": {
+          "default": false,
+          "title": "Chat",
+          "type": "boolean"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
         "name": {
-          "pattern": "^\\s*\\S",
-          "title": "Name",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
         },
         "description": {
           "anyOf": [
@@ -174,16 +277,6 @@
           "default": null,
           "title": "Instructions"
         },
-        "default": {
-          "type": "boolean",
-          "default": false,
-          "title": "Default"
-        },
-        "remoteStart": {
-          "default": false,
-          "title": "Remotestart",
-          "type": "boolean"
-        },
         "skills": {
           "default": [],
           "items": {
@@ -195,6 +288,27 @@
           "title": "Skills",
           "type": "array"
         },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "default": {
+          "type": "boolean",
+          "default": false,
+          "title": "Default"
+        },
+        "remoteStart": {
+          "default": false,
+          "title": "Remotestart",
+          "type": "boolean"
+        },
         "confirmRisks": {
           "default": false,
           "title": "Confirmrisks",
@@ -202,14 +316,13 @@
         }
       },
       "required": [
-        "models",
-        "name"
+        "model"
       ],
       "title": "AgentRequest",
       "type": "object"
     },
     "ModelAccess": {
-      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one or more (D.1); a session runs with one.",
+      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one (D.1); a session runs with it or another picked\nfor that session (D.19). An agent on the model alone (D.18) has no harness: a provider only\n(AgentSettings checks it).",
       "properties": {
         "harness": {
           "anyOf": [
@@ -323,7 +436,7 @@
       "title": "Caches",
       "type": "string"
     },
-    "context": {
+    "area": {
       "anyOf": [
         {
           "maxLength": 32,
@@ -336,7 +449,18 @@
         }
       ],
       "default": null,
-      "title": "Context"
+      "title": "Area"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
     },
     "agents": {
       "items": {

@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.remote/v1/shared-app",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A deployed mini app shared with the device's person (H.8).",
+  "description": "A deployed app shared with the device's person (H.8).",
   "properties": {
     "name": {
       "title": "Name",

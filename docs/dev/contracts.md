@@ -35,10 +35,10 @@ the data formats and behaviours each block must honour so any block can be repla
 
 One ACP connection, end to end:
 
-1. The client creates (or reuses) an **Agent** = its models (each a harness on an account or
+1. The client creates (or reuses) an **Agent** = its model (a harness on an account or
    provider) × scope × settings (D). No container exists yet.
 2. The client opens the Agent's ACP WebSocket (C).
-3. The control plane resolves the model the connection runs with (its first for a plain
+3. The control plane resolves the model the connection runs with (the agent's for a plain
    connection; a session's own, F) with its account or provider (E) and calls the harness
    adapter (B) to get a `HarnessLaunch`.
 4. The control plane merges the agent's settings + launch into a `SandboxSpec` (A) and
@@ -98,8 +98,8 @@ type Account = {
                                         // through handler, else where the person keeps it (`env`,
                                         // `file`, `command`); none until logged in; invalid for
                                         // a file login (its file is kept by handler, D.9)
-  contexts?: string[];                  // the project contexts it may be used in (D.19): their
-                                        // names, or "any"; none: only projects without a context
+  areas?: string[];                  // the areas it may be used in (D.19): their
+                                        // names, or "any"; none: only projects without an area
 };
 
 type Provider = {
@@ -107,16 +107,22 @@ type Provider = {
   description?: string;
   endpoints: Partial<Record<Protocol, string>>;  // ≥ 1: http(s) URL to give a harness that speaks it
   apiKey?: SecretRef;                   // none for a local server
-  models: ProviderModel[];              // ≥ 1, unique ids
+  models: ProviderModel[];              // ≥ 1, unique ids; the first chat one (not speech) is
+                                        // the default
   files?: Record<string, Record<string, FileSource>>;  // harness → its config file slot (B.1
                                         // configFiles) → content source
-  contexts?: string[];                  // the project contexts it may be used in (D.19), as an
+  areas?: string[];                  // the areas it may be used in (D.19), as an
                                         // account's
 };
-type Protocol = "anthropic" | "openai-chat" | "responses";
+type Protocol = "anthropic" | "openai-chat" | "responses"
+  | "transcriptions";                   // speech to text, OpenAI's `POST <url>/audio/transcriptions`:
+                                        // spoken by handlerd only (transcribe/v1, I.11), never a harness
 type ProviderModel = {
   id: string; name?: string; contextWindow?: number; maxOutput?: number;
   reasoning?: boolean; images?: boolean; temperature?: number;
+  speech?: boolean;                     // it writes down speech, at the `transcriptions` endpoint
+                                        // (required then): never a model a harness or the model
+                                        // alone runs on, never offered as one (D.25 Voice)
   native?: Record<string, Record<string, unknown>>;  // per harness: merged into the entry written for it
 };                                      // how each field reaches each harness: B.4
 
@@ -198,8 +204,9 @@ Rules:
   (B.1 `login.hosts`), the provider's endpoint host (derived; the
   loopback of the machine is the container host's name in a container, `host.containers.internal`),
   the addons' hosts (G) and the agent's own (D.1). The first two are those of the model the
-  sandbox runs with (one of the agent's, D.1), never of its other models. The first three are
-  listed on each of the Agent's `models` as `requiredHosts`, each with what requires it.
+  sandbox runs with (the agent's, or one picked for a session, D.19), never of another. The
+  first three, with the agent's model, are listed on the Agent's `model` as `requiredHosts`, each
+  with what requires it.
 - E5. A provider's key, like an account's token, reaches the harness only through an environment
   variable (B3), named by its adapter (the token: `login.token`), and every protection of the
   harness's secrets covers it (B.3: dropped from the MCP servers' environment); never a file.
@@ -451,13 +458,14 @@ knows nothing of harnesses.
   one it has no setting for is listed below, never silently assumed. In particular the limits:
   `contextWindow` is the window the harness measures the conversation against (and reports), and
   the harness MUST compact early enough to leave room for a reply: `reserve` = the model's
-  `maxOutput`, else 16384 tokens, at most half the window. Without `contextWindow` the harness's
+  `maxOutput`, else 16384 tokens, at most a fifth of the window (a small window compacts at 80 %
+  of it, not at half: a `maxOutput` as large as the window is common for local models). Without `contextWindow` the harness's
   own default applies (shown below): a provider of a smaller model must give it.
 
 | | window | room for the reply | `maxOutput` | `name` |
 |---|---|---|---|---|
 | vibe | no setting of its own: `auto_compact_threshold` = `contextWindow − reserve` is both where it compacts and the window it reports (without: 200000) | that threshold | no setting | `display_name` |
-| pi | `contextWindow` in `models.json` (without: 128000) | `settings.json` `compaction.reserveTokens` = `reserve`, only with a `maxOutput` (pi's own default is 16384) | `maxTokens` | `name` |
+| pi | `contextWindow` in `models.json` (without: 128000) | `settings.json` `compaction.reserveTokens` = `reserve` | `maxTokens` | `name` |
 | codex | `context_window` and `max_context_window` of the model catalog (without: 128000) | Codex's own | not written (not checked) | `display_name` |
 | claude-code | no setting: it knows Claude models' | Claude Code's own | no setting | — |
 
@@ -482,9 +490,11 @@ pi-coding-agent 0.99.2 (`models.json` schema, `shouldCompact`: `tokens > context
   from the platform's default on its first start and never changed by Handler afterwards (edited from
   the web UI, `GET`/`PUT /v1/toolbox/containerfile`, or by hand). What Handler needs from it: a glibc
   system with `sh`, what the recipes install with (`npm`, `uv`, `jq`), `python3` for
-  `handler-sandbox-env` (B6), podman with setcap'd `newuidmap`/`newgidmap` for `nested` (A.5). Nothing
+  `handler-sandbox-env` (B6), `bun` (any version: apps run on their own, H.3) for the agents that
+  write apps, podman with setcap'd `newuidmap`/`newgidmap` for `nested` (A.5). Nothing
   else of Handler is in it. A toolbox lacking something fails its rebuild: the images built on it
-  are checked before any switches (D.4).
+  are checked before any switches (D.4); but Bun, which only the agents writing apps need, is a
+  warning of the rebuild, not a failure.
 - The toolbox declares its toolchains' caches in its `toolbox.toml`
   (`ToolboxManifest`): a `[caches.<name>]` table per cache (`CacheDeclaration`): `target`, the
   home path it is mounted at (`"~/.cargo"`), `about`, what it holds (shown in Settings → Caches),
@@ -582,7 +592,7 @@ type Mount = {
   target: string;                       // sandbox path; scope mounts MUST use target = source
   readOnly: boolean;
   kind: "scope" | "state" | "cache" | "config" | "knowledge" | "app" | "subject";
-                                        // knowledge: read-only (D.5); app: a mini app's code and
+                                        // knowledge: read-only (D.5); app: an app's code and
                                         // socket folder (H.3); subject: what a run works on,
                                         // read-only (D.18)
 };
@@ -686,13 +696,15 @@ events); add those domains to the agent.
 Moving between `open` and `filtered` for a running agent is not supported (it changes the network
 topology); it applies to the next connection.
 An instance still starting (the control plane already counts it as a connection of the agent) is
-waited for: `set-egress` and `set-allow` apply once its proxy answers (60 s at most).
+waited for: `set-egress` and `set-allow` apply once its proxy answers (60 s at most). Before its
+launcher has made the instance (the launcher's own start), the verb cannot know the instance and
+fails; the control plane tries it again while that launcher runs, for a connection under 10 s old.
 
 Implementations (M1):
 
 | Impl | sandbox | filtered network |
 |---|---|---|
-| `handler-sandbox-podman` | rootless container: keep-id, private 0700 tmpfs home (empty: `notmpcopyup`, never the image's content), read-only rootfs, `--init`, env via a 0600 env-file deleted after `podman create` | per-instance `--internal --disable-dns` network + `localhost/handler-ai-proxy:2` (mitmproxy with Handler's addon; built by `image build-proxy`, A.7, never by a launch: missing, the launch fails, `66`) on both networks: tunnels relayed undecrypted, decided on their `CONNECT` target |
+| `handler-sandbox-podman` | rootless container: keep-id, private 0700 tmpfs home (empty: `notmpcopyup`, never the image's content), read-only rootfs, `--init`, env via a 0600 env-file deleted after `podman create` | per-instance `--internal --disable-dns` network + `localhost/handler-ai-proxy:2` (mitmproxy with Handler's addon; built by `image build-proxy`, A.7, never by a launch: missing, the launch fails, `66`) on both networks: tunnels relayed undecrypted, decided on their `CONNECT` target; a forwarded `http://` request decided on its host and port |
 
 The daemon's tests replace it with a stand-in (`HANDLER_TEST_SANDBOX`, `tests/support/fake_sandbox.py`)
 that runs the fake test harness on the host and hands every other spec to `handler-sandbox-podman`:
@@ -780,7 +792,7 @@ image in use, a failed build or pull) with the reason on stderr. The caller says
 | `read REF PATH` | prints the regular file `PATH` of the image (at most 1 MiB), without running anything in it (an addon image has no shell); a folder is refused |
 | `tag SOURCE TARGET` | points `TARGET` at `SOURCE` (a reference or an id) |
 | `remove ID` | removes the image unless something uses it: a container running from it **or mounting it** (its A6 label), an image built on it |
-| `pull REF` | pulls a published image (the mini apps' runtime, H.3) |
+| `pull REF` | pulls a published image (the apps' runtime, H.3) |
 | `proxy` | prints `ProxyImage` JSON: `{"ref": "<its reference>", "image"?: ImageInfo}`, the egress proxy's image (A.3), `image` when it is built. Its recipe and name are the runtime's own |
 | `build-proxy` | builds that image (its base pulled again, no cache: their security updates), checks that it starts, tags it as `ref`, and removes the image it replaces unless a running proxy uses it. Its output is the build log (`STEP <n>/<m>` lines). A launch never builds it: a sandbox needing its proxy (filtered, or with injections) fails setup (`66`) while it is missing |
 
@@ -803,7 +815,7 @@ type RuntimeCheckItem = { name: string; ok: boolean; required: boolean; detail: 
 |---|---|---|
 | `podman` | yes | `podman info` answers (only item when it does not, with install hints) |
 | `rootless` | yes | podman runs as the user (A3); or the development mode (`HANDLER_SANDBOX_DEV_NO_KEEPID`) |
-| `subordinate ids` | yes | at least 65536 in `/etc/subuid` and `/etc/subgid` (keep-id) |
+| `subordinate ids` | yes | at least 65535 in `/etc/subuid` and `/etc/subgid`: with the user's own id, every id 0–65535 (keep-id; what a `nested` sandbox gives inner podman, A.5) |
 | `network` | yes | netavark and pasta (allow-listed sandboxes, A.3) |
 | `cgroups v2` | no | memory and CPU limits (`resources`) |
 | `/dev/fuse` | no | `nested` confinement (A.5) |
@@ -832,10 +844,10 @@ files; `clear` removes them; refused while a sandbox mounts the folder or one in
 ### C.1 Transport (client side)
 
 - WebSocket at `ws://127.0.0.1:<port>/v1/agents/{agentId}/acp`. The control plane MUST bind loopback only.
-- The model the connection runs with: the agent's first, or the one the query names
-  (`?account=…` or `?provider=…&harness=…`, `&model=…`: a `ModelAccess`, D.1), one of the agent's
-  or any other (D.19, as for a session), checked before accepting: 400 when unusable, 409 when
-  not made for its project's context. `handler acp` outside projects names the account or provider
+- The model the connection runs with: the agent's, or the one the query names
+  (`?account=…` or `?provider=…&harness=…`, `&model=…`: a `ModelAccess`, D.1), the agent's or
+  any other (D.19, as for a session), checked before accepting: 400 when unusable, 409 when
+  not made for its project's area. `handler acp` outside projects names the account or provider
   typed.
 - Subprotocols: the client offers `acp.v1` and `bearer.<token>`; the server MUST reject (401)
   without a valid token and MUST answer with `acp.v1`.
@@ -880,7 +892,7 @@ Policy errors use JSON-RPC codes in `-32001…-32099` with `data: { policy: "P<n
 permitted · `-32004` P7 session defaults could not be applied (the client gets this error
 instead of the `session/new` result: a session in an unexpected mode is never handed out).
 
-Conformance (`tests/acp-endpoint/`), using a fake agent + a probe client:
+Conformance (`tests/acp_endpoint/`), using a fake agent + a probe client:
 no token → 401; bad Origin → 403; P1–P9 each; 1 MB message intact; close → sandbox gone;
 agent exit → 1011.
 
@@ -934,10 +946,9 @@ type AddonInfo = {                      // G.1; image fields as HarnessInfo, whe
   directory: string;                    // where it is loaded from (G.1)
   builtin: boolean;                     // shipped with handler; else the user's
   overridesBuiltin: boolean;            // the user's, in place of the built-in addon of that name
-  source?: string;                      // installed from (G.5)
-  updateAvailable: boolean;             // installed from the catalog, which now ships other content
+  source?: string;                      // installed from (G.5): source:<source>/<name>, a folder, a URL
+  updateAvailable: boolean;             // installed from a source, which now holds other content (D.26)
 };
-type AddonCatalogEntry = { name: string; description?: string; installed: boolean };  // G.5
 type AddonPreview = {                   // G.5: what installing `source` would bring
   source: string; digest: string; name: string; description?: string;
   image?: string;                       // its Containerfile runs code when built
@@ -945,7 +956,7 @@ type AddonPreview = {                   // G.5: what installing `source` would b
   egress: string[]; mcp?: string[]; skills: string[];
   replaces?: "builtin" | "installed" | "own";
 };
-type AddonPreviewRequest = { source: string };   // catalog:<name>, an absolute folder, an https:// .tar.gz
+type AddonPreviewRequest = { source: string };   // source:<source>/<name> (D.26), an absolute folder, an https:// .tar.gz
 type AddonInstallRequest = { source: string; digest: string };
 type AddonInstalled = { addon: AddonInfo; build?: Build };
 type AddonSlotInfo = { name: string; required: boolean; description?: string };
@@ -996,36 +1007,43 @@ type Build = {                          // D.4
   stage?: string;                       // e.g. "build vibe", "check vibe", "switch"
   step?: number; steps?: number;        // podman's STEP n/m of the current image build
   versions: Record<string, string>;     // harness → what its new image installed
+  warnings: string[];                   // what works but should be fixed (the toolbox's Bun, B.6)
   error?: string;
   startedAt: string; endedAt?: string;
 };
 type BuildLog = { text: string; nextOffset: number; complete: boolean };
 type ModelAccess = {                    // what an agent runs as (E): exactly one of account and
   harness?: string;                     // provider; an account's harness by default, a provider
-  account?: string; provider?: string;  // needs the harness that talks to it
+  account?: string; provider?: string;  // needs the harness that talks to it (on the model
+                                        // alone: a provider, no harness, D.18)
   model?: string;                       // default: the harness's or the provider's
 };
 type AgentSettings = {                  // how an agent is set up, but where it works: shared by
-                                        // AdHocAgentRequest, AgentRequest (D.8) and Agent
-  models: ModelAccess[];                // 1..n, once each, the first by default: each session
-                                        // runs with one (F.3), with every other setting below.
-                                        // One goal, one agent: another model is not another agent
+                                        // AgentRequest and Agent
+  model: ModelAccess;                   // what it runs as: each session runs with it (F.3), or
+                                        // with another picked for that session alone (D.19),
+                                        // with every other setting below. One goal, one agent:
+                                        // another model is not another agent
   // how it is contained: its own (never inherited from the project); left out, the preset of
   // new agents (Guarded): allow-list, enforce, strict, bypass
   network?: "none" | "filtered" | "open";
   egress?: "enforce" | "log-only";    // filtered only; live-switchable
   allow?: string[];                     // its own allow-list entries (A.3), on top of the required
   confinement?: "strict" | "nested" | "privileged";  // A.5; privileged is shown with a warning
-  permissions?: "ask" | "accept-edits" | "bypass";   // its starting mode (one every harness of
-                                        // its models offers)
+  permissions?: "ask" | "accept-edits" | "bypass";   // its starting mode (one its model's
+                                        // harness offers)
   bindings?: string[];                  // its addons (G.3)
   knowledge?: string[];                 // knowledge folders (D.5), relative to the knowledge root
   display?: boolean;                    // its sandboxes get the host's Wayland display (A.6)
-  interface?: AgentInterface;           // what a run takes and gives back; its sessions are
-                                        // unattended (D.18)
+  interface?: AgentInterface;           // its form, and a job's result: a job's runs are
+                                        // unattended, a brief's sessions are chats (D.18)
+  modelAlone?: boolean;                 // no program, no sandbox: its model is a provider's with
+                                        // no harness, and network, egress, allow, confinement,
+                                        // permissions, bindings, display keep their defaults
+                                        // (400 otherwise); no skills (400 `model alone`), D.18
 };                                      // allow, bindings, knowledge: kept sorted, once each
-type AgentModel = ModelAccess & {       // one of an agent's models, as it is now
-  harness: string;                      // resolved
+type AgentModel = ModelAccess & {       // an agent's model, as it is now
+  harness?: string;                     // resolved; none on the model alone (D.18)
   problem?: string;                     // why a session cannot start with it now (E1)
   requiredHosts: { host: string; by: string }[];   // filtered only: what its account or provider,
                                         // the agent's HTTP MCP servers and its addons require in a
@@ -1033,25 +1051,38 @@ type AgentModel = ModelAccess & {       // one of an agent's models, as it is no
                                         // browser" (the addon, its binding): exactly the required
                                         // part of that sandbox's allow-list (A.3)
 };
-type Agent = AgentSettings & {          // what sessions open on: its models (what, one per
-                                        // session) working in a folder (where), its settings
-                                        // resolved. An agent of a project (D.8) has a projectId;
-                                        // an ad-hoc one, none
-  models: AgentModel[];
+type AgentOrigin = {                    // what an agent was set up from, kept for good
+  kind: "app" | "agents-file" | "handler-need";   // an app's need (H.2), an agents file's agent
+                                        // (D.23), one of Handler's needs (D.18)
+  name: string;                         // the app's, the file's, the need's
+  agent?: string;                       // the app's need, the file's agent (not a need's)
+  version?: number;                     // the file's, the need's (not an app's)
+};
+type Agent = AgentSettings & {          // what sessions open on: its model (what) working in a
+                                        // folder (where), its settings resolved. Its home, given
+                                        // when it is made and never changed: a project
+                                        // (projectId, D.8), an app (app: one of its parts, H.14),
+                                        // Chat (chat: someone you talk to), or none (outside
+                                        // projects, the web UI's Other folders)
+  model: AgentModel;
   scope?: string;                       // its folder; absent (only without a project): each of
                                         // its sessions works in a folder of its own (F.2)
   network, confinement, permissions;    // always sent; egress only for filtered
   id: string;                           // stable: kept when its settings change
-  name?: string;                        // its name (optional for an ad-hoc agent: UIs fall back to the folder name)
-  projectId?: string;                   // the project it is an agent of (D.8)
+  name?: string;                        // its name (optional outside projects: UIs fall back to the folder name)
+  projectId?: string;                   // its home: the project it is an agent of (D.8)
+  app?: string;                         // its home: the app it is one of the parts of (H.14)
+  chat: boolean;                        // its home: Chat, someone you talk to (Chat is listed with
+                                        // the apps, but is no app; the owner's devices may start
+                                        // it with no remoteStart, D.7)
   description?: string;                 // an agent's: what it is for
   instructions?: string;                // an agent's: sent before a session's first request (F.3)
-  origin?: string;                      // an ad-hoc agent's: the built-in agent it is (D.18)
+  origin?: AgentOrigin;                 // what it was set up from (D.18, D.23, H.2)
   skills: string[];                     // the skills it picked (D.17)
   projectSkills: string[];              // given by its project to all its agents (D.17)
-  context?: string;                     // its project's context (D.19): the models it may run with
-  acpUrl: string;                       // C.1 URL: a plain connection runs with its first model,
-                                        // or the one its query names
+  area?: string;                     // its project's area (D.19): the models it may run with
+  acpUrl: string;                       // C.1 URL: a plain connection runs with its model, or
+                                        // the one its query names
   connections: { id: string; sandbox: string; since: string;   // its running sandboxes (C, F, D.16)
                  terminal?: ModelAccess }[];  // a terminal's (D.16): the model it runs with
   createdAt: string;
@@ -1077,24 +1108,25 @@ type KnowledgeNote = { path: string; text: string };
 | `POST /v1/harnesses/{name}/rebuild` · `POST /v1/toolbox/rebuild` · `POST /v1/network-filter/rebuild` | start a rebuild (D.4) → `Build` (202); 409 while another build runs |
 | `GET /v1/network-filter` | the network filter: the egress proxy's image (A.3, A.7), whether it is built and when (`NetworkFilterInfo`, D.4) |
 | `GET /v1/addons` · `GET /v1/bindings` | list addons with their image versions and slots (G.1, G.4) · list bindings (G.2) with what selects them; invalid ones carry their error. Bindings are written through D.15 |
-| `GET /v1/addon-catalog` · `POST /v1/addons/preview` · `POST /v1/addons/install` · `DELETE /v1/addons/{name}` | the catalog Handler ships (`AddonCatalogEntry[]`) · what a source would bring (`AddonPreviewRequest` → `AddonPreview`) · install it (`AddonInstallRequest` → `AddonInstalled`, 201) · remove an installed addon (204) (G.5) |
+| `POST /v1/addons/preview` · `POST /v1/addons/install` · `DELETE /v1/addons/{name}` | what a source would bring (`AddonPreviewRequest` → `AddonPreview`) · install it (`AddonInstallRequest` → `AddonInstalled`, 201) · remove an installed addon (204) (G.5) |
+| `GET /v1/sources` · `POST /v1/sources` · `POST /v1/sources/{id}/refresh` · `DELETE /v1/sources/{id}` · `GET /v1/sources/{id}/{kind}/{name}` · `POST /v1/sources/{id}/apps/{name}` · `POST /v1/sources/{id}/agents/{name}` | the sources and what they offer (`Source[]`) · add one · read it again · remove one · an item's page (`SourceItemDetail`) · an app's code taken · agents read for their set-up page (D.26) |
 | `POST /v1/addons/{name}/rebuild` | as for harnesses, target `addon:<name>` (G.4); 404 for an addon without an image |
 | `GET /v1/builds`, `GET /v1/builds/{id}` | recent builds (newest first), one build |
 | `GET /v1/builds/{id}/log?offset=N` | the log from byte `N`, in whole lines → `BuildLog`; poll from `nextOffset` until `complete` |
 | `POST /v1/builds/{id}/cancel` | stop the build, wait for its end → `Build` (409 if not running) |
-| `POST /v1/agents` `AdHocAgentRequest` = `AgentSettings & {scope?, name?, description?, instructions?, skills?, origin?, confirmRisks?}` | an **ad-hoc agent** (no project: `handler run`, `handler acp`, `handler terminal` outside projects, or made in the web UI, from scratch or setting up a built-in agent: `origin`, D.18). Validate what it runs as, each of its `models` (E1: an account, its harness by default; or a provider and the `harness` that talks to it; the model; 400 `model access unusable`, also for a model listed twice once its harness is resolved), the scope against the work folders (D.13, A2; 403 `scope not allowed`; without `scope`, a **folderless agent**: each session gets its own folder, F.2), the interface (D.18), the selected bindings (G3) and knowledge folders (D.5), and return the Agent (201). Its sandbox: `network`, `egress`, `confinement` (`strict`, `nested`, `privileged`) and `permissions` (the agent's starting mode, given to `render`, B.3; 400 `permission mode not offered` when a harness of its models has no such mode); left out, the **ad-hoc preset**: `filtered`, `enforce`, `strict`, `bypass` (the CLI's `--log-only` sets `log-only`). What it widens beyond the preset is confirmed (409 `risks not confirmed`, D.8). `allow` adds hosts to the required ones (E4); `bindings` are its addons; `display: true` gives its sandboxes the host's Wayland display (A.6; 409 `no display` when the daemon finds none, see below). An ad-hoc agent **is its folder and its name** (none: the unnamed one; names compared without case): 409 `agent exists` (saying which) when another has both, whatever its settings, so the same command in the same folder always gives the same agent (the CLI finds it and reuses it, saving the flags that differ once the person confirms, D.16) and a new name makes another one in the same folder. **Starts nothing.** |
-| `PUT /v1/agents/{id}` (same body) | replace an ad-hoc agent's settings, checked as for `POST` (risks: beyond what it had; 409 `agent exists` when another has its new folder and name); the id stays → `Agent`. Its running filtered sandboxes get the new allow-list and enforcement at once (A.4; 502 when one could not be updated, the settings being saved); other changes apply to new connections. Sessions started with another harness, account, provider or scope are not resumable after it (F) |
+| `POST /v1/agents` `AgentRequest` = `AgentSettings & {projectId?, app?, chat?, scope?, name?, description?, instructions?, skills?, origin?, default?, remoteStart?, confirmRisks?}` | an agent, in its **home** (given now, never changed): a project (`projectId`: it works in the project's folder, so no `scope`; its name, its goal, is required and unique in the project, 400 `name required`, 409 `agent names must differ`; `default` makes it the project's default agent, `remoteStart` lets your devices start it; 400 `unknown project`; its model made for the project's area, D.19); an app (`app`: one of its parts, set up from one of its needs, `origin` `{kind: "app", name: <app>, agent: <need>}`, H.14; 400 `an app's agent` otherwise, and for an agent of a project or of no app set up from an app's need); Chat (`chat: true`: someone you talk to, no `scope` and no `interface`, 400 `a chat` otherwise; one home at most, 422); none: **outside projects** (`handler run`, `handler acp`, `handler terminal` outside projects, or made in the web UI, from scratch, set up from an agents file's agent or for one of Handler's needs). Validate what it runs as (E1: an account, its harness by default; or a provider and the `harness` that talks to it; the model; 400 `model access unusable`), the scope against the work folders (D.13, A2; 403 `scope not allowed`; of no project and without `scope`, a **folderless agent**: each session gets its own folder, F.2), the interface (D.18), the selected bindings (G3) and knowledge folders (D.5), its skills (D.17), and return the Agent (201). Its sandbox: `network`, `egress`, `confinement` (`strict`, `nested`, `privileged`) and `permissions` (the agent's starting mode, given to `render`, B.3; 400 `permission mode not offered` when its model's harness has no such mode); left out, the **preset of new agents** (Guarded): `filtered`, `enforce`, `strict`, `bypass` (the CLI's `--log-only` sets `log-only`). What it widens beyond the preset is confirmed (409 `risks not confirmed`, D.8). `allow` adds hosts to the required ones (E4); `bindings` are its addons; `display: true` gives its sandboxes the host's Wayland display (A.6; 409 `no display` when the daemon finds none, see below). Outside projects an agent **is its folder and its name** (none: the unnamed one; names compared without case): 409 `agent exists` (saying which) when another one outside projects has both, whatever its settings, so the same command in the same folder always gives the same agent (the CLI finds it and reuses it, saving the flags that differ once the person confirms, D.16) and a new name makes another one in the same folder. `origin`: what it is set up from (D.18 Handler's needs, D.23, H.2): its definition's skills go to the library first and an agents file's checks to the agent. **Starts nothing.** |
+| `PUT /v1/agents/{id}` (same body) | replace its settings and own fields, checked as for `POST` (risks: beyond what it had); its home and origin are the ones it has (409 `home cannot change`, `origin cannot change`); the id stays → `Agent`. Its running filtered sandboxes get the new allow-list and enforcement at once (A.4; 502 when one could not be updated, the settings being saved); other changes apply to new connections. Sessions started with another harness, account, provider or scope are not resumable after it (F) |
 | `GET /v1/knowledge` | the knowledge root and its folders that can be selected → `KnowledgeListing` (D.5) |
 | `PUT /v1/knowledge/root` `{root, create?}` | set the root (`null`: the default) → `KnowledgeListing`; 409 when `HANDLER_KNOWLEDGE_DIR` sets it, 400 if not an absolute folder (unless `create`) |
 | `POST /v1/knowledge/folders` `{path}` | create one folder (its parent must exist) → `KnowledgeListing` (201); 409 if it exists |
 | `GET /v1/knowledge/browse?path=…` · `GET /v1/knowledge/note?path=…` | a folder (sub-folders, notes, its `_index.md` text) → `KnowledgeFolderView` · a `.md` note → `KnowledgeNote` (≤ 1 MiB); for reading in the web UI |
 | `PATCH /v1/agents/{id}` `{egress}` | any agent: switch `enforce` ↔ `log-only` for all live and future connections of a `filtered` Agent (A.4; not confirmed, D.8) |
 | `GET /v1/health` | `{status, version, display}`, **no auth** (liveness only; `display`: a Wayland display was found, for agents that ask for one) |
-| `GET /v1/agents`, `GET /v1/agents/{id}` | every agent (of projects and ad hoc): list, inspect |
+| `GET /v1/agents`, `GET /v1/agents/{id}` | every agent, whatever its home: list, inspect |
 | `GET /v1/directories[?path=…]` | sub-directories (no dot-folders) of `path`, which must be inside the work folders (D.13; 403 otherwise); without `path`: the work folders. For folder pickers. |
 | `POST /v1/directories` `{parent, name}` | create the folder `parent/name` (one level; `parent` inside the work folders, 403 otherwise; no hidden or path-like names; 409 if it exists) → its `DirectoryListing` (201). For "new project" in folder pickers. |
 | `GET /v1/agents/{id}/egress-events` | recent `EgressEvent`s of the agent's sandboxes: hosts `allowed`, `denied`, or `unlisted` (log only: let through, but enforcing would deny them, A); a secret (`secret`, its D.14 path) `injected` into a request to a host, or a `leak`: its phantom seen going to a host it is not for, refused (A.3, E3) |
-| `DELETE /v1/agents/{id}` | an ad-hoc agent: close all its connections (sandboxes stopped), stop its sessions and forget it. `PUT` and `DELETE` on an agent of a project: 409 `an agent of a project` (it is changed through its project, D.8) |
+| `DELETE /v1/agents/{id}` | close all its connections (sandboxes stopped), stop its sessions, forget its checks and improvements and Handler's needs it was given for (D.18: Handler uses none until another is given), then forget it (204). 409 `a project needs an agent` for a project's last one, 409 `an app's agent` for an app's part (removed with its app, H.14) |
 | `POST /v1/agents/{id}/terminal` | the harness's own terminal program: its sandbox, ready for the client to attach to (D.16) |
 
 ### D.4 Image rebuilds
@@ -1105,15 +1137,27 @@ always explained by the files and their history. One build at a time.
 
 - Harness: an untagged image `FROM` toolbox `:latest`, without cache (fetches the agent's latest
   release, B.6) → check → switch.
-- Toolbox: an untagged toolbox (pull + no cache: system updates) → every harness image `FROM` it
-  → check each → switch all of them, or none.
+- Toolbox: an untagged toolbox (pull + no cache: system updates) → its Bun checked (B.6: `command
+  -v bun` in it, confined like an agent; missing, it is a `warning` of the build, which still
+  goes on) → every harness image `FROM` it → check each →
+  switch all of them, or none. Settings → Images shows a build's warnings, and after a reload the
+  last build when it has some.
 - Network filter (target `network-filter`): the egress proxy's image (A.3), part of Handler, not the
   user's: its recipe and name are the runtime's, so the build is its `image build-proxy` (A.7:
-  pull + no cache, checked, switched). Agents, terminals and mini app backends needing it (a
+  pull + no cache, checked, switched). Agents, terminals and app backends needing it (a
   filtered network, or secrets to add, E3) do not start while it is missing: their start fails
   with "the network filter is not built yet". handlerd builds it as it starts when it is missing (a
   first start, a Handler upgrade naming a new image), whatever the schedule; `handler setup` follows
   that build. `GET /v1/network-filter` → `NetworkFilterInfo`.
+- Before a launch, handlerd checks that each image the sandbox needs is built (A.7: a launch never
+  builds one): the network filter when it needs one, its harness's, each of its addons'. One
+  missing, the agent does not start: the error names the build that makes it ("… is not built
+  yet: Settings → Images, or `handler image rebuild <target>`"), and a session keeps that target
+  as `missingImage` (F.1).
+- First builds of addon images: an addon is in use when a saved agent has one of its bindings
+  (G.3). handlerd builds the image of an addon in use that has none, as it starts and when an agent
+  starts using it (its set-up, its editor), one build after the other; not while the toolbox is
+  missing (`handler setup` first).
 - Check: the new image is started through the real pipeline (render → compose → sandbox) with no
   network and dummy credentials: a harness with a token login on an account (a dummy token), any
   other on a provider (a dummy key, endpoints for its protocols that nothing answers); it MUST answer `initialize` and `session/new`
@@ -1171,17 +1215,18 @@ loopback only: the **remote connector** polls a gateway outbound, and paired dev
 | Method & path | Effect |
 |---|---|
 | `GET /v1/remote` | `RemoteStatus`: `gatewayUrl`, `hostId`, `light` (`off` · `idle` · `ok` · `unreachable` · `unauthorized`), `detail`, `since`, `sharedSessions`, `devices` (`RemoteDevice`: `id`, `name`, `createdAt`, `lastSeenAt`, `attached`) |
-| `PUT /v1/remote/gateway` `{gatewayUrl, hostToken}` | set the gateway (the token from `handler-gateway add-host`, `h_<16 hex>.<secret>`) → `RemoteStatus` |
+| `PUT /v1/remote/gateway` `{gatewayUrl, hostToken}` | set the gateway (the token from `handler-gateway add-host`, `h_<16 hex>.<secret>`) → `RemoteStatus`; `https://` only (the token goes with each poll), `http://` only to this computer (`127.0.0.1`, `localhost`, `[::1]`) |
 | `DELETE /v1/remote/gateway` | forget it (devices are kept) → `RemoteStatus` |
-| `POST /v1/remote/devices` `{name, person?, scope?}` | pair: a new device and its key → 201 `RemotePairing {device, pairingUrl}`; the key is in the URL fragment, shown once (QR code). `person` (default `owner`) is who uses it; `scope` `all` (sessions and apps) or `apps` (mini apps only, H.8); a person other than `owner` gets `apps` only (409 otherwise). 409 without a gateway |
+| `POST /v1/remote/devices` `{name, person?, scope?}` | pair: a new device and its key → 201 `RemotePairing {device, pairingUrl}`; the key is in the URL fragment, shown once (QR code). `person` (default `owner`) is who uses it; `scope` `all` (sessions and apps) or `apps` (apps only, H.8); a person other than `owner` gets `apps` only (409 otherwise). 409 without a gateway |
 | `DELETE /v1/remote/devices/{id}` | revoke: its attachments closed, its key deleted, the gateway told (204; 404 unknown) |
 | `PUT /v1/sessions/{id}/remote` `{enabled}` | share a running session with the paired devices, or stop → `Session` (`remote`); 409 if it is not running. Off after the session stops |
 
 Conformance (`tests/remote/`, a real gateway, a device in Python): the light follows sharing
 (idle, ok, idle; unauthorized with a wrong token; off without a gateway); a device lists the shared
-sessions only, attaches, prompts, answers a permission request, and a local tab sees its prompt;
-not shared → -32020, not attached → -32021, anything outside the allow-list → -32022; unsharing
-closes the device (4004); a stopped session is no longer shared and cannot be shared (409);
+sessions only, starts a session of a `remoteStart` agent or of one you talk to in Chat,
+attaches, prompts, answers a permission request, and a local tab sees its prompt; not shared →
+-32020, not attached → -32021, anything outside the allow-list → -32022; unsharing closes the
+device (4004); a stopped session is no longer shared and cannot be shared (409);
 replayed, 10-minute-old, altered and reflected envelopes are refused (the old one reported as
 expired); a revoked device gets 401 from the gateway.
 
@@ -1191,7 +1236,7 @@ expired); a revoked device gets 401 from the gateway.
 Why: [`architecture.md`](architecture.md) §3.
 
 A **project** is what you work on: a code folder, its caches setting, the skills it gives to all its agents (D.17), and its agents (at least
-one). An **agent** is one goal of the project: its models (each a harness on an account or provider, one per session), set up for the project: an Agent (D.1) with a `projectId`, the
+one). An **agent** is one goal of the project: its model (a harness on an account or provider; a session may pick another), set up for the project: an Agent (D.1) with a `projectId`, the
 same endpoints for sessions (F) and connections (C) as an ad-hoc one, so nothing below the control plane
 knows about projects. Every setting of an agent is its own, never inherited (how it is contained,
 its bindings, knowledge folders, skills); from its project it gets only its folder, the
@@ -1209,8 +1254,11 @@ type Project = {
   folder: string;                       // one project per folder
   defaultAgent?: string;                // the agent a request goes to unless another is chosen
   caches: "project" | "global" | "off"; // the toolbox's caches (B.6) for its agents, see below
-  context?: string;                     // its context (D.19): only the accounts and providers
+  area?: string;                     // its area (D.19): only the accounts and providers
                                         // made for it run its agents; none: any
+  skills: string[];                     // the library's skills it gives to all its agents (D.17)
+  pinned: boolean;                      // in the web UI's menu, which lists only these; a new
+                                        // project is pinned
   agents: Agent[];                      // default first, then by name
   createdAt: string; lastUsedAt?: string;  // its agents' last use
 };
@@ -1243,12 +1291,11 @@ switches to it to learn hosts (A events `unlisted`), then allows them and enforc
 | Method & path | Effect |
 |---|---|
 | `GET /v1/projects` | list, most recently used first |
-| `POST /v1/projects` `{folder, name?, description?, caches?, context?, agents: AgentRequest[1..]}` | every agent's resolved settings are checked as an ad-hoc agent's (scope D.13/A2, bindings G3, knowledge D.5, display, permission mode) and for risks before anything is saved → `Project` (201). 409 `folder already used`, 409 when agent names repeat; `context`: 400 `unknown context`, 409 `not for this project's context` for a model of an agent not made for it (D.19) |
+| `POST /v1/projects` `{folder, name?, description?, caches?, area?, skills?, agents: AgentRequest[1..]}` | every agent's resolved settings are checked as an ad-hoc agent's (scope D.13/A2, bindings G3, knowledge D.5, display, permission mode) and for risks before anything is saved → `Project` (201). 409 `folder already used`, 409 when agent names repeat; `area`: 400 `unknown area`, 409 `not for this project's area` for a model of an agent not made for it (D.19) |
+| `PUT /v1/projects/{id}/pinned` `{pinned}` | pin it to the web UI's menu, or take it off → `Project` |
 | `GET /v1/projects/{id}` · `DELETE /v1/projects/{id}` | inspect · stop its agents' sessions and connections, forget it and its agents (204; the folder is not touched) |
-| `PUT /v1/projects/{id}` `{folder, name?, description?, defaultAgent?, caches?, context?}` | replace its settings; its agents are checked again with them (their models in its `context`, as at creation), then follow at once (for new sessions). A new folder makes their past sessions not resumable (F) |
-| `POST /v1/projects/{id}/agents` `AgentRequest` | add an agent → `Agent` (201); 400 `skills unusable` (unknown or invalid) or `skill of another project` (D.17); 409 `not for this project's context` for a model not made for it (D.19) |
-| `PUT /v1/projects/{id}/agents/{agent}` `AgentRequest` | replace an agent's settings (same id; risks as above) → `Agent`; allow-list and enforcement applied live as for `PUT /v1/agents/{id}` |
-| `DELETE /v1/projects/{id}/agents/{agent}` | stop its sessions, remove it (204); 409 `a project needs an agent` for the last one |
+| `PUT /v1/projects/{id}` `{folder, name?, description?, defaultAgent?, caches?, area?, skills?}` | replace its settings; its agents are checked again with them (their models in its `area`, as at creation), then follow at once (for new sessions). `skills`: the library's skills it gives to all its agents (default none; each must be usable, else 400 `skills unusable`), the same list a skill's `projects` set from the other side (D.17); its agents that picked one drop it. A new folder makes their past sessions not resumable (F) |
+| `POST /v1/agents` `{projectId, …}` · `PUT` · `DELETE /v1/agents/{id}` | a project's agents are made, changed and deleted as any agent (D.2): a name unique in it, skills not the project's own (400 `skills unusable` or `given by its project`, D.17), a model made for its area (409 `not for this project's area`, D.19); its last agent stays (409 `a project needs an agent`) |
 
 **Caches.** The toolbox declares its caches (B.6: a home path per name, what it holds); a project chooses for
 its agents (`caches`, default `project`): `project`, its own (`<data>/caches/<project id>/<name>`,
@@ -1297,9 +1344,9 @@ pasted token also when given: 422).
 
 | Method & path | Effect |
 |---|---|
-| `GET /v1/accounts` | `AccountInfo[]`: name, harness, description, `plan`, `login` (`token` or `file`: its harness's kind of login), `token` (a token login: where it comes from, `secret`, `env`, `file`, `command`), `loggedInAt` (when Handler was given it: a token in its store, a file login's file; none for a reference), `expiresAt` (a token in its store: `loggedInAt` + `login.tokenLifetimeDays`), `hosts` (the login's, E4), `connectors`, `contexts` (D.19), `status` (`ready`: logged in; `incomplete`: `problems` says what is missing, not logged in or a token past `expiresAt`; `invalid`: `error`, e.g. an unknown harness or one without a login), the `agents` using it ("<project> · <agent>", or an ad-hoc agent's name, else "an agent in <folder>" or "an agent with a folder per session"), and the daemon sessions on it: `sessions`, `lastUsedAt` |
-| `POST /v1/accounts` `AccountRequest` `{name, harness, description?, plan?, connectors?, contexts?}` | create `accounts/<name>.toml` (0600) → `AccountInfo` (201); 409 exists, a harness that is unknown or has no login, or a plan it does not know |
-| `PUT /v1/accounts/{name}` `AccountRequest` | its description, plan (409 for a plan its harness does not know), connectors (409 for a harness without) and contexts (400 `unknown context`, D.19), and its name (the file and its login follow) while no agent uses it (409 naming them); 409 for another harness; 404 |
+| `GET /v1/accounts` | `AccountInfo[]`: name, harness, description, `plan`, `login` (`token` or `file`: its harness's kind of login), `token` (a token login: where it comes from, `secret`, `env`, `file`, `command`), `loggedInAt` (when Handler was given it: a token in its store, a file login's file; none for a reference), `expiresAt` (a token in its store: `loggedInAt` + `login.tokenLifetimeDays`), `hosts` (the login's, E4), `connectors`, `areas` (D.19), `status` (`ready`: logged in; `incomplete`: `problems` says what is missing, not logged in or a token past `expiresAt`; `invalid`: `error`, e.g. an unknown harness or one without a login), the `agents` using it ("<project> · <agent>", or an ad-hoc agent's name, else "an agent in <folder>" or "an agent with a folder per session"), and the daemon sessions on it: `sessions`, `lastUsedAt` |
+| `POST /v1/accounts` `AccountRequest` `{name, harness, description?, plan?, connectors?, areas?}` | create `accounts/<name>.toml` (0600) → `AccountInfo` (201); 409 exists, a harness that is unknown or has no login, or a plan it does not know |
+| `PUT /v1/accounts/{name}` `AccountRequest` | its description, plan (409 for a plan its harness does not know), connectors (409 for a harness without) and areas (400 `unknown area`, D.19), and its name (the file and its login follow) while no agent uses it (409 naming them); 409 for another harness; 404 |
 | `DELETE /v1/accounts/{name}` | it and its login (204); the agents using it keep its name, a model that cannot start (its `problem`, E1) until they are given another account; 404 |
 | `POST /v1/accounts/{name}/login/window` | a file login: open a terminal window on the desktop running `handler account login <name> --keep-open` (the terminal of `HANDLER_TERMINAL`, else the first found of `ghostty`, `xdg-terminal-exec`, `ptyxis`, `kgx`, `gnome-terminal`, `konsole`…) → `LoginWindow` `{terminal, command}` (201); 409 for a token login (the person's to run); 503 when there is none; 404 |
 | `PUT /v1/accounts/{name}/login` `AccountLoginRequest` `{token}`, `{tokenRef}` or `{file}` | set its login: a token login's token, pasted (`token`: into the secret store) or where the person keeps it (`tokenRef`: `{env}`, `{file}`, `{command}`, written in the account file; a pasted one it had is deleted); a file login's credential file content (≤ 64 KiB), what `handler account login` got (below) or a login done elsewhere → `AccountInfo`; 422 the other kind, or a pasted token without its harness's `login.tokenPrefix` |
@@ -1337,9 +1384,9 @@ or `command` key, and keeps one a hand-written file has.
 
 | Method & path | Effect |
 |---|---|
-| `GET /v1/providers` | `ProviderInfo[]`: name, description, `endpoints` (protocol → URL), `models` (`ProviderModel`, E), `key` (`secret`, `env`, `file` or `command`: where it comes from, never its value; absent: none), `status` (`ready`: its key, if any, resolves — a `command` one is not run; `incomplete`: `problems`; `invalid`: `error`), the `agents` using it, the `harnesses` that speak one of its protocols, the harnesses it has `files` for (E), its `contexts` (D.19) |
+| `GET /v1/providers` | `ProviderInfo[]`: name, description, `endpoints` (protocol → URL), `models` (`ProviderModel`, E), `key` (`secret`, `env`, `file` or `command`: where it comes from, never its value; absent: none), `status` (`ready`: its key, if any, resolves — a `command` one is not run; `incomplete`: `problems`; `invalid`: `error`), the `agents` using it, the `harnesses` that speak one of its protocols, `modelAlone` (it speaks a protocol handlerd calls: the model alone runs on it, D.18), the harnesses it has `files` for (E), its `areas` (D.19) |
 | `GET /v1/provider-templates` | `ProviderTemplate[]`: name, description, endpoints, models, `needsKey` (a hosted API: the form asks for a key) |
-| `POST /v1/providers` `ProviderRequest` `{name, description?, endpoints, models, key?, contexts?}` | create `providers/<name>.toml` (0600) → `ProviderInfo` (201); 409 exists; 422 an invalid endpoint or model; 400 `unknown context` (D.19) |
+| `POST /v1/providers` `ProviderRequest` `{name, description?, endpoints, models, key?, areas?}` | create `providers/<name>.toml` (0600) → `ProviderInfo` (201); 409 exists; 422 an invalid endpoint or model; 400 `unknown area` (D.19) |
 | `PUT /v1/providers/{name}` `ProviderRequest` (+ `removeKey`) | replace it; without `key`, its key is kept; a new `name` renames it and its key while no agent uses it (409 naming them); without `files`, its files are kept (a template's are given at creation); 404 |
 | `DELETE /v1/providers/{name}` | it and its key in the store (204); the agents using it keep its name, a model that cannot start (its `problem`, E1) until they are given another provider; 404 |
 
@@ -1367,7 +1414,7 @@ The folder pickers list and create folders inside them (`/v1/directories`, D.2).
 
 **Status:** implemented 2026-09-30 (`packages/control-plane/src/handler_control/secrets.py`). Handler's
 store of secret values: providers and bindings reference one with `{ secret = "<path>" }` (E2), and
-an account's pasted token (D.9) and a mini app's secrets (H.2) live there too. A value is named by a path after what owns it
+an account's pasted token (D.9) and an app's secrets (H.2) live there too. A value is named by a path after what owns it
 (`providers/<name>/apiKey`, `bindings/<name>/<slot>`, `apps/<app>/<SECRET>`): segments of
 `[A-Za-z0-9_.-]`, none starting with a dot. It is kept with a description. Where a secret may be
 sent is not the store's: it is its owner's (E3: the login's hosts, the provider's endpoints, the
@@ -1414,12 +1461,16 @@ for whoever prefers the harness's own interface to an ACP client. One sandbox pe
 stopped when it closes; not a session (F): no conversation to show in the web UI or on a phone,
 no detach.
 
-`POST /v1/agents/{id}/terminal` `TerminalStart` `{term?, colorterm?, args?, model?}`: the client's
-terminal type (`term` and `colorterm` become `TERM`, `COLORTERM`; `[A-Za-z0-9._+-]{1,64}`), the
-arguments for the program (B8) and the model it runs with (`ModelAccess`: one of the agent's or
-any other its project's context allows, D.19; default: its first) → 201 `TerminalStarted`
+`POST /v1/agents/{id}/terminal` `TerminalStart` `{term?, colorterm?, args?, model?, folder?}`: the
+client's terminal type (`term` and `colorterm` become `TERM`, `COLORTERM`; `[A-Za-z0-9._+-]{1,64}`),
+the arguments for the program (B8), the model it runs with (`ModelAccess`: the agent's or any
+other its project's area allows, D.19; default: the agent's) and the folder it works in
+(`folder`: the agent's or a directory inside it, symlinks resolved, mounted as the scope and the
+workdir instead of the agent's, so `handler terminal` in a project's sub-folder sees only that
+sub-folder; default: the agent's; 409 `the terminal cannot start` when outside it or not a
+directory) → 201 `TerminalStarted`
 `{sandbox, attach}` once the sandbox is ready; 400 `model access unusable`; 409 `not for this
-project's context`; 404 unknown agent; 409 `the terminal cannot start` with the reason (a harness
+project's area`; 404 unknown agent; 409 `the terminal cannot start` with the reason (a harness
 without a terminal program, its account or provider unusable, the sandbox's own setup failing);
 422 an invalid body.
 
@@ -1434,8 +1485,8 @@ only (fd 3, A), as for every sandbox: the client gets the sandbox's name.
 While handlerd runs, the sandbox is one of the agent's `connections`, with `terminal` (the model it
 runs with): live egress switching (A.4) and egress events apply, and deleting the agent stops it.
 The web UI lists it among its project's live sessions, also when its agent is outside projects
-but works in the project's folder (`--anyway`, marked "outside the project"); one of an agent
-outside projects is also live on the Agents page and on its agent's. Each has a page of its own
+but works in the project's folder (`--anyway`, marked "outside the project"), and with what its
+agent did, in its place (its project's page, or outside projects). Each has a page of its own
 (`#/terminals/<agent>/<connection>`): its network, changed live.
 A restarted handlerd does not know it any more: it is not listed, its egress cannot be switched live,
 its egress events are not recorded.
@@ -1453,10 +1504,10 @@ state); what remains (Claude Code: trusting a folder, the bypass warning) is ask
 there.
 
 CLI: `handler terminal AGENT|ACCOUNT|PROVIDER [SCOPE] [agent options] [--anyway] [-- ARGS…]`: in
-a project's folder, the project's agent of that name (its first model), or the one listing that
-account or provider among its models, with that model (`--harness`, `--model` choose among
-them), else its default agent on that account or provider, for this terminal only; one not made
-for the project's context is refused (D.19); else the ad-hoc agent of the folder and `--name`, made the first time with
+a project's folder, the project's agent of that name (its model), or the one whose model is that
+account or provider (the default agent first; `--harness`, `--model` narrow it), else its
+default agent on that account or provider, for this terminal only; one not made
+for the project's area is refused (D.19); else the ad-hoc agent of the folder and `--name`, made the first time with
 the agent options typed, running with that account or provider for this terminal only (as
 `handler run`). Agent options (`run`, `acp`, `terminal`, in a project or not) that differ from the
 agent's settings are never ignored: Handler says what differs and asks "Save this to the agent?
@@ -1521,9 +1572,9 @@ a project's agents or an agent picks it, so the library is where it waits; a rev
 
 - the **scan** (`SkillInfo.scan`, `skill_scan.py`), computed by handlerd from the files: what a model
   reading the skill cannot be talked out of. Shown on the skill's page and given to reviewers;
-- a **review**: a run of an agent whose interface takes a skill (D.18), e.g. the built-in
-  `skill-review`. The skill's page offers *Review with…* for each such agent (the built-in one
-  first); its
+- a **review**: a run of an agent whose interface takes a skill (D.18), e.g. the skill
+  reviewer (the agent given for Handler's need `skill-review`). The skill's page offers *Review
+  with…* for each such agent (the one given for the need first); its
   sessions are listed there (`GET /v1/sessions?subject=skill:<name>`), the last one's result
   marked "changed since review" when the skill's `digest` is no longer the one it reviewed. A
   review advises, it never decides: no verdict blocks or allows anything.
@@ -1535,52 +1586,93 @@ own, apart from its SKILL.md's form.
 
 Conformance: `tests/control/test_skills.py`; unit tests: `packages/control-plane/tests/test_skills.py`.
 
-### D.18 Agent interfaces and built-in agents
+### D.18 Agent interfaces and Handler's needs
 
 **Status:** implemented 2026-10-04 (`packages/control-plane/src/handler_control/interfaces.py`,
-`builtin_agents.py`, `skill_scan.py`; runs in `sessions.py`). An agent MAY have an
-**interface**: what a run takes (a form, a Handler object to work on) and what it gives back (data
-of a known shape), so it can be started from a button and its result shown and used as data.
-Such an agent runs **unattended**; a conversation has no result. Any agent may have one, the
-user's as well as Handler's built-in ones; nothing below the control plane knows about it
-(the subject is one more read-only mount, kind `subject`, A.1).
+`definitions.py`, `handler_needs.py`, `skill_scan.py`; runs in `sessions.py`); briefs and one run
+of an agent at a time 2026-10-16; built-in agents became roles set up from Handler's blueprints
+2026-10-18, then Handler's needs, each with its definition, 2026-10-22. An agent MAY
+have an **interface**: the form a session of it starts with (one of its fields may name a skill
+of the library to work on, the session's **subject**) and maybe what it gives back (data of a
+known shape). How an agent is used follows (the web UI's "How will you use it?"):
+
+| Use | Interface | Starts with | Who is there | Ends with |
+|---|---|---|---|---|
+| **chat** | none | a request, or nothing | you | when you stop |
+| **brief** | `fields`, no `result` | its form filled in | you | when you stop |
+| **job** | `result` (and maybe `fields`) | its form filled in | nobody: **unattended** | its result |
+
+A job's session is a **run**: started from a button, its result shown and used as data. A
+conversation has no result; a brief is a conversation that starts from a form. Any agent may
+have an interface, the user's as well as those set up for Handler's needs; nothing below the control plane
+knows about it (the subject is one more read-only mount, kind `subject`, A.1).
 
 ```ts
 type AgentInterface = {                 // checked when the agent is saved: 400 `interface invalid`
-  fields?: JSONSchema;                  // an object schema (draft 2020-12): the form filled to start a run
-  subject?: "skill";                    // the handler object a run works on (D.17), read-only at /subject/<name>
-  result: JSONSchema;                   // what its final message gives back; each schema ≤ 64 KiB
-  timeoutSec: number;                   // each turn; default 1800, ≤ 86 400
+  fields?: JSONSchema;                  // an object schema (draft 2020-12): the form filled to start a
+                                        // session; its skill field (one at most): a string property
+                                        // marked "x-handler": "skill", its value a skill's name (D.17).
+                                        // Required without `result` (a brief is its form)
+  result?: JSONSchema;                  // a job's: what its final message gives back; each schema ≤ 64 KiB
+  timeoutSec?: number;                  // a job's: each turn; default 1800, ≤ 86 400 (refused on a brief)
 };
 type SessionInput = {                   // POST /v1/sessions (F.3), for an agent with an interface
   fields?: Record<string, unknown>;     // valid against `fields`
-  subject?: { skill: string;            // its name
-              digest?: string };        // set by handlerd at the start: what the run saw (D.17)
+};
+type SessionSubject = {                 // Session.subject (F.1), set by handlerd at the start:
+  skill: string;                        // the skill its skill field named
+  digest: string;                       // what the run saw (D.17)
 };
 type SessionOutput = {                  // F.1, once a run's turn ended
   valid: boolean;                       // the value matches `result`
   value?: unknown;                      // the parsed result (valid or not, when it parsed)
   error?: string;                       // why it is not valid
 };
-type BuiltinAgent = {                   // shipped with handler: handler_control/data/builtin-agents/<name>/
-  name: string; description: string;   // its name (the origin of the agent set up from it), what
-                                        // it is for
+type AgentDefinition = {                // what an agent set up from it starts with: a
+                                        // file's agent (D.23), an app's need (H.2), one of
+                                        // Handler's needs (below); no
+                                        // models, no folder: the user chooses them
   agentName: string; agentDescription?: string; instructions?: string;
   network, egress, allow, confinement, permissions;   // as AgentSettings, its defaults
   skills: string[];                     // the skills that come with it (installed in the library)
   interface?: AgentInterface;
-  agentId?: string;                     // the agent set up from it, once there is one
-};                                      // no models, no folder: the user chooses them
+  addons: string[];                     // addons it needs a configuration of (G.2): the set-up
+                                        // page selects one of each
+  knowledge: string[];                  // knowledge folders it reads (D.5), by name: the set-up
+                                        // page selects one for each
+  display: boolean;                     // its sandboxes get the host's display (A.6)
+  modelAlone?: boolean;                 // its agent has no program (the model alone, below)
+};
+type HandlerNeed = {                    // handler_control/data/handler-needs/<name>/
+  name: string; description: string;   // "skill-review", what the agent does for Handler
+  version: number;                      // its definition's: one more on each change
+  definition: AgentDefinition;          // what an agent set up for it starts with
+  agentId?: string;                     // the agent given: handler's feature uses it
+  fits: string[];                       // the agents that may be given
+};
 ```
 
-- **A run** is a session (F) started with `POST /v1/sessions {agentId, input}`: `input` is
-  required for an agent with an interface, `prompt` and `acpSessionId` refused (400 `input
-  invalid` with the reason: a field, a missing or unexpected subject, an unusable skill), and
-  `input` refused for others. handlerd mounts the subject read-only at `/subject/<name>`, records its
-  digest, and sends one first turn: the agent's `instructions`, the input as JSON, where the
-  subject is with handlerd's scan of it (D.17), then the result's schema and the rule: *end your final
-  message with one fenced block `json handler-result` holding the result*. Its title: the agent's name
-  (and the subject's).
+- **Started from its form**: a session (F) of an agent with an interface is started with
+  `POST /v1/sessions {agentId, input}`: `input` is required, `prompt` and `acpSessionId` refused
+  (400 `input invalid` with the reason: a field, an unusable skill), and `input` refused for
+  others. When the skill field names a skill (it may be optional), that skill is the session's
+  subject: handlerd mounts it read-only at `/subject/<name>`, records it and its digest
+  (`Session.subject`), and sends one first turn: the agent's `instructions` (its placeholders
+  filled in, below), the input as JSON (every value, whatever the instructions name),
+  where the subject is with handlerd's scan of it (D.17), then, for a job, the result's schema
+  and the rule: *end your final message with one fenced block `json handler-result` holding the
+  result*. Its title: the agent's name (and the subject's); a brief's without a subject: the
+  first line of its first text field (as a request's).
+- **Placeholders**: `{{key}}` in an agent's `instructions` names a field of its form; it is
+  replaced by that field's value in the first turn: text as it is, a list joined by ", ", a
+  number as written, yes/no as `yes`/`no`, a field left empty by nothing. Saving an agent
+  whose instructions name a key its form has not (or any key, without a form) is refused: 400
+  `instructions invalid` (`POST`/`PUT` of an agent, D.2, D.8). The web UI inserts them by the
+  fields' labels, and follows a key that changes with its label before the agent is saved.
+- **A brief's session** then goes on as any chat (F): the agent's own permission mode, prompts
+  taken, stopped as a chat is; `Session.unattended` is false. The web UI shows the brief filled
+  in where the first turn would be.
+- **A run** is a job's session (`Session.unattended`), as follows.
 - **Unattended**: no client is needed; the same sandbox, policy (C.4) and event log (F.5,
   secrets redacted) as a chat, no harness-specific flags. Clients may attach to watch; a prompt
   from them is refused (`-32012 "unattended"`).
@@ -1592,16 +1684,38 @@ type BuiltinAgent = {                   // shipped with handler: handler_control
     answered").
   - After `timeoutSec` a turn is cancelled (`session/cancel`) and ends with `lastStopReason:
     "timed_out"`. `POST /v1/sessions/{id}/cancel` cancels it at once, as for any session.
+  - **One run of an agent at a time**, whoever started it (the Run button, an automation, an
+    app): a run of an agent whose other run is going on waits, in the order they were started,
+    `state: "starting"` with `waitingFor` (the run going on, or the one before it), then starts
+    when its turn comes. Its sandbox does not start meanwhile: attaching to it is refused (closed
+    with `AGENT_EXITED`, "this run waits for its agent's run in progress"). Past
+    `HANDLER_RUN_WAIT_TIMEOUT` seconds (default 1800) it is `failed`, `error: "waited 30 min: its
+    agent was still running <its title>"`; stopped or cancelled meanwhile (`…/stop`,
+    `…/cancel`), `failed` with why ("cancelled before its turn"); both write its `lifecycle
+    stopped` event (`how: "error"`). Runs of other agents, chats and briefs do not wait. So two
+    runs never write their agent's folder at once.
 - **The result**: when the turn ends (`end_turn`), handlerd takes the last `handler-result` block of the
   answer (the agent's message after the last prompt) and checks it against `result`. If it is
   missing or invalid, it sends one more turn with the error; then keeps `Session.output` whatever
   it got, keeps the answer (`Session.answer`), and stops the session. A run whose turn did not end
   (timed out, cancelled, failed) has no output. Opening it later (F.4) restarts it with
   `session/load`, to read it, for harnesses that can resume.
-- **Shown from its schema** (web UI): fields by their `title`, lists, enums; two hints:
+- **Shown from its schema** (web UI): fields by their `title`, lists, enums; three hints:
   `"x-handler": "code-ref"` on `{path, lines: [from, to]}` shows those lines read by handlerd from the
   subject now (not the agent's quote of them), `"x-handler": "verdict"` on an enum shows it as the
-  run's outcome (its first value the best, its last the worst).
+  run's outcome (its first value the best, its last the worst), `"x-handler": "long-text"` on a
+  string of `fields` is filled in over several lines (a plain string: one line), `"x-handler":
+  "skill"` on a string of `fields` is a choice of a skill of the library. handlerd ignores the
+  hints but `skill`. A list of strings is filled in one per line.
+- **Edited as fields** (web UI, the agent editor's *Job* and *Brief*; a new job has no form
+  fields, a new brief one long text, "What should it do?", and a brief keeps one at least;
+  switching between them keeps the form): the form's fields (short
+  text, long text, number, yes/no, a choice, a list of texts, a skill: one at most, a second one
+  is flagged) and the result's (the same but a skill, and a list of items: objects whose fields
+  are of those kinds, a list of texts aside), its `status` (`ok`, `attention`, `failed`, a
+  `verdict`) and `summary` always first and required (I.3), `timeoutSec` in minutes;
+  a field's key comes from its title until it is saved, then stays. An interface the editor would
+  not write back the same (other keywords or hints, nesting, no status) is edited as JSON.
 - **Folderless agents** (no `scope`, ad-hoc only): each session works in its own folder (F.2,
   `work/`, allowed whatever the work folders). Plain connections (C) and terminals (D.16) of one
   are refused ("works in sessions only"). `POST /v1/sessions {agentId, fromSkill}` starts that
@@ -1609,65 +1723,127 @@ type BuiltinAgent = {                   // shipped with handler: handler_control
   unusable skill), and `POST /v1/skills/import-session/{sessionId}[?project=…][&replace=true]`
   brings the folder back into the library as an archive's import (D.17: the shallowest SKILL.md,
   hidden files and links left out, the same limits and answers; 409 `a session with a scope`).
-- **Built-in agents** exist at most once each: one is set up by creating an ad-hoc agent
-  (`POST /v1/agents`, D.2) with its name as `origin` (`AdHocAgentRequest.origin`, kept on the
-  Agent): 400 `unknown built-in agent`, 409 `built-in agent already set up` while an agent has
-  that origin (deleted, it can be set up again). The web UI fills the agent's form with the
-  built-in's defaults and the user chooses its models; from then on its settings are the user's,
-  nothing follows the built-in. An agent keeps its origin: a `PUT` with another one (or none for
-  one that has one) is 409 `origin cannot change`. Its own skills (`skills/<name>/` in its folder)
-  are installed in the library (global) before the agent is checked, unless a skill of that name
-  is there (kept: it may be the user's); from then on they are the user's, edited and deleted
-  like any other. Clients find the skill reviewer and the skill creator by their origin.
+- **Handler's needs** are its own features that need an agent (the skill review needs a
+  reviewer), given one as an app's needs are (H.2): handler's feature uses the one given
+  (`HandlerNeed.agentId`, kept in `<state>/handler-needs.json`; deleted, none). The UI calls the
+  agent given a **helper**. Handler ships each need's definition (`data/handler-needs/<name>/`:
+  `need.toml`, its description and version, beside the definition's files): one is set up by
+  creating an agent outside projects (`POST /v1/agents`, D.2) with the `origin` `{kind:
+  "handler-need", name: "skill-review", version: 1}` (400 `unknown handler need`; 409 `handler
+  need changed` for another version), as many times as wanted, then given: `PUT
+  /v1/handler-needs/{name} {agentId}` (409 `does not fit`). An agent **fits** a job's need (the
+  reviewer) when its form and result fit (H.2's rule); a chat's (the skill creator) says nothing
+  of what it does, so only one set up for that need (any version) fits (`HandlerNeed.fits`). The
+  web UI fills the agent's form with the definition and the user chooses its model, then gives
+  it; from then on its settings are the user's, nothing follows the definition. An agent keeps its origin: a `PUT` with another one (or
+  none for one that has one) is 409 `origin cannot change`. The skills of the definition it is set
+  up from (`skills/<name>/` in its folder) are installed in the library (global) before a new agent
+  is checked, unless a skill of that name is there (kept: it may be the user's); from then on they
+  are the user's, edited and deleted like any other. Clients find the skill reviewer and the skill
+  creator as the ones given.
+- **An app's definition** (H.2) is set up the same way, `origin` `{kind: "app", name: <app>,
+  agent: <need>}` and `app` its home (H.14): from the
+  app's source folder (400 `unknown app need` when the app does not need it), any number of
+  times (none is "the" one: the app is given the one the person chooses). A definition's folder is
+  `agent.toml` (`[agent]` only: its name, description, sandbox, the addons and knowledge folders
+  it needs, skills), `instructions.md`, `interface.json`, `skills/`. A new agent's form keeps the
+  definition's keys (what its callers send), whatever its fields' titles.
 
 | Method & path | Effect |
 |---|---|
-| `GET /v1/builtin-agents` | the built-in agents Handler ships, each with the agent set up from it → `BuiltinAgent[]` |
+| `GET /v1/handler-needs` | Handler's needs, each with its definition, the agent given for it and those that fit → `HandlerNeed[]` |
+| `PUT /v1/handler-needs/{name}` `{agentId}` | give it an agent that fits → `HandlerNeed`; 404 unknown, 409 `does not fit` (why) |
 | `GET /v1/sessions?subject=skill:<name>` | the runs on that skill, most recent first |
 | `POST /v1/skills/import-session/{sessionId}` | the session's folder (a folderless agent's) as a skill, see above |
 
-Built-in agents shipped (`handler_control/data/builtin-agents/`: `agent.toml`, `instructions.md`,
-`interface.json`, `skills/`):
+#### The model alone
 
-- `skill-review`: interface with `subject: "skill"`, field `expectation` (what you expect it to
-  do), result `{verdict: "no-concerns" | "caution" | "do-not-install", summary, whenUsed,
+**Status:** implemented 2026-10-18 (`model_agent.py`; `llm.py`'s `converse`; `sessions.py`'s
+`AgentLink`). An agent may have **no program**: `modelAlone: true`. Its sessions start no sandbox:
+handlerd runs a small ACP agent of its own (`ModelAgent`) behind the same link a sandbox gives a
+session (`AgentLink`: send, receive, wait, stop), so chats, briefs, runs and their result
+(above), the policy pipeline (C.4), the event log (F.5), attachments (F.4) and automations (I)
+work as for a program. One turn is one call of `llm.converse` (I.5) on the agent's provider:
+the conversation so far (kept in the session's `agent/messages.json`, replayed by
+`session/load`), its knowledge put into the system prompt (each markdown note of its knowledge
+folders under `<folder name>/<path>`, hidden and `_` ones left out, at most 192 KiB in all:
+more is refused when it is saved, 400 `knowledge too large`, and fails the turn if it grows
+since). Each call is logged in the session's event log (`lifecycle` "model call": model, ms,
+tokens). Not streamed: the answer comes as one message.
+
+Hard limits, for safety (normative), whatever the agent is told:
+
+- **No tools.** handlerd offers none to the model (I.5) and refuses an answer calling one: the
+  turn fails, nothing of it is acted on. `session/new` or `session/load` with `mcpServers` is
+  refused; a prompt holds text only (text blocks, embedded text resources).
+- **No client requests.** The model agent never sends `fs/*`, `terminal/*` or
+  `session/request_permission`: it has no code that could. `initialize` answers `loadSession`
+  only; other methods are -32601.
+- **It reads only its knowledge notes and its conversation**; its only network is its provider's
+  endpoint, called by handlerd. Its answer is data: shown, or taken as a run's result.
+- `tests/architecture/test_boundaries.py` keeps `model_agent` importing `llm`, `knowledge`,
+  `services` and `settings` only.
+
+Its models are providers (an account is a subscription its vendor's program signs in to:
+`ModelAccess` without a harness); `llm.check` says whether one can serve it (it speaks
+`openai-chat` or `anthropic`, it serves the model), and `ProviderInfo.modelAlone` says it to
+clients. What only a sandbox has is refused when it is saved (above); its risks (D.8) are none;
+`Agent.models[].harness` and `Session.harness` are left out. Plain connections (C) and terminals
+(D.16) of it are refused ("works in sessions only"): an editor or a terminal has nothing to drive.
+
+Handler's needs, each with its definition (`handler_control/data/handler-needs/<name>/`:
+`need.toml`, `agent.toml`, `instructions.md`, `interface.json`, `skills/`):
+
+- `skill-review`: interface with the fields `skill` (its skill field, required) and
+  `expectation` (what you expect it to do), result `{verdict: "no-concerns" | "caution" | "do-not-install", summary, whenUsed,
   expectation?, capabilities: {commands, hosts, files, env}, mismatches, findings: [{severity,
   where: {path, lines}, text}]}`; a filtered network, enforced, with only the required hosts, strict, no
   bindings or knowledge, `ask` and `deny`: it reads, it cannot write or run anything (its
   harness asks before writing or running, and handlerd refuses at once; a model whose harness has no
-  `ask` mode cannot be one of its models, 400 when saved). What it reviews is text maybe written to
+  `ask` mode cannot be its model, 400 when saved). What it reviews is text maybe written to
   manipulate it: its verdict advises, the scan and the lines it cites are what to check. Its model
   credential is in its sandbox like any agent's (until the credential broker, §6).
 - `skill-creator`: no interface (a conversation), with two skills: Anthropic's `skill-creator`
   (Apache-2.0, vendored unchanged) and `handler-skills` (where the skill goes, Handler's rules, Save to
   library). Skills offers *With an agent* (a session of it), a skill's page *Edit with
   an agent* (`fromSkill`), and the session's page *Save to library*.
+- `prompt-writer`: a job on the model alone (its definition's `modelAlone`: the set-up page starts
+  there), fields `instructions`, `goal`, `fields`, `failures`, result `{status, summary,
+  instructions, change}`: the writer of improvements (D.21). Set up where it is needed: the first
+  *Improve until they pass*.
+- `app-creator`: no interface (a conversation), with no folder: each of its sessions works on a
+  draft of an app's code (H.15, `appDraft`). Its definition's `addons = ["app-builder"]` (the
+  `app-builder` skill; Bun is in the toolbox): the set-up page selects a configuration of that
+  addon, or makes one (the addon needs no setting). The Apps page's *New app* starts a session of it on an empty draft, an app's
+  *Change it* one on a copy of its code (one draft per app at a time); without one given, the
+  set-up page first. A chat need's agent (the skill creator, the App creator) fits only when set
+  up for that need and with no folder (409 `does not fit` otherwise).
 
 Conformance: `tests/sessions/test_runs.py`; unit tests: `packages/control-plane/tests/test_interfaces.py`,
 `test_skill_scan.py`.
 
-### D.19 Project contexts
+### D.19 Areas
 
-**Status:** implemented 2026-10-08 (`handler_control/contexts.py`, `api/contexts.py`). Why:
+**Status:** implemented 2026-10-08 (`handler_control/areas.py`, `api/areas.py`). Why:
 a person's day mixes work, personal use and clients, each with its own accounts (`docs/dev/ui-ux.md` "Low
 friction first").
 
-A **context** is what a project is for: Work, Personal, a client. A project has at most one
-(`context`, D.8); an account or a provider says which it may be used in (`contexts`, E): their
-names, or `any` (a local model). **The rule**: a project with a context runs only the accounts and
+An **area** is what a project is for: Work, Personal, a client. A project has at most one
+(`area`, D.8); an account or a provider says which it may be used in (`areas`, E): their
+names, or `any` (a local model). **The rule**: a project with an area runs only the accounts and
 providers made for it or for `any`; a project without one, and an agent outside projects, run
-any. An account without contexts runs only there. It guards against the wrong account (a work one
+any. An account without areas runs only there. It guards against the wrong account (a work one
 on a personal project), not a wall: knowledge folders, addon configurations and skills stay
-shared by every context.
+shared by every area.
 
-Applied (`contexts.check`): when a project's agents are saved, and when the project's context
-changes (409 `not for this project's context`, its agents keep their settings); when a session or
+Applied (`areas.check`): when a project's agents are saved, and when the project's area
+changes (409 `not for this project's area`, its agents keep their settings); when a session or
 a terminal starts or resumes (`launcher.prepare`: any model, the agent's or not); an agent's model
-it no longer allows says so in its `problem`. Stored in `<config>/contexts.toml`, one table per
-context: `[Work]` `color = "blue"`.
+it no longer allows says so in its `problem`. Stored in `<config>/areas.toml`, one table per
+area: `[Work]` `color = "blue"`.
 
 ```ts
-type ContextInfo = {
+type AreaInfo = {
   name: string;                         // 1–32 letters, digits, spaces, - and _; never "any"
   color: "blue" | "violet" | "cyan" | "pink" | "slate";  // never the accent's nor a status's
   projects?: string[];                  // the projects in it, by name
@@ -1677,19 +1853,399 @@ type ContextInfo = {
 
 | Method & path | Effect |
 |---|---|
-| `GET /v1/contexts` | `ContextInfo[]`, in the file's order |
-| `POST /v1/contexts` `{name, color}` | add it → 201; 409 `context exists` (whatever the case); 422 a name `any`, an unknown colour |
-| `PUT /v1/contexts/{name}` `{name, color}` | its colour; 409 `a context's name cannot change`; 404 |
-| `DELETE /v1/contexts/{name}` | 204; 409 `context in use` while a project, an account or a provider names it; 404 |
+| `GET /v1/areas` | `AreaInfo[]`, in the file's order |
+| `POST /v1/areas` `{name, color}` | add it → 201; 409 `area exists` (whatever the case); 422 a name `any`, an unknown colour |
+| `PUT /v1/areas/{name}` `{name, color}` | its colour; 409 `an area's name cannot change`; 404 |
+| `DELETE /v1/areas/{name}` | 204; 409 `area in use` while a project, an account or a provider names it; 404 |
 
 **The CLI** (`handler run`, `handler terminal`, `handler acp` in a project's folder, D.16): an account or a
 provider that none of the project's agents lists runs its default agent, for this session only,
-when it is made for the project's context; otherwise it is refused, saying how to run it anyway:
-`--anyway` runs it outside the project (an ad-hoc agent, its session under "Outside projects"),
+when it is made for the project's area; otherwise it is refused, saying how to run it anyway:
+`--anyway` runs it outside the project (an ad-hoc agent, its session under "Other folders"),
 after a warning the person acknowledges by typing `yes`; without a terminal to answer (a script,
 `handler acp` from an editor), refused. The web UI does not offer it (a guard against mistakes, kept
 out of the click path, `docs/dev/ui-ux.md`): its model choice says which accounts and providers it hides,
 and the command.
+
+### D.20 Checks
+
+**Status:** implemented 2026-10-18 (`agent_checks.py`, `api/agent_checks.py`). A **check** is a
+run of a job (D.18) kept with its right answer: run again with the same input, it passes when
+each field it compares comes back the same (JSON equality). Only a job's result fields that are
+not free text can be compared: a choice, yes/no, a number, a list of choices (a string with no
+`enum`, a list of such strings, an object: never). Checks belong to their agent, beside its
+settings (a save of its settings does not carry them), and go with it (its checks, its check
+runs and their sessions). They run **only when the person asks** (the web UI's *Run all*, `handler
+agent checks ID --run`): never after a save, never on a schedule.
+
+```ts
+type Check = { id: string; name: string;      // "c_" + 8 hex
+               input: Record<string, unknown>; // its form's values
+               answer: Record<string, unknown>;// the right result, whole (the run's it was kept from)
+               compare: string[];              // ≥ 1, the result's fields that must come back
+               fromRun?: string; createdAt: string;
+               problem?: string };             // why it cannot run now: its agent is no job, its
+                                               // form refuses its input, its result lost a field
+type CheckResult = { checkId: string; name: string;
+                     state: "waiting" | "running" | "passed" | "failed" | "error";
+                     sessionId?: string;       // its run (origin "check")
+                     got?: Record<string, unknown>;  // what came back, of the compared fields
+                     why?: string };           // failed: `verdict: "send", not "rewrite"`; error:
+                                               // why the run gave no valid result
+type CheckRun = { id: string; startedAt: string; endedAt?: string; results: CheckResult[] };
+type AgentChecks = { checks: Check[];
+                     comparable: string[];     // its result's fields a check may compare
+                     last?: CheckRun;
+                     changed: string[] };      // what changed in the agent since its last check
+                                               // run: "its instructions", "its model", "its
+                                               // form or its result", "its knowledge", "who
+                                               // works", "its skills", "its addons"
+```
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/agents/{id}/checks` | → `AgentChecks` |
+| `POST /v1/agents/{id}/checks` `{fromRun, name?, compare?}` | keep that run of it as a check: its input, its valid result as the answer, `compare` by default every comparable field → `Check` (201); 400 not a job's run of this agent, no valid result, a field not comparable, nothing to compare |
+| `PUT /v1/agents/{id}/checks/{checkId}` `{name, compare}` | rename it, choose what it compares → `Check`; 404 |
+| `DELETE /v1/agents/{id}/checks/{checkId}` | 204; 404 |
+| `POST /v1/agents/{id}/checks/run` | run every check it can run, one after another → `CheckRun` (202); 409 one is running, or no model it can start with; 400 no check it can run |
+
+- A check run is a run of the job per check, as the Run button's (D.18: the agent's model, one
+  run of an agent at a time), with `origin: "check"`: clients leave them out of the
+  agent's history and of the open sessions, the inbox is never told.
+- Stored in `<state>/agent-checks/<agent id>.json`: its checks, its last 20 check runs (an older
+  one's sessions are deleted), and what the agent was when the last one started. A check run
+  handlerd stopped in the middle of ends with `error` "handlerd stopped meanwhile" on what had
+  not ended.
+
+Conformance: `tests/sessions/test_checks.py` (the API and the CLI, on the model alone with a stub
+provider), `tests/e2e/test_checks_ui.py`; unit: `packages/control-plane/tests/test_agent_checks.py`.
+
+### D.21 Improvements
+
+**Status:** implemented 2026-10-18 (`improvements.py`, routes in `api/agent_checks.py`). An
+**improvement** rewrites a job's instructions again and again, each attempt judged by the job's
+checks (D.20), until they all pass or its budget is spent. The writer is the agent given for
+Handler's need `prompt-writer` (D.18; a job on the model alone: its instructions are the default prompt,
+changed by editing that agent). Nothing changes in the agent until the person keeps an
+attempt.
+
+```ts
+type Attempt = { n: number;                    // 0: the instructions it started from
+                 instructions: string; change?: string;   // the writer's line
+                 state: "writing" | "checking" | "done" | "error"; why?: string;
+                 writerRun?: string;            // the writer's run (origin "check")
+                 results: CheckResult[]; passed: number };
+type Improvement = { id: string; agentId: string; goal: string;   // "i_" + 8 hex; the person's words
+                     maxAttempts: number; maxMinutes: number;     // 1..10 (5), 1..240 (15)
+                     state: "running" | "done" | "stopped" | "failed"; why?: string;
+                     attempts: Attempt[]; best: number;           // most checks passing, the earlier
+                     kept?: number; startedAt: string; endedAt?: string };
+```
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/agents/{id}/improvements` | its last 10, newest first → `Improvement[]` |
+| `POST /v1/agents/{id}/improvements` `{goal, maxAttempts?, maxMinutes?}` | → `Improvement` (202); 409 one runs or its checks run, or no prompt writer is given; 400 not a job, no check it can run |
+| `POST /v1/agents/{id}/improvements/{iid}/stop` | it stops after the step going on |
+| `POST /v1/agents/{id}/improvements/{iid}/keep` `{attempt}` | that attempt's instructions saved in the agent (checked against its form, D.18); attempt 0 puts back those it started from; 409 while it runs, or when the agent's instructions changed since (neither those it started from nor the attempt kept) |
+
+- Attempt 0 is checked first. Each next attempt: the writer's run gets the best attempt's
+  instructions, the goal, the form's fields the instructions may name, and the checks that did
+  not pass (input, the right answer of what they compare, what came back); its result's
+  `instructions` and `change` make the attempt, refused (`error`) when they name a field the form
+  has not. Then every check runs with those instructions (`sessions.create(…, instructions)`,
+  origin `check`: the agent is not changed). The best attempt is the next one's start.
+- It ends `done` when every check passes ("every check passes"), when `maxAttempts` attempts were
+  made, or past `maxMinutes` (checked between attempts); `stopped` when asked. An attempt that
+  fails (the writer's run, its instructions) counts.
+- Stored in `<state>/improvements/<agent id>.json`, deleted with the agent; one running at
+  handlerd's stop ends `failed` ("handlerd stopped meanwhile").
+- No checks are kept aside from the writer in this version: with few checks an attempt may learn
+  them rather than the rule (the web UI says so under four).
+
+Conformance: `tests/sessions/test_improvements.py`, `tests/e2e/test_checks_ui.py`.
+
+### D.22 Uses
+
+**Status:** implemented 2026-10-18 (`uses.py`, `api/uses.py`). What a thing uses and what uses it,
+computed from what Handler keeps each time it is asked (nothing stored), in one place:
+
+| User | Uses | How |
+|---|---|---|
+| an agent | a skill | "picks it"; "given by its project" (its project gives it) |
+| an agent | a knowledge folder | "reads it" (the model alone: "puts it into each call") |
+| an agent | an addon configuration (G.2) | "uses it" |
+| an agent | an account, a provider | "runs on it" |
+| a project | a skill | "gives it to all its agents" |
+| an automation | an agent | "runs it" |
+| an automation | a knowledge folder | "appends to <note>" (a folder also stands for those in it) |
+| an app | an agent | "needs it: <the need's description>" |
+| Handler | an agent | "its <need's agent>": "its skill reviewer" (the agent given for one of its needs, D.18) |
+
+```ts
+type UseRef = { kind: "agent" | "skill" | "knowledge" | "addon" | "account" | "provider"
+                      | "automation" | "app" | "project" | "handler";
+                id: string;      // an agent's or a project's id; a name; a knowledge folder's path
+                label: string;   // as shown: an agent of a project "<project> · <agent>"
+                how: string };   // from the user's side; two ways of the same pair joined by "; "
+type Uses = { uses: UseRef[]; usedBy: UseRef[] };   // once each, by kind then label
+```
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/uses/{kind}/{id}` | → `Uses` (an unknown thing: both empty); 404 an unknown kind |
+
+The older lists of users on some resources (`SkillInfo.usedBy`, `BindingInfo.usedBy`,
+`AccountInfo.agents`, `ProviderInfo.agents`) predate it.
+
+Conformance: `tests/control/test_uses.py`, `tests/e2e/test_web_ui.py` (`uses_and_used_by`).
+
+### D.23 Agents files
+
+**Status:** implemented 2026-10-18, as files 2026-10-21, the word *blueprint* gone 2026-10-22
+(`agents_files.py`, `definitions.py`, `api/agents_files.py`, `handler project export-agents |
+import-agents`; web UI: `ExportAgentsDialog.svelte` and *Add agents from a file* on a project's
+page, `AgentSetupView`, `lib/setup.ts`). An **agents file** is agents written so they can be set
+up again, as a whole: their definitions without what is yours, with what they need instead, and
+their checks (D.20). A project's agents are exported as one (a zip, made on the fly, never kept by
+Handler) and set up in another project from it (the file read waits in `<state>/agent-imports/`
+until then). Handler's own definitions are not agents files: they are its needs' (D.18).
+
+```
+<state>/agent-imports/<name>/             a file read, until its agents are set up (or a day)
+an agents file (zip)                      the same folder's content at its root:
+  agents.toml           name (a file's), description?, version (an integer), place
+                        ("project" | "outside")
+  agents/<agent>/       one per agent: a definition (D.18: agent.toml, instructions.md,
+                        interface.json, skills/) + checks.json (AgentsFileCheck[])
+```
+
+```ts
+type AgentsFileCheck = { name: string; input: object; answer: object; compare: string[] };
+type AgentsFileAgent = {
+  part: string;                        // its name in the file: the end of the origin
+  definition: AgentDefinition;         // D.18: no models, no folder
+  checks: AgentsFileCheck[];           // copied to each agent set up from it
+};
+type AgentsFile = {
+  name: string;                        // a skill's rules (lowercase, digits, -): the file's name
+  description?: string;
+  version: number;                     // 1 for an export
+  place: "project" | "outside";        // set up by default in a project (its agents work in its
+                                       // folder), or outside projects (folderless agents)
+  agents: AgentsFileAgent[];           // at least one
+};
+type ExportAgentsRequest = { name: string; description?: string;
+  projectId: string; agentIds: string[];   // at least one, all of that project
+  dryRun?: boolean };                  // say what it would hold (AgentsExport), make no file
+type AgentsExport = { file: AgentsFile;
+  replaced: string[] };                // what was yours and what it becomes, one line each:
+                                       // "Dev: runs on account claude-pro → its model, chosen at set-up"
+```
+
+- **Exporting** writes each agent as a definition: its name, description, instructions, sandbox
+  (`network`, `egress`, `allow`, `confinement`, `permissions`, `display`), interface, `modelAlone`;
+  its skills (its own and those its project gives, copied from the library into its `skills/`:
+  they come with it); `addons`: the addon of each configuration it was given; `knowledge`: the
+  names of the knowledge folders it reads; its checks without their run. Never written: its
+  models (accounts, providers), its folder, which configurations and folders it was given, its
+  remote start, its conversations. **Only rules**: the free text (instructions, checks' inputs
+  and answers) is written as it is; the dialog says to read it before giving the file away.
+- **Importing** reads a file (`POST /v1/agents-files/import`): the same checks as an app file's
+  (paths, links, size), then `agents.toml`'s `name` (400 `not an agents file`); a file of the
+  same name read before is replaced. The set-up page then reads it by name and deletes it once
+  its agents are made (Cancel too); one never set up is removed after a day, at the next import.
+- **Setting one up** is creating its agents (D.2, outside projects or in an existing project; D.8
+  in a new one) with `origin` `{kind: "agents-file", name, version, agent}` (400 `unknown agents
+  file`, `unknown agents file agent`; 409 `agents file changed` for another version), their
+  settings filled from the definition (the client's form) and their models chosen by the person.
+  A new agent gets its definition's skills in the library first (D.18) and its checks once
+  created (new ids, no run). From then on nothing follows the file: an agent keeps its origin,
+  the file read is forgotten.
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/agents-files/{name}` | a file read → `AgentsFile`; 404 unknown, 409 `agents file unreadable` (why) |
+| `POST /v1/agents-files/export` `ExportAgentsRequest` | → the file (`application/zip`, `Content-Disposition` `<name>-agents.zip`); `dryRun`: → `AgentsExport`; 404 an unknown project or agent, 400 `not one project`, 409 `addon configuration unreadable` |
+| `POST /v1/agents-files/import` an agents file (`application/zip`) | → 201 `AgentsFile`, kept for its set-up; 400 `not an agents file`, 413 larger than 16 MiB |
+| `DELETE /v1/agents-files/{name}` | a file read: forgotten, 204; 404 unknown |
+
+Conformance: `tests/sessions/test_agents_files.py`, `tests/sessions/test_runs.py` (Handler's
+needs), `tests/cli/test_cli.py` (`project_agents_exported_and_imported`),
+`tests/e2e/test_web_ui.py` (`a_project_s_agents_exported_then_added_to_another`, a helper's
+set-up).
+
+### D.24 Ask
+
+**Status:** implemented 2026-10-20 (`assistant.py`, `api/ask.py`, Handler's need `ask-router` and
+its definition `data/handler-needs/ask-router/`; web UI `AskView.svelte`; CLI `handler ask`).
+
+What the person says, routed to one action of one of their installed apps (H.12), then run.
+
+| Method & path | Effect |
+|---|---|
+| `POST /v1/ask` `AssistantRequest {turns, timezone?}` | → `AssistantAnswer`; 400 the last turn not the person's; 409 no router given, or its model unusable, or the pick cannot run; 502 the router gave no valid answer |
+| `PUT /v1/apps/{name}/askable` `{askable}` | whether the app's actions are offered to Ask → `App` (`askable`, default true) |
+
+```ts
+type AskTurn = { who: "you" | "handler"; text: string };      // ≤ 20 turns, ≤ 2000 chars each
+type AssistantAnswer = {
+  kind: "pick" | "needs" | "none";
+  summary: string;
+  app?; action?;             // pick, needs
+  why?; fields?; run?: ActionRun;   // pick: why this one, its form as filled, the action (H.12)
+  question?;                 // needs
+  actions?: { app; action; description }[];   // none: what can be asked
+  routerRun?: string;        // the router's run (its session, origin "ask")
+};
+```
+
+- **The router** is the agent given for one of Handler's needs (D.18, `ask-router`): an agent on
+  the model alone, set up from its definition (its instructions are the router's prompt, yours
+  to change).
+  Each call is one run of it (a session, origin `ask`): its form is what was said (the turns),
+  now where the person is (`timezone`, else the host's), and every installed, askable app's actions
+  with their forms; its result says `kind`, and for a pick `app`, `action`, `fields`, `why`.
+- **Checked before it runs**: an app and action that exist and are offered, fields valid against
+  the action's form (else `needs`, saying what could not be filled). A pick runs at once, as the
+  owner (`POST /v1/apps/{name}/actions/{action}`, H.12): no confirmation step.
+- **Stateless**: the client sends the whole exchange each time; answering a question is two more
+  turns (Handler's question, the person's answer).
+- No askable app: `none` without asking the router.
+- From the phone: the device channel's `ask`, `ask_options`, `action_run` (D.7,
+  `docs/dev/design/remote.md`), the owner's devices only; handlerd polls the gateway while Ask can
+  answer (a router given, an askable app).
+- Speaking: D.25. Not built: an action undone after *Not this*.
+
+### D.25 Voice
+
+**Status:** implemented 2026-10-21 (`voice.py`, `transcribe.py`, `api/voice.py`; web UI
+Settings → Voice `VoiceSettings.svelte`, the microphone of `AskView.svelte`, `lib/voice.ts`; the
+phone's `AskScreen.svelte` and `NewSession.svelte`).
+
+Speaking to Ask instead of typing. What writes down what is said is one of the providers' speech
+models (`speech = true`, E), through the `transcribe/v1` service (I.11): a vendor's API (Mistral's
+Voxtral, OpenAI, Groq) or a server on this machine speaking the same endpoint (vLLM, whisper.cpp's
+server, speaches). Off until one is chosen. Kept in `<state>/voice.json`.
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/voice` | → `Voice`: the settings, the speech models there are (`models`), a `problem` when the chosen one can no longer be used |
+| `PUT /v1/voice` `VoiceSettings` | → `Voice`; 400 `model` not a provider's speech model |
+| `POST /v1/voice/transcribe` `SpeechRequest {audio, format, language?}` | → `Transcription {text}`; 409 no model chosen; 413 larger than 1 MiB once decoded; 502 the provider failed, too slow or unreachable |
+
+```ts
+type VoiceSettings = { model?: string;   // "provider/model", a speech model; none: off
+                       readAloudSpoken: boolean;  // default true: an answer to what was said
+                       readAloudTyped: boolean };  // default false
+type Voice = VoiceSettings & { models: { model; name; provider; local: boolean }[]; problem? };
+type SpeechRequest = { audio: string;    // base64, ≤ 1 MiB decoded
+                       format: "webm" | "ogg" | "mp4" | "wav" | "mp3"; language?: string };
+```
+
+- **Nothing listens** until the person presses the microphone (web: click to start and to stop,
+  Esc drops it; phone: hold, release to send, slide away to drop), at most 60 s at 16 kbit/s
+  Opus: a minute fits the gateway's 256 KiB envelope from a phone.
+- What was heard is sent to Ask at once, as typed words would be, and shown marked as heard; a
+  mishearing is fixed after (*Not this*, or said again). The recording and its text are never
+  stored nor logged by handlerd (the ask is kept as a typed one: the client's day list).
+- **Read aloud** by the device's own voice (`speechSynthesis`: nothing is sent): the answer's
+  sentence (an agent's once it ended), when the person spoke (`readAloudSpoken`) or typed
+  (`readAloudTyped`).
+- `local`: the provider's `transcriptions` endpoint is on this machine (loopback or
+  `host.containers.internal`): the page says the recording does not leave it; otherwise it names
+  where it goes.
+- From the phone: the device channel's `transcribe` (D.7, `docs/dev/design/remote.md`), the
+  owner's devices only, as Ask; `ask_options` says whether it `listens` and the read-aloud
+  settings. The phone's *Dictate* (New session) uses it too.
+
+### D.26 Sources
+
+**Status:** implemented 2026-10-22 (`sources.py`, `api/sources.py`; `addon_install.py` and
+`apps.py` `add_from_source`, `agents_files.py` `stage_folder`; web UI Settings → Sources
+`SourcesSettings.svelte`, Discover `DiscoverView.svelte` and an item's page
+`DiscoverItemView.svelte`, short lists on the Apps page, in the addon installer and a project's
+*Add agents from a source* `SourceAgentsDialog.svelte`, `lib/sources.ts`; CLI `handler source`, and `--from SOURCE`
+on `handler app add`, `handler addon add`, `handler project import-agents`). Design:
+[`sources.md`](design/sources.md).
+
+A **source** is a git repository Handler reads to offer apps, agents and addons to install. The
+**official** one is Handler's (`id` `official`, `Settings.official_source`: its GitHub repository,
+or `$HANDLER_OFFICIAL_SOURCE`, a URL or a local repository to try one before it is published),
+reviewed by its maintainer; the person adds others (an `https://` URL), trusting them: Handler
+does not check what is in one. A source only offers: installing is each kind's own path and page,
+which says where it comes from (G.5, H.13, D.23).
+
+```
+a source's repository (default branch, last commit)
+  handler-source.toml    SourceManifest: apiVersion "handler.source/v1", name, description?
+  apps/<name>/           an app file's content (H.15): app.toml, its backend, its UI built
+  agents/<name>/         an agents file's content (D.23): agents.toml + agents/<agent>/
+  addons/<name>/         an addon (G.1)
+                         each folder named as what its manifest names, with an optional
+                         README.md (its page in Discover); anything else is not read
+<config>/sources.toml    the sources added: [[source]] id, url (the official one is not in it)
+<state>/sources/<id>/    what was read last: fetched.json (url, commit, fetchedAt, error, skipped)
+                         and tree/ (the files above, written out)
+```
+
+```ts
+type SourceItem = {
+  kind: "app" | "agents" | "addon"; name: string; description?: string;
+  version?: string;          // an app's; an agents file's (its integer); none for an addon
+  installed: boolean;        // an app or an addon of that name is installed (wherever from)
+  update: boolean;           // installed from this source, which now holds other content
+  error?: string;            // it cannot be read (by this Handler): never offered
+  notes: SourceNote[];       // what it does in a few words, from its manifest, weakening first
+};
+type SourceNote = { text: string;       // "uses 1 folder of yours", "reaches 2 sites", "2 agents"
+                    weakens: boolean };  // a site reached, an image built, any host, containers
+type SourceItemDetail = {    // an item's page, before anything is installed
+  source: Source;            // without its items
+  item: SourceItem;
+  readme?: string;           // its README.md, as written (at most 256 KiB)
+  app?: AppManifest; agents?: AgentsFile; addon?: AddonPreview;  // its kind's manifest (G.5 preview)
+};
+type Source = {
+  id: string;                // "official", or made from its URL: the repository's name, unique
+  url: string; official: boolean; name?: string; description?: string;  // its manifest's
+  commit?: string; fetchedAt?: string;
+  error?: string;            // the last read's, its items then those read before
+  items: SourceItem[];
+};
+type AddSourceRequest = { url: string };   // https:// only
+```
+
+| Method & path | Effect |
+|---|---|
+| `GET /v1/sources` | → `Source[]`, the official one first; one never read, or not for a day, is read again first |
+| `POST /v1/sources` `AddSourceRequest` | read it, then add it → 201 `Source`; 409 `source exists` (the same repository); 422 `not a source` (no readable `handler-source.toml`), `cannot read the source` (network, not a repository), `source too large`; nothing kept |
+| `POST /v1/sources/{id}/refresh` | read it again → `Source` (a failure is its `error`, beside what was read before); 404 |
+| `DELETE /v1/sources/{id}` | 204; what was installed from it stays; 409 for the official one |
+| `GET /v1/sources/{id}/{apps\|agents\|addons}/{name}` | its page → `SourceItemDetail` (an addon's preview is staged as G.5's); 404 no such source, kind or item; 409 an addon not offered |
+| `POST /v1/sources/{id}/apps/{name}` | H.13: 201 or 200 `App` |
+| `POST /v1/sources/{id}/agents/{name}` | read as an agents file is (D.23), its set-up page next → 201 `AgentsFile`; 404 no such source or agents; 409 not offered, its `agents.toml` naming another file |
+| `POST /v1/addons/preview {source: "source:<id>/<name>"}` | G.5 |
+
+- **Reading one** is a shallow, bare clone with dulwich (nothing of it runs: no hooks, filters,
+  submodules, LFS; each HTTP request 60 s at most), then its files written out from the commit's
+  tree: only `handler-source.toml` and the three folders, at most 50 000 files and 1 GiB. A link
+  or a submodule is never written: the item holding one is not offered (`SourceItem.error`: "it
+  holds a link: …"). Each item is then read with its kind's own rules (the app manifest, the
+  agents file, the addon); one that fails is listed with its error, never offered.
+- **Nothing happens by itself**: a source is read when added, when listed after a day, or on
+  *Read again*; it never installs nor updates anything. An update is offered: an addon whose
+  content differs from its lock's digest, an app whose version differs from its kept code.
+- **Removing** a source keeps what was installed from it (an addon's lock still says
+  `source:<id>/<name>`; an app's `fromSource`): it is the person's.
+
+Conformance (`packages/control-plane/tests/test_sources.py`, `tests/control/test_sources.py`,
+`tests/cli/test_addon_cli.py`, `tests/e2e/test_web_ui.py`): the official source read with what it
+offers, each item valid; one added named from its URL, the same repository refused, removed (not
+the official one); a repository that is no source, or cannot be read, not added; a failed read
+keeping what was read before; an item holding a link not offered; an addon installed from one and
+its update seen; agents read from one as a file; an app taken from one, then its next version.
 
 ## F. Sessions — `handler.session/v1`
 
@@ -1717,8 +2273,9 @@ type Session = {
   id: string;                           // "s_" + 16 hex; created by handler before any sandbox exists
   agentId: string;                      // the Agent it belongs to
   projectId?: string;                   // its agent's project (D.8), as of now
-  harness: string; account?: string; provider?: string; model?: string;  // which of the
-                                        // agent's models it was started with (F.3)
+  harness?: string; account?: string; provider?: string; model?: string;  // the model it
+                                        // was started with, the agent's or one picked for it
+                                        // (F.3, D.19); no harness: the model alone (D.18)
   scope: string;                        // its agent's folder (or its own, F.2) at creation:
                                         // resuming needs the same (F.3)
   acpSessionId?: string;                // the agent's id, known after session/new
@@ -1729,14 +2286,26 @@ type Session = {
   attached: number;                     // clients currently attached (F.7)
   remote: boolean;                      // reachable from paired devices (docs/dev/design/remote.md); off after a stop
   canResume: boolean;                   // the agent advertised loadSession (a stopped session can restart)
-  error?: string;                       // why it is "failed", or why the last start or run failed
+  error?: string;                       // why it is "failed", or why the last start or run failed;
+                                        // its sandbox not started, what its launcher said (A.1)
+  missingImage?: string;                // its last start refused, nothing launched: an image it
+                                        // needs is not built; the build that makes it (D.4: a
+                                        // harness, "addon:<name>", "network-filter")
   harnessVersion?: string;              // what the harness image had installed at the last start (B.6)
-  origin: "ui" | "cli" | "editor" | "phone" | "automation";  // who started it (clients say, F.3;
-                                        // "automation": an automation's agent run, I.3)
+  origin: "ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check";  // who started
+                                        // it (clients say, F.3; "automation": an automation's
+                                        // agent run, I.3; "app": a run an app started, H.11;
+                                        // "check": a check's run, D.20)
+  app?: string;                         // origin "app": that app
+  waitingFor?: string;                  // a run waiting for its turn (D.18): the run it waits for
   lastStopReason?: string;              // how its last turn ended: end_turn, cancelled, timed_out…
   answer?: string;                      // a run's (D.18): the agent's last message, kept when it ends
-  input?: SessionInput;                 // a run of an agent with an interface (D.18)
+  input?: SessionInput;                 // started from its agent's form: a run, a brief's (D.18)
+  unattended: boolean;                  // a run of a job (D.18): no prompt, ends with a result
+  subject?: SessionSubject;             // the skill the run works on, set by handlerd (D.18)
   output?: SessionOutput;               // its result, once its turn ended (D.18)
+  appDraft?: { app?: string };          // its folder is a draft of an app's code, not used yet
+                                        // (H.15): of `app`, or of a new app
   createdAt: string; lastActivityAt: string;
   acpUrl: string;                       // F.4 URL
 };
@@ -1746,7 +2315,7 @@ States:
 
 | State | Sandbox | Meaning | Next |
 |---|---|---|---|
-| `starting` | launching | container start, `initialize`, `session/new` or `session/load` | `running`, `failed` (first start), `stopped` (restart) |
+| `starting` | launching | container start, `initialize`, `session/new` or `session/load` | `running`, `failed` (first start), `stopped` (restart, or an image not built: `missingImage`) |
 | `running` | alive | ready; `busy` tells whether a turn is in progress | `stopped` (stop, idle timeout, agent exit, daemon restart) |
 | `stopped` | none | the folder and the event log remain | `starting` (attach) |
 | `failed` | none | the first start failed; never restarted | — (delete) |
@@ -1758,7 +2327,7 @@ One folder per session: `$HANDLER_STATE_DIR/sessions/<id>/` (default
 
 | Path | Content |
 |---|---|
-| `session.json` | the record: the `Session` fields without the live ones (`busy`, `attached`, `pendingPermissions`, `acpUrl`), and the agent's own session id when it is not `acpSessionId` (F.6) |
+| `session.json` | the record: the `Session` fields without the live ones (`busy`, `attached`, `pendingPermissions`, `acpUrl`), the agent's own session id when it is not `acpSessionId` (F.6), and `agents_model`: whether it started with its agent's model rather than one picked for it alone (D.19, `POST /v1/sessions`) |
 | `events.ndjson` | the event log (F.5), append-only |
 | `agent/` | bound to the harness's `perSession` state slot (B.1): the harness's own session history |
 | `work/` | a folderless agent's (D.18): the session's folder, its scope (A2: same path in the sandbox), empty or a copy of a skill (`fromSkill`) |
@@ -1779,7 +2348,7 @@ One folder per session: `$HANDLER_STATE_DIR/sessions/<id>/` (default
 
 | Method & path | Effect |
 |---|---|
-| `POST /v1/sessions` `{agentId, acpSessionId?, prompt?, input?, fromSkill?, model?, origin?}` (`input`, `fromSkill`: D.18) | create the folder and start the session in the background → `Session` (202, `state: starting`), running with `model`, one of the agent's or any other (`ModelAccess`, its harness may be left out for an account; 400 `model access unusable` when it cannot run, E1), never saved to the agent, default its first: its account or provider and its hosts (E4), its state (E6). It must be made for the agent's project's context (409 `not for this project's context`, D.19). It resumes with the same one, or, when that model of the agent was changed since, the agent's on the same harness and account or provider; a model the agent does not list (any more) resumes as it was, while its project's context allows it. With `acpSessionId`, the agent resumes that session (`session/load`) instead of starting one; this needs the agent's history to be reachable (its state, E6). With `prompt` (the request, ≤ 200 000 characters; 400 with `acpSessionId`), the daemon sends it as the first turn once the agent runs, as one text block after the agent's `instructions` (a blank line between them), like another client's prompt (F.7); the request's first line is the title until the agent gives one. Without `prompt` (and without `acpSessionId` or `input`), the instructions go the same way with the first prompt a client sends: before the text of its first text block (one is added when it has none). `origin`: `ui` (default), `cli`, `editor`, `phone` (`automation`: handlerd's own, I.3). 404 unknown agent. |
+| `POST /v1/sessions` `{agentId, acpSessionId?, prompt?, input?, fromSkill?, appDraft?, model?, origin?}` (`input`, `fromSkill`: D.18; `appDraft`: H.15) | create the folder and start the session in the background → `Session` (202, `state: starting`), running with `model`, the agent's or any other (`ModelAccess`, its harness may be left out for an account; 400 `model access unusable` when it cannot run, E1), never saved to the agent, default the agent's: its account or provider and its hosts (E4), its state (E6). It must be made for the agent's project's area (409 `not for this project's area`, D.19). It starts and resumes with that one; a session started with the agent's model resumes, when the agent's model was changed since, with the agent's new one when on the same harness and account or provider (else as it was); a model picked for the session alone resumes as it was, also on the agent's harness and account or provider, while its project's area allows it. With `acpSessionId`, the agent resumes that session (`session/load`) instead of starting one; this needs the agent's history to be reachable (its state, E6). With `prompt` (the request, ≤ 200 000 characters; 400 with `acpSessionId`), the daemon sends it as the first turn once the agent runs, as one text block after the agent's `instructions` (a blank line between them), like another client's prompt (F.7); the request's first line is the title until the agent gives one. Without `prompt` (and without `acpSessionId` or `input`), the instructions go the same way with the first prompt a client sends: before the text of its first text block (one is added when it has none). `origin`: `ui` (default), `cli`, `editor`, `phone` (`automation`: handlerd's own, I.3). 404 unknown agent. |
 | `POST /v1/sessions/{id}/cancel` | `session/cancel` for its turn in progress (nothing when there is none) → `Session` |
 | `GET /v1/sessions[?agentId=…][&subject=skill:<name>]` | list, most recent activity first (`subject`: the runs on that skill, D.18) |
 | `GET /v1/sessions/{id}` | inspect |
@@ -1822,7 +2391,7 @@ Client → agent:
 - `session/new`, `session/resume`, or a `sessionId` other than the session's own: error
   `-32010 "one session per attachment"`. A second conversation means a second Session.
 - `session/prompt` while `busy`: error `-32011 "turn in progress"`.
-- `session/prompt` to a run of an agent with an interface: error `-32012 "unattended"` (D.18).
+- `session/prompt` to a run of a job: error `-32012 "unattended"` (D.18).
 - Request ids are the client's own: the daemon rewrites them towards the agent and restores
   them on the response, which goes only to the client that sent the request. A response due to
   a client that has detached is dropped (the turn itself goes on).
@@ -1835,7 +2404,7 @@ Daemon → client (ACP extensions, P6 naming):
 
 | Notification | When |
 |---|---|
-| `_handler/session_state {state, busy, turnStartedAt, pendingPermissions, attached}` | right after the `session/load` response, then on every change (F.7); `turnStartedAt`: when the turn in progress started (ISO 8601), `null` when not busy |
+| `_handler/session_state {state, busy, turnStartedAt, pendingPermissions, attached, lastStopReason}` | right after the `session/load` response, then on every change (F.7); `turnStartedAt`: when the turn in progress started (ISO 8601), `null` when not busy; `lastStopReason`: how the last turn ended (`end_turn`, `cancelled`…, `null` before the first), so a client that was away (a phone asleep) shows that it was interrupted |
 | `_handler/turn_ended {stopReason}` | a turn ended that this attachment did not start (another client's, or one started before a reload) |
 | `_handler/permission_resolved {requestId, toolCallId, outcome}` | another client answered a permission request (F.7) |
 
@@ -2001,9 +2570,9 @@ its settings and secret references. An agent **selects** bindings.
 
 **Owner:** platform (one per addon, like harness descriptors). **Consumer:** control plane.
 **Location:** two folders are loaded. The **built-in** addons are platform data
-(`handler_harness/data/addons/`: `miniapp`, shipped read-only with Handler); the **user's** are in
-`~/.config/handler-ai/addons/` (`$HANDLER_ADDONS_DIR`): their own, or installed (G.5, from the catalog Handler
-ships in `handler_harness/data/catalog/`, which is not loaded, a folder or an archive). A user addon
+(`handler_harness/data/addons/`: `app-builder`, shipped read-only with Handler); the **user's** are in
+`~/.config/handler-ai/addons/` (`$HANDLER_ADDONS_DIR`): their own, or installed (G.5, from a source, D.26:
+Handler's offers `shopify` and `playwright`; a folder or an archive). A user addon
 named as a built-in one replaces it, and clients show it (`AddonInfo.overridesBuiltin`).
 
 ```
@@ -2088,8 +2657,9 @@ each agent starts.
 
 Rebuilt like harness images (D.4), target `addon:<name>`: an untagged image `FROM` toolbox `:latest`,
 without cache and without keeping intermediate images (`--no-intermediate`, A.7: the build stage
-would otherwise stay behind after every build) → check → switch. A toolbox rebuild also rebuilds and checks every addon image already built (an addon
-never built is not in use), and switches all the images, or none.
+would otherwise stay behind after every build) → check → switch. A toolbox rebuild also rebuilds and checks every addon image already built, and switches all the
+images, or none. An addon in use (a saved agent has one of its bindings) is built first by handlerd
+when its image is not (D.4).
 
 Check: the new image as agents get it, through the sandbox (A): the toolbox with the image mounted
 at its mount path, confinement `strict`, the host user, no network. It MUST find that `bin/` holds
@@ -2107,8 +2677,9 @@ mounts.
 ### G.5 Installing addons
 
 **Status:** implemented 2026-10-03 (`handler_control/addon_install.py`, `api/addons.py`).
-An addon is installed into the user's folder from a **source**: `catalog:<name>` (the catalog Handler
-ships: `shopify`, `playwright`), an absolute folder path, or an `https://` URL of a `.tar.gz`
+An addon is installed into the user's folder from `source:<source>/<name>` (an addon a source
+offers, D.26: Handler's official source offers `shopify` and `playwright`, as read last), an
+absolute folder path, or an `https://` URL of a `.tar.gz`
 archive (at most 32 MiB and 2000 files, unpacked with no link out of it, no device, no absolute
 path). `addon.toml` is at the top of the source or in its only folder (a forge's archive of an
 addon's repository).
@@ -2128,35 +2699,38 @@ addon's repository).
 3. **Remove** (`DELETE /v1/addons/{name}`, 204): an installed addon only (409 for a built-in or the
    user's own), refused (409) while a binding uses it; its folder, lock entry and unused image go.
 
-`AddonInfo.source` says where an installed addon came from; `updateAvailable`, that it came from the
-catalog and Handler now ships other content (an upgrade): installing it again is the update, after its
-preview. `GET /v1/addon-catalog` lists the catalog (`AddonCatalogEntry`: installed or not).
-Clients: Settings → Addons (Available to install, then a Configure form for it; See the update,
-Reinstall, Uninstall); `handler addon catalog | add NAME|FOLDER|URL [--yes] | rm NAME`. For users:
-`docs/user/addons.md`.
+`AddonInfo.source` says where an installed addon came from; `updateAvailable`, that it came from a
+source which, as read last, holds other content: installing it again is the update, after its
+preview. What the sources offer is `GET /v1/sources` (D.26). Clients: Library → Addons (Install an
+addon: each source's, then a folder or an archive; a Configure form for it; See the update,
+Reinstall, Uninstall); `handler addon add NAME|FOLDER|URL [--from SOURCE] [--yes] | rm NAME` (a
+NAME alone: the official source's). For users: `docs/user/addons.md`.
 
 Conformance (`packages/control-plane/tests/test_addon_install.py`, `tests/control/test_addon_install.py`,
-`tests/cli/test_addon_cli.py`): preview then install from a folder, the catalog and an archive;
+`tests/cli/test_addon_cli.py`, `packages/control-plane/tests/test_sources.py`): preview then
+install from a folder, a source and an archive;
 other content than the preview's is refused; a link out of the folder is refused; the user's own
 addon is neither replaced nor removed; removal refused while a binding uses it.
 
 ---
 
-## H. Mini apps — `handler.miniapp/v1`
+## H. Apps — `handler.app/v1`
 
-Design and rationale: [`miniapps.md`](design/miniapps.md). A **mini app** is a folder an agent writes (a
-manifest, a Deno backend, a built UI); a person registers and deploys it; handlerd runs its backend
-on demand in a sandbox (A) and serves it at its own origin.
+Design and rationale: [`apps.md`](design/apps.md). An **app** is code an agent writes (a
+manifest, a Bun backend, a built UI); a person installs it (Handler keeps its code, H.15), gives
+it what it needs, and deploys it; handlerd runs its backend on demand in a sandbox (A) and serves
+it at its own origin. Its code holds nothing of the person's: it says what it needs in its own
+words (a folder, an agent, a secret), and the person gives each one in Handler (H.2).
 
 ### H.1 Manifest
 
-**Owner:** the app's author (an agent, with the `miniapp` addon). **Consumer:** control plane.
-**Location:** `app.toml` at the root of the app's folder. Hand-written TOML, unknown keys are
+**Owner:** the app's author (an agent, with the `app-builder` addon). **Consumer:** control plane.
+**Location:** `app.toml` at the root of the app's code. Hand-written TOML, unknown keys are
 errors (like accounts).
 
 ```ts
-type MiniAppManifest = {
-  apiVersion: "handler.miniapp/v1";
+type AppManifest = {
+  apiVersion: "handler.app/v1";
   name: string;              // ^[a-z][a-z0-9-]{0,29}$ — a DNS label (H.4)
   version: string;           // semver: 1.2.3, 1.2.3-rc.1
   description?: string;
@@ -2166,24 +2740,90 @@ type MiniAppManifest = {
   needs?: {
     egress?: string[];       // allow-list entries (A.3) the backend may reach; default none
     secrets?: string[];      // env vars whose values the person enters in handler (H.2)
-    files?: { path: string; mode?: "ro" | "rw" }[];  // host files or folders (H.9), ≤ 10
+    files?: Record<NeedName, {         // folders (or files) of the person's (H.9), ≤ 10
+      description?: string;            // for the person: "Where your tasks are kept"
+      mode?: "ro" | "rw";              // default "ro"
+      init?: string[];                 // files of the app's folder copied into the one given
+    }>;
     notify?: boolean;        // it may send notifications (H.9)
+    agents?: Record<NeedName, {        // jobs it runs (H.11), ≤ 10
+      description?: string;            // for the person: "Tells you what to do next"
+      from: string;                    // the folder of its definition (D.18's format), in the app's
+      worksIn?: NeedName;              // a files need: the agent works in the folder given for it
+    }>;
   };
   routes?: Record<string, "sync" | "queued">;  // "POST /api/checkin": H.10 (POST PUT PATCH DELETE)
+  automations?: {                    // ≤ 5, suggested (I.1): made from the app's page, off
+    description: string;             // "What to do next, every 5 hours"
+    when: Schedule;                  // I.1
+    run: { agent: NeedName; input?: { fields?: object } };  // the agent given for that need
+  }[];
+  actions?: Record<NeedName, {       // ≤ 10: what the person asks it in a sentence (H.12)
+    description: string;             // 1–200: "Add something to my calendar"
+    examples?: string[];             // ≤ 5: "Tomorrow I call the bank at 10"
+    route?: string;                  // "POST /api/…": done by its code, or
+    agent?: NeedName;                // done by the agent given for that need (a run)
+    fields?: object;                 // a route's form (D.18's JSON Schema); an agent's is its own
+  }>;
   resources?: { memory?: string; cpus?: string };  // default memory 512m
 };
 ```
+
+`App.suggests` lists the source version's suggested automations. One is made as any automation is
+(`POST /v1/automations` with `agentId` the agent given for its need, `app` the app, off): turning
+it on is the owner's approval (I.7), as for any other; the app's page does it (*Make
+it*) and shows the one made (an automation whose `app` is the app, bound to that agent).
+
+`NeedName` is `^[a-z][a-z0-9-]{0,29}$`: the app's own word for a need (its code uses it), one need
+each (a files need and an agents need do not share one).
 
 Rules: paths are relative and normalized; the server and UI directories do not overlap.
 
 ### H.2 Needs
 
-What an app may reach beyond its data. A deploy that adds to them is flagged
-(`App.source.addedNeeds`: `egress host:port`, `secret NAME`) and clients ask the person first.
+**An app's parts** (H.14, 2026-10-20; until then, H.2 put an app in the project of its data
+folder): an app is in no project. A project lists the apps given its folder (`Project.apps`).
 
-- `egress`: the backend's allow-list, enforced by the sandbox's proxy and Deno's `--allow-net`.
-- `secrets`: names matching `^[A-Z][A-Z0-9_]{0,63}$`, not `HANDLER_*`, `DENO_*`, `PATH`, `HOME`, the
-  proxy variables, `NO_COLOR`, `TINI_SUBREAPER`. Values are set through the Control API only
+What an app may reach beyond its data. A deploy that adds to them is flagged
+(`App.source.addedNeeds`: `egress host:port`, `secret NAME`, `file NEED (MODE)`,
+`notifications`, `agent NEED`) and clients ask the person first; the app's page in the web UI says in
+sentences what the installed version may reach, with what was given.
+
+**Given by the person** (a binding: what was given for what the app needs, kept in
+`<state>/apps.json` by need, never in the app's folder): a secret's value, a folder for each files
+need, an agent for each agents need. Listed with what was given: `App.secrets`, the source's and
+the installed version's; `App.files` and `App.agents`, those of the version a deploy would install
+(the source's; the installed one's when the source cannot be read: a need the next deploy drops is
+not asked for); a deploy
+fails (422) while one of the source's is not given (`folder NEED not given`, `agent NEED not given`)
+or no longer fits, and so does a start (H.5) for the installed version's. A given one stays when a
+new version drops its need, until the app is removed.
+
+- **A folder** (`PUT /v1/apps/{name}/files/{need} {path, create?}`): checked as H.9 says (inside the
+  home, not handler's own folders nor keys), made when `create` (else 409 when it does not exist).
+  The need's `init` files (of the source folder) are copied into it when it has none of their names
+  (never over one). A running backend stops: it starts again with that folder. Two needs are not
+  given the same folder (the deploy refuses it).
+- **An agent** (`PUT /v1/apps/{name}/agents/{need} {agentId}`): one of the person's agents (of a
+  project or not) that **fits** the need's definition, else 409 with why. It fits when it is a job
+  whose form takes each field the definition's form has (the same `type`) and requires none that
+  form leaves out of `required`, whose result requires each field the definition's result requires
+  (the same `type`): properties, types and `required` only. With `worksIn`, and a folder given for
+  it, the agent works in that folder. `AppAgentNeed.fits` lists the person's agents that fit;
+  `problem` says why the one given no longer does (deleted, its form changed, another folder).
+- **Its definition**: the folder `from` names, in the definitions' format (D.18: `agent.toml`
+  with `[agent]` only, `instructions.md`, `interface.json`, `skills/`), a job's (a result), its
+  instructions' placeholders its form's fields; a deploy fails (422) when it cannot be read, and it
+  is installed with the version (the fit is checked against the installed version's at each run).
+  A symbolic link leading outside the app's folder, in a definition or among `init` files, is
+  refused (409, or the need's `problem`): the folder is an agent's, handler never reads through it
+  what that agent could not. `AppAgentNeed.definition` is the source's; an agent is set up from it as an agents file's is
+  (`POST /v1/agents` with `origin: AppAgentNeed.origin` and `app` the app's name: its skills go to
+  the library; 400 `unknown app need` when the app does not need it), then given.
+
+- `egress`: the backend's allow-list, enforced by the sandbox's proxy.
+- `secrets`: names matching `^[A-Z][A-Z0-9_]{0,63}$`, not `HANDLER_*`, `BUN_*`, `PATH`, `HOME`, the
+  proxy variables, `NO_COLOR`. Values are set through the Control API only
   (never in the app's folder, so never seen by the agent writing it), stored in the secret store
   as `apps/<app>/<NAME>` (D.14; removed with the app), given to the backend as env vars — not to
   its tests. A
@@ -2193,8 +2833,8 @@ What an app may reach beyond its data. A deploy that adds to them is flagged
 
 ### H.3 Runtime (sandbox)
 
-The backend runs in `RUNTIME_IMAGE` (a pinned `docker.io/denoland/deno:distroless-<version>`),
-confinement strict, built by `compose.app_sandbox_spec`:
+The backend runs in `RUNTIME_IMAGE` (a pinned `docker.io/oven/bun:<version>-distroless`, the version
+of Bun in the default toolbox), confinement strict, built by `compose.app_sandbox_spec`:
 
 | | |
 |---|---|
@@ -2202,12 +2842,12 @@ confinement strict, built by `compose.app_sandbox_spec`:
 | data | `<data>/apps/<name>/data`, read-write at the same path (kind `scope`, the workdir) |
 | socket folder | read-write at `/run/handler-app` (kind `app`) |
 | network | none; with `needs.egress`, allow-list of exactly those entries, enforced |
-| Deno | `run --cached-only --frozen --no-prompt`, read the code, the data and the socket folder, write the data and the socket folder, net: the socket and the egress hosts (all hosts, filtered by the proxy, when an entry is a wildcard), env |
-| env | `HANDLER_APP_NAME`, `HANDLER_APP_VERSION`, `HANDLER_APP_DATA`, `HANDLER_APP_SOCKET` (`/run/handler-app/app.sock`), and the secrets (H.2) |
+| Bun | `run --no-install --no-env-file <entry>`: no package is installed (an import missing from the code fails), no `.env` file of the data folder is read; the sandbox alone limits what it reaches |
+| env | `HANDLER_APP_NAME`, `HANDLER_APP_VERSION`, `HANDLER_APP_DATA`, `HANDLER_APP_SOCKET` (`/run/handler-app/app.sock`), `HANDLER_APP_API` (with `needs.notify` or `needs.agents`: H.9, H.11), `HANDLER_APP_FILES` (the folders given, by need, H.9), and the secrets (H.2) |
 
 The backend MUST serve HTTP on `HANDLER_APP_SOCKET`, keep what it stores in `HANDLER_APP_DATA`, and answer
-`GET /api/health` with 200 once ready. Tests (H.6) run `deno test` on the server directory with
-the same permissions and an empty data folder.
+`GET /api/health` with 200 once ready. Tests (H.6) run `bun test --no-install --no-env-file
+--pass-with-no-tests` on the server directory, in the same sandbox with an empty data folder.
 
 ### H.4 Serving
 
@@ -2217,7 +2857,7 @@ Other hosts reach Handler's own routes; `/v1` is not reachable on an app's origi
 | Path | |
 |---|---|
 | `/_handler/login?code=…` | redeems a one-time link (`POST /v1/apps/{name}/open`, valid 2 min, this app only): sets the cookie `handler_app` (HttpOnly, SameSite=Strict, HMAC of the daemon's token and the app's name), then loads `/` |
-| `/api`, `/api/…` | the backend (started if needed), through its socket, streamed; the request gets `X-HANDLER-Person: owner` (any value sent by the client is dropped) and loses the `handler_app` cookie |
+| `/api`, `/api/…` | the backend (started if needed), through its socket, streamed; the request gets `X-HANDLER-Person: owner` and `X-HANDLER-Start` (H.11; any value of either sent by the client is dropped) and loses the `handler_app` cookie |
 | anything else | `GET`/`HEAD` only: the current version's UI files; a path without an extension that matches no file gets `index.html` |
 
 Rules: everything except the login needs the cookie (401). On `/api`: a request whose
@@ -2238,14 +2878,18 @@ rollback and start are serialized per app.
 
 | Method & path | Effect |
 |---|---|
-| `GET /v1/apps` | `App[]`: `name`, `description`, `sourceDir`, `url`, `state`, `error`, `current` and `previous` (`AppDeployment`: `version`, `deployedAt`, `needs`), `source` (`AppSource`: `version`, `description`, `error`, `addedNeeds`), `secrets` (`AppSecret`: `name`, `set` — what the installed and the source version declare), `lastUsedAt` |
+| `GET /v1/apps` | `App[]`: `name`, `description`, `url`, `state`, `error`, `current` and `previous` (`AppDeployment`: `version`, `deployedAt`, `needs`), `source` (`AppSource`: `version`, `description`, `error`, `addedNeeds`, `needs`: what the source version may reach, said before its first deploy), what the installed and the source version need with what was given (H.2): `secrets` (`AppSecret`: `name`, `set`), `files` (`AppFileNeed`: `name`, `description`, `mode`, `path`), `agents` (`AppAgentNeed`: `name`, `description`, `worksIn`, `definition`, `origin`, `agentId`, `problem`, `fits`), `lastUsedAt`, `fromSource` (the source its code came from, D.26; none: a file or a draft) |
 | `PUT /v1/apps/{name}/secrets/{secret}` `{value}` · `DELETE …` | set or forget a declared secret's value (one line) → `App`; 409 if the app declares no such secret |
-| `POST /v1/apps` `{sourceDir}` | register the app whose `app.toml` is there → 201 `App`; 409 invalid or name taken |
-| `GET /v1/apps/{name}` · `DELETE /v1/apps/{name}` | inspect; unregister (204): versions and backups deleted, the data folder kept |
-| `POST /v1/apps/{name}/deploy` | install what the folder holds now → `App`; 422 `deploy failed` with the reason (details in the log). Steps: snapshot (`app.toml`, the server directory, the UI directory; symlinks must stay inside; 256 MiB max) → tests → stop the backend → back the data up → start the new version on a copy of the data until `/api/health` answers → switch. A failure changes nothing |
+| `PUT /v1/apps/{name}/files/{need}` `{path, create?}` | give a files need its folder (H.2) → `App`; 409 if the app has no such need, or the folder is refused |
+| `PUT /v1/apps/{name}/agents/{need}` `{agentId}` | give an agents need one of the person's agents that fits (H.2) → `App`; 409 if the app has no such need, or the agent does not fit (why) |
+| `POST /v1/apps` an app file (`application/zip`, H.15) | its code kept by Handler: a new app → 201 `App` (not installed yet), or the next version of the app of that name → 200 `App` (its page offers to deploy it; an app from a source given so is the person's from then on: `fromSource` goes); 409 not an app file, an invalid manifest, a path leaving the folder, a link, too large |
+| `GET /v1/apps/{name}/export` | its code as one file (H.15): `application/zip`, `Content-Disposition: attachment; filename="<name>-<version>.zip"`; 409 a link in its code leading outside it |
+| `POST /v1/apps/{name}/actions/{action}` · `GET …/runs/{runId}` | one of its actions, done or read again (H.12) |
+| `POST /v1/sources/{id}/apps/{name}` | an app a source offers (D.26), its code taken as an app file's (H.15): a new app → 201 `App` (`fromSource`), or the next version of the app of that name → 200 `App`; 404 no such source or app, 409 not offered (its reason), its manifest naming another app |
+| `GET /v1/apps/{name}` · `DELETE /v1/apps/{name}` | inspect; **uninstall** (204): its code, versions, backups and its own data (`<data>/apps/<name>/`) deleted, and its parts (H.14); the folders given to it stay. Nothing of it is found by an app installed later under its name |
+| `POST /v1/apps/{name}/deploy` | install its code (H.15) → `App`; 422 `deploy failed` with the reason (details in the log). Steps: snapshot (`app.toml`, the server directory, the UI directory; symlinks must stay inside; 256 MiB max) → tests → stop the backend → back the data up → start the new version on a copy of the data until `/api/health` answers → switch. A failure changes nothing |
 | `POST /v1/apps/{name}/rollback` | back to the previous version and the data backup taken before the current one was deployed → `App`; 409 if there is none |
 | `POST /v1/apps/{name}/stop` | stop the backend now → `App` |
-| `PUT /v1/apps/{name}/shortcut` `{shortcut}` | set (GNOME accelerator: modifiers then one key, e.g. `<Super>n`) or remove (`null`) the keyboard shortcut that opens the app (H.7) → `App` (`shortcut`); 409 if another app has it or GNOME cannot be reached |
 | `POST /v1/apps/{name}/open` | `AppLink {url}`: a one-time link (H.4); 409 if not deployed |
 | `GET /v1/apps/{name}/log` | `AppLog {text}`: the end of the app's log (deploys, backend output) |
 
@@ -2253,7 +2897,7 @@ Only clients holding the token deploy: agents never get it (§2, invariant 5), s
 
 ### H.8 From paired devices
 
-Design: `miniapps.md` §5.2. An app is used remotely by the persons it is shared with
+Design: `apps.md` §5.2. An app is used remotely by the persons it is shared with
 (`PUT /v1/apps/{name}/persons {persons}` → `App.persons`; none by default), through the remote
 connector (D.7), which polls while a session **or an app** is shared.
 
@@ -2269,15 +2913,19 @@ connector (D.7), which polls while a session **or an app** is shared.
     request 128 KiB, answer 4 MiB at most): only `/api` and `/api/…`; request headers kept:
     accept, accept-language, content-type, if-match, if-none-match, idempotency-key; answer
     headers kept: cache-control, content-type, etag, last-modified, location, retry-after. The
-    backend gets `X-HANDLER-Person: <device's person>`.
+    backend gets `X-HANDLER-Person: <device's person>`, and `X-HANDLER-Start` (H.11) when that
+    person is the owner.
   - Errors: -32020 not shared with this person (or not deployed), -32602 invalid, -32601 unknown
     method.
 - On the device, the page runs in `/appframe.html` served by the gateway with `default-src
   'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src
   data:; media-src data: blob:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none';
-  form-action 'none'`, in an iframe `sandbox="allow-scripts allow-forms allow-modals"` (an opaque
-  origin: no storage, nothing of the client's). Its only way out is `postMessage` to the client,
-  which carries `window.__handlerFetch(path, init)` calls for `/api/…` of that app only.
+  form-action 'none'; sandbox allow-scripts allow-forms allow-modals`, in an iframe
+  `sandbox="allow-scripts allow-forms allow-modals"` (an opaque origin, also when the page is
+  opened alone: no storage, nothing of the client's). The client's own policy has `frame-src
+  'self'`: the frame cannot be navigated out of the gateway. Its only way out is `postMessage`
+  to the client, which carries `window.__handlerFetch(path, init)` calls for `/api/…` of that
+  app only.
 
 ### H.9 At a time, notifications, host files
 
@@ -2286,17 +2934,21 @@ connector (D.7), which polls while a session **or an app** is shared.
   call }`, I.3): `when = { at = "08:30", days = […] }` or `{ every = "30m" }`, as the owner,
   header `X-HANDLER-Automation: <name>`.
 - **Notifications** (`needs.notify`): handlerd serves HTTP on `<socket folder>/handler.sock` (in the
-  sandbox `/run/handler-app/handler.sock`, env `HANDLER_APP_API`), one per running backend, so the caller is
-  known without a token: `POST /notify {title (≤ 120), body? (≤ 1000), person?}` → 200 `{id}` ·
+  sandbox `/run/handler-app/handler.sock`, env `HANDLER_APP_API`; with `needs.notify` or
+  `needs.agents`, H.11), one per running backend, so the caller is known without a token; a call
+  the app's needs do not give is 403, an unknown one 404: `POST /notify {title (≤ 120), body? (≤ 1000), person?}` → 200 `{id}` ·
   400 · 403 (a person the app is not shared with) · 429 (more than 30 an hour). A notification
-  goes to the person's inbox (I.9: `source: "app"`, its body as `summary`; `GET /v1/inbox`), to
+  goes to the person's inbox (I.9: `source: "app"`, its body as `summary`, `app` the app;
+  `GET /v1/inbox`), to
   the desktop when it is for `owner` (`notify-send`, else the freedesktop service over `gdbus`),
   and to the person's devices by Web Push (H.10). A deploy's trial run notifies nobody.
-- **Host files** (`needs.files`): resolved (symlinks) at deploy and start; must exist, lie inside
-  the home (not the home itself), and never inside or around `~/.ssh`, `~/.gnupg`,
-  `~/.password-store`, `~/.local/share/keyrings`, `~/.pki`, `~/.aws` or handlerd's config, state and
-  data folders. Mounted at the same path (`rw` only when asked), readable (and writable) by Deno;
-  env `HANDLER_APP_FILES` = JSON list of the paths. Not given to tests.
+- **Host files** (`needs.files`): the folder (or file) given for each need (H.2), resolved
+  (symlinks) when given and again at deploy and start; must exist, lie inside the home (not the
+  home itself), and never inside or around `~/.ssh`, `~/.gnupg`, `~/.password-store`,
+  `~/.local/share/keyrings`, `~/.pki`, `~/.aws` or handlerd's config, state and data folders.
+  Mounted at the same path (`rw` only when asked), readable (and writable) by the backend; env
+  `HANDLER_APP_FILES` = a JSON object, need → path (`{"tasks": "/home/me/planner"}`). Not given to
+  tests.
 
 ### H.10 Queued calls and push (from devices)
 
@@ -2317,13 +2969,210 @@ connector (D.7), which polls while a session **or an app** is shared.
   404 or 410 forgets the subscription. The client's service worker shows "Something new" and the
   text is read through the channel.
 
+### H.11 Runs of agents
+
+An app runs one of the person's **jobs** (D.18) where a screen needs judgment, while it answers
+the owner: so the owner started the run, as with the Run button, and an app cannot become a
+scheduler of agents (an agent on a schedule is an automation's `run = { agent }`, I.1).
+
+- **Which:** the agent the person gave each of `needs.agents` (H.2), by its id: renaming it
+  changes nothing. It must fit the installed version's definition at deploy (422 `deploy failed`:
+  `agent NEED not given`, `agent NEED: it is not a job`, `… its form has no field request`) and at
+  each run (409). Added ones are flagged (H.2): *it may start runs of those agents whenever you use
+  it, and read their results*.
+- **Who:** each `/api` request of the **owner's** (H.4 on the computer, H.8 from the owner's
+  devices, H.10 a queued one when it runs) gets `X-HANDLER-Start`: a random token, valid for that
+  app until the request is answered. An automation's call (I.3) and a request of another person
+  get none.
+- **On handler.sock:**
+
+| Call | Effect |
+|---|---|
+| `POST /runs {agent, fields?, start}` | `agent`: the need (`needs.agents.<agent>`) → 202 `AppRun`; 400 a body or an input its form refuses (the reason, as `POST /v1/sessions`, D.18), 403 no valid `start` or a need the installed version does not have, 409 no agent given, or the one given no longer fits or its model cannot run here (D.19), 429 more than 30 runs an hour |
+| `GET /runs/{id}` | → 200 `AppRun`; 404 not one of the app's |
+| `POST /runs/{id}/cancel` | stops it (`…/stop` of its session) → 200 `AppRun` (`cancelled`); 409 it has ended |
+
+```ts
+type AppRun = {
+  id: string;                    // "r_" + 16 hex
+  agent: string;                 // the need
+  sessionId: string;             // its session (F): origin "app", `app` this app
+  state: "waiting" | "running" | "succeeded" | "failed" | "cancelled";
+  at: string;                    // when it was started
+  result?: unknown;              // succeeded: the job's whole result
+  error?: string;                // failed: why (its result invalid, it timed out, it waited too long)
+};
+```
+
+- **The run** is a session of the job (D.18) started by handlerd: its input, its model (a
+  subscription is used as for the Run button: the owner started it), its own sandbox and settings,
+  unattended, `origin: "app"`, `app` the app's name; it waits for its agent's other run as any run
+  does (D.18). Its state and result are its session's.
+- **The inbox** is told when it ends (not when cancelled), as the owner's: `source: "app"`,
+  `name` and `app` the app, `agent` and `title` the given agent's name, `status` and `summary` from the
+  result (a failure: `failed` and the error), `data` the whole result, `sessionId`.
+- **Kept:** `<state>/apps/<name>/runs.json`, the app's last 50 runs (their need and agent, session,
+  whether the inbox was told); removed with the app (its sessions stay with their agent). A run whose end
+  the inbox was not told when handlerd stopped is told when it starts again.
+- A deploy's trial run starts nothing (403).
+
+Conformance: `tests/apps/test_apps_coach.py` (a run from the owner's request, its result in the
+inbox; none from an automation's call); unit tests `packages/control-plane/tests/test_app_runs.py`.
+
+### H.14 An app's parts
+
+**Status:** implemented 2026-10-20, its home stored 2026-10-21 (`agents.py` `AgentRecord.app`,
+`save_rules.py` `check_home`, `agent_service.py`, `api/sessions.py`, `api/apps.py`
+`remove_parts`; web UI: the
+app's page *Under the hood*, the agent's page under its app).
+
+An app is what works for you, a project what you work on (`docs/dev/design/apps.md` §11a).
+The agent set up for an app (H.2: its home `app`, its origin the app's need) is **one of that
+app's parts**:
+
+- It is **no project's**: an agent set up from an app's need has that app as its home, never a
+  project nor none (400 `an app's agent`), and a project made on its folder does not take it.
+- It is **started by its app only**: `POST /v1/sessions` refuses it (409 `started by its app
+  only`); its app's runs (H.11, an action H.12), an automation running it, its checks and
+  improvements start it.
+- It is **removed with its app**: `DELETE /v1/apps/{name}` deletes the agents whose home it is,
+  and the automations that run them or call the app's routes; alone, 409 `an app's agent`. The
+  folders given stay.
+- It **serves its app only**: it does not fit another app's need.
+- An agent of yours given for a need (*one of yours that fits*) stays yours, where it is.
+
+A project lists the apps given its folder, or a folder inside it, for one of their files needs
+(`Project.apps`, derived); the app's page says whose folder it is. The web UI lists an app's parts
+on its page only (*Under the hood*: its code, the version before it, its agents, the automations that run them, its log); an
+agent's page (`#/agents/<id>`) shows one under its app, without a start.
+
+### H.12 Actions
+
+**Status:** implemented 2026-10-20 as *asks*, named actions 2026-10-22 (`apps.py` `act`,
+`action_run`, `actions_view`, `check_actions`; web UI: the app's page, *What you can ask it* with
+*Try*, `ActionTry.svelte`; the install page lists them).
+
+An app's **actions** are what the person can ask it in a sentence (`actions` in the manifest,
+H.1): what the app's page lists and tries, what Ask (D.24) picks among. Each is done by the
+app's **code** or by one of its **agents**:
+
+- **By its code** (`route`): handlerd calls `POST /api/…` of the installed version as the owner
+  (`X-HANDLER-Person: owner`, a start token so it may start runs meanwhile, H.11,
+  `X-HANDLER-Action: <name>`), the fields as the JSON body, checked against `fields` first. It
+  answers at once (30 s at most) an `ActionResult`: `{status: "ok" | "attention" | "failed",
+  summary: 1–500 characters, readable aloud, data?}`. Anything else, or an error status, makes
+  the action `failed` with the reason (the answer's `error` when it gives one). A rule the app
+  must hold (no two appointments at once) is held there, in its code.
+- **By one of its agents** (`agent`): a run of the agent given for that need (H.11, its form
+  filled with the fields, checked against the agent's form), the owner's. Its job must give a
+  result with `status` and `summary` (I.3's rule, checked at deploy). `POST
+  …/actions/{action}` answers with its result when the run ends within 20 s, else `running`
+  with its `runId`, read again with `GET …/actions/{action}/runs/{runId}`; its end reaches the
+  inbox as any app's run (H.11).
+
+| Method & path | Effect |
+|---|---|
+| `POST /v1/apps/{name}/actions/{action}` `{fields}` | do it on the installed version → `ActionRun`; 400 fields not fitting its form, 404 no such action, 409 not installed or its agent not given |
+| `GET /v1/apps/{name}/actions/{action}/runs/{runId}` | an agent's action, as its run is now → `ActionRun` |
+
+```ts
+type AppAction = { name; description; examples?; by: "code" | "agent"; fields? };   // App.actions
+type ActionRun = {
+  app; action; state: "running" | "succeeded" | "failed";
+  result?: ActionResult; error?;
+  runId?; sessionId?;        // an agent's action: its run (H.11) and its session
+};
+```
+
+`App.actions` are the installed version's (before a first deploy, the source's), each with its
+form: the route's `fields`, or its agent's definition's. An action widens nothing an app may
+reach: its agent and its routes are already in its needs.
+
+### H.13 Apps from a source
+
+**Status:** implemented 2026-10-22 (`apps.py` `add_from_source`, `api/sources.py`; web UI: the
+Apps page's *Get more*); until then, Handler shipped its apps in its package (Planner), replaced
+when a newer Handler shipped another version.
+
+The apps Handler offers (Planner) are in its official source (D.26), with those of any source the
+person added. Installing one takes its code as an app file's is (H.15: a new app, its install page
+next; or the next version of the app of that name, its page offering to deploy it), and the app
+keeps which source it came from (`App.fromSource`, stored in the registry). A later commit of that
+source with another version is offered on the Apps page (`SourceItem.update`): taking it is the
+next version, deployed by the person as any other. An app file installed over it, or a draft of
+it used (H.15), makes it the person's: `fromSource` goes.
+
+### H.15 An app's code, kept by Handler
+
+**Status:** implemented 2026-10-20 (`apps.py` `add_file`, `add_draft`, `unpack`, `export`,
+`source`; `api/sessions.py` `app_draft`; web UI: the Apps page's *Install from a
+file*, *Make your own* and *Being written*, the app's page *Export*, *Change it* and its draft's
+bar, the session's *Use it*, `lib/drafts.ts`; CLI `handler app add`, `handler app export`).
+
+Handler keeps each app's code, `<data>/apps/<name>/source/`: what a deploy installs, what an
+export holds. The person never keeps or versions it: each version deployed is kept (H.6, three),
+and a rollback goes back one, with the app's data as it was then.
+
+- **An app file** is a zip of its code: `app.toml` at its root, or in the one folder it holds. No
+  path leaving it, no link, at most 20 000 files and 256 MiB once unpacked. `POST /v1/apps`
+  installs one (a new app, or the next version of one you have, by its manifest's `name`); the
+  CLI's `handler app add` sends a `.zip` as it is, or zips a folder (without `.git` and
+  `node_modules`).
+- **An export** (`GET /v1/apps/{name}/export`) is its code as one file, nothing else: never its
+  data, what was given for its needs (folders, agents, secrets' values), its runs.
+- **A draft** is a session of a folderless agent (the App creator, D.18) whose folder, kept by
+  Handler, is a copy of an app's code (`POST /v1/sessions {agentId, appDraft: {app}}`; 404 no
+  such app, 409 `a draft of <app> is waiting`: one at a time) or empty, for a new app
+  (`appDraft: {}`); 400 for an agent with a folder, or with `fromSkill`. The app as installed is
+  untouched meanwhile. `POST /v1/apps/from-draft/{sessionId}` uses it: its folder (without `.git`
+  and `node_modules`; a link leading outside it refused) becomes the app's next version (200;
+  409 when its manifest names another app) or a new app (201; 409 when that name is taken), as
+  an app file does, and the session goes (deleted, as F.3: its conversation ends with its draft;
+  a later change is another draft). 409 `not a draft` for a session with no `appDraft`. Throwing a draft away is deleting its session (F.3). The web UI deploys the next
+  version at once when it may reach nothing more than the one installed, else its page asks
+  first.
+
+### H.16 A draft opened
+
+**Status:** implemented 2026-10-21 (`apps.py` `open_draft`, `close_draft`; `app_http.py`
+`handle_draft`; `api/apps.py`; web UI: *Open the draft* on the app's draft bar and the draft
+session's page, `lib/drafts.ts` `openDraft`).
+
+A draft (H.15) can be tried as the app it would make before it is used: its code started at its
+own address, `http://<app>--draft.localhost:<port>/`, as a deploy's trial is (H.6), on copies.
+
+| Method & path | Effect |
+|---|---|
+| `POST /v1/apps/from-draft/{sessionId}/open` | → `DraftPreview {app, url, copies}`: started (again: stopped, then started on new copies); `url` a one-time link (H.4). 409 `not a draft`, `cannot open this draft` (its manifest unreadable or naming another app, a new app's name taken, a secret not set, the backend not answering its health check) |
+| `DELETE /v1/apps/from-draft/{sessionId}/open` | stopped, its copies removed → 204 (none open: 204) |
+
+```ts
+type DraftPreview = { app: string; url: string;
+  copies: { what: string;               // "its data", "folder calendar"
+            path?: string;              // a folder given to the app: where it is
+            how: "copy" | "read-only" | "empty"; size?: number }[] };
+```
+
+- **On copies**, taken when it is opened, in `<data>/apps/<app>--draft/`: its code (as a deploy
+  snapshots it, without running its tests), its data (a new app: none), and each folder given to
+  the app (H.2): copied when at most 64 MiB, else the folder itself, read-only; a need not given
+  (a new app's): an empty folder. The app, its data and your folders are never changed by it.
+  Its secrets are the app's (a new app has none); its calls to Handler go nowhere and it starts
+  no run (as a deploy's trial, H.11).
+- Served as an app is (H.4: its own cookie, the one-time link, the CSP), each HTML page with a
+  banner first: *Draft of <app>, not the one you use*. An app's name may not end in `--draft`.
+- **Closed** when the draft is used (`POST /v1/apps/from-draft/{sessionId}`) or thrown away (its
+  session deleted), when idle as long as an app's backend (`app_idle_timeout`), and at handlerd's
+  stop; its folder removed (a leftover too, at start). A closed draft's address says so (404).
+- Local only: a paired device does not reach it.
+
+Conformance: `tests/apps/test_apps_draft_open.py`, `tests/e2e/test_apps_ui.py`
+(`a_draft_is_opened_from_the_app_s_page`).
+
 ### H.7 Desktop
 
-- **Shortcuts** are the person's choice, not the app's (an agent does not bind keys on your
-  desktop): stored in the registry, written by handlerd with `gsettings` as a GNOME custom keybinding
-  at `…/media-keys/custom-keybindings/handler-<name>/` (name `handler: <name>`, command
-  `<handler> app open <name>`), added to the list without touching the person's own; removed with
-  the app.
+- An app has **no keyboard shortcut**: it opens from its card, its page, the menu or `handler
+  app open`.
 - **`handler app open`** mints a link (H.4) and opens it in an app window: Firefox with its own
   profile `<data>/firefox-apps` (toolbars hidden by a `userChrome.css`, window class `handler-apps`),
   else Chromium's `--app` mode (profile `<data>/chromium-apps`), else the default browser;
@@ -2337,11 +3186,11 @@ run, models as the `llm` service); schedules, agent runs, app calls and the
 inbox 2026-10-09 (the receipt approval dropped then: turning one on is the approval, I.7). User
 guide: `docs/user/automations.md`. An **automation** is the link *when this happens, run that*:
 *when a session stops* or *at a time*, *run this*: the user's script, an agent with an interface,
-or a mini app's route. It is not a pipeline: when the work has several parts, the script
+or an app's route. It is not a pipeline: when the work has several parts, the script
 orchestrates them and passes the data between them. Examples: when a session of a project stops,
 a script asks a model which tools, permissions or hosts the agent lacked and appends the findings
 to `handler/env-issues.md`; every hour, an agent reviews a project's code and its result comes to the
-person's inbox; every weekday at 08:30, a mini app's route reads the agenda and notifies.
+person's inbox; every weekday at 08:30, an app's route reads the agenda and notifies.
 
 ### I.1 Definition
 
@@ -2361,13 +3210,14 @@ type Automation = {                     // automation.toml
   only?: { project?: string[];          // with "session.stopped": names; a stopped session
            agent?: string[] };          // matches when its project (or agent) is listed; absent: any
   run: string                           // a script: a command line (`sh -c`), in its folder
-     | { agent: string; project?: string;   // an agent with an interface, by its name in that
-         input?: { fields?: object;          // project (absent: an agent of no project), started
-                   subject?: { skill: string } } }   // with that input (D.18)
-     | { app: string; call: string };   // a mini app's route, "POST /api/…" (H)
+     | { agent: string; project?: string;   // a job (D.18), by its name in that
+         input?: { fields?: object } }      // project (absent: an agent of no project), started
+                                        // with that input (D.18; a skill field: a skill's name)
+     | { app: string; call: string };   // an app's route, "POST /api/…" (H)
   timeoutSec?: number;                  // a script's: default 600, ≤ 3600
   services?: { llm?: string[] };        // a script's: "provider/model", the models it may call (I.5)
   append?: Append[];                    // a script's: [[append]], done by handlerd once it succeeded (I.6)
+  app?: string;                         // an agent run's: the app its inbox messages open (I.3)
 };
 type Schedule = {                       // one of `every` and `at`, local time
   every?: string;                       // "30m", "2h": at least 5m
@@ -2401,27 +3251,48 @@ when = { every = "1h" }
 run = { agent = "reviewer", project = "my-app", input = { fields = { focus = "security" } } }
 ```
 
+```toml
+apiVersion = "handler.automation/v1"
+description = "What to do next, every 5 hours"
+when = { every = "5h" }
+app = "planner"                         # its results open the Planner app (a calendar's screens)
+run = { agent = "Planner", project = "planner" }
+```
+
 - **Problems** (`AutomationView.problems`), checked on every read: the file does not parse or
   validate (`only` without `session.stopped`; `timeoutSec`, `services` or `append` without a
-  script); a `services.llm` model that is not a provider's model, or whose provider has no
+  script; `app` without an agent run); a `services.llm` model that is not a provider's model, or whose provider has no
   endpoint for a protocol the `llm` service speaks (`openai-chat`, `anthropic`); an `append.from`
   that is absolute or has a `..` component; an `append.to` that is not usable (outside the root
   with symlinks resolved, a hidden or `_` component, not `.md`, its folder missing: K2, K5); a
-  name of `only` that is no project or agent (a problem, not an error: renamed things show up);
-  an agent run's project or agent that does not exist (or two agents of that name), an agent
-  with no interface, a result schema without a required `status` (an enum of some of `ok`,
+  name of `only` that is no project or agent, or that was bound to ones since deleted (below);
+  an agent run's project or agent that does not exist (or two agents of that name), or the agent
+  it was bound to deleted (`run.agent: the agent it ran (X) was deleted: choose another`), an agent
+  that is no job (no interface, or a brief), a result schema without a required `status` (an enum of some of `ok`,
   `attention`, `failed`) and a required `summary` (a string: I.3), an input its interface
   refuses, a model it cannot run with (D.19), or an account whose login refuses unattended use
-  (I.7); an app call's app that is not registered. An automation with problems never runs.
+  (I.7); an app call's app, or `app`, that is not registered. An automation with problems never
+  runs.
+- **What its names are bound to.** The file names agents and projects by name, as a person writes
+  them; handlerd keeps, in the automation's state (`<state>/automations/<name>/state.json`), what
+  those names were bound to by id, with the names they were read from: the agent run's agent
+  (`agent`: `{id, name, project}`), `only`'s agents (`onlyAgents`: a name → every agent so named
+  then) and projects (`onlyProjects`). A name is read when nothing is bound to it yet (a new file,
+  or one edited by hand to name another agent: the names differ from those it was read from), and
+  from then on the binding is used: an agent or a project renamed is still the one it runs or
+  watches, and one deleted is a problem. `AutomationView.agentId`, `onlyAgents`, `onlyProjects`
+  are those ids. The file keeps the names it was written with.
 - A script's models are providers' only (`services.llm`: an API key or a local server). An agent
-  run uses its agent's first model; on an account, its login's verdict applies (I.7).
+  run uses its agent's model; on an account, its login's verdict applies (I.7).
 - Handler ships example automations (`handler_control/data/automations/<name>/`); `env-issues` is the
   first (`GET /v1/automation-examples`). `POST /v1/automations {name, from}` copies one into the
-  config folder, off. `POST /v1/automations {name, definition, enable?}` writes `definition` as
-  the `automation.toml` of a new folder (a header comment, then its keys), off, then turns it on
-  when `enable` (I.7): the web UI's form, for an agent's run or an app's route; a script starts
-  from an example. `POST /v1/automations/check {definition}` says before what it would do;
-  `PUT /v1/automations/{name} {definition}` writes it over an automation's `automation.toml`
+  config folder, off. `POST /v1/automations {name, definition, agentId?, enable?}` writes
+  `definition` as the `automation.toml` of a new folder (a header comment, then its keys), off,
+  then turns it on when `enable` (I.7): the web UI's form, for an agent's run or an app's route; a
+  script starts from an example. `agentId`, with an agent run: that agent's name and its
+  project's are written in `run`, and it is bound (404 an unknown agent, 400 one with no name).
+  `POST /v1/automations/check {definition, agentId?}` says before what it would do;
+  `PUT /v1/automations/{name} {definition, agentId?}` writes it over an automation's `automation.toml`
   (what was written there by hand, comments too, is replaced): an owner's edit, so one that is on
   stays on (I.7).
 
@@ -2433,7 +3304,7 @@ run = { agent = "reviewer", project = "my-app", input = { fields = { focus = "se
 `daemon_restarted` (F.6.5), `deleted`.
 
 - A stop **fires** an enabled `session.stopped` automation when: the session is a conversation
-  (its agent has no interface: runs never fire), `how` is not `deleted` nor `daemon_restarted`,
+  (not a job's run: runs never fire, a brief's sessions do), `how` is not `deleted` nor `daemon_restarted`,
   `only` matches the session's project and agent names at that time, it happened after the
   automation was enabled (`since`), and its log has a `turn` event after the automation's cursor
   for that session.
@@ -2496,8 +3367,8 @@ the folder of its services socket (I.5, `<runtime>/automations/<runId>/`). Envir
   toolbox`").
 - `POST …/runs/{id}/cancel` stops the script: `cancelled`.
 
-**An agent run** is a run of the agent with an interface (D.18): a session started by handlerd with
-`origin: "automation"`, its input, the agent's first model, its own sandbox and settings
+**An agent run** is a run of a job (D.18): a session started by handlerd with
+`origin: "automation"`, its input, the agent's model, its own sandbox and settings
 (folder, network, confinement: what the agent's page shows; its folder read-write), unattended.
 The run's record names it (`agentSessionId`); the session lists the run
 (`GET /v1/sessions/{id}/automation-runs`). It ends when the session stops: `succeeded` with a valid
@@ -2516,7 +3387,8 @@ status ≥ 400 or no answer is `failed`. It is written in the app's log.
 - a failed run (not a script's or an app call's try: its page shows it): `status: "failed"`, the
   error as `summary`.
 
-Nothing else is told: a script's success is its appends.
+Each with `app`: the automation's `app` for an agent run's, the called app for an app call's
+failure. Nothing else is told: a script's success is its appends.
 
 ### I.4 Input
 
@@ -2593,7 +3465,11 @@ type LlmResponse = { valid: boolean; value?: unknown;   // with a schema: the pa
   the error on stderr and exits 1.
 - Each call is logged in `services.ndjson`: `{t, interface, model, inTokens, outTokens, ms,
   valid, repaired, error?}`; a run's totals are in its record. Handler calls a model only for a
-  script: never on its own.
+  script or for an agent on the model alone (D.18), started by the owner, their automation or
+  their app: never on its own.
+- **No tools**: a request offers none (no `tools`, `tool_choice`, `functions`); an answer that
+  calls one anyway (`tool_calls`, a `tool_use` block, any block but text and thinking) is
+  `refused`: text in, text out.
 
 ### I.6 Appends
 
@@ -2681,14 +3557,18 @@ type AutomationRun = {
   appended: { to: string; bytes: number; text?: string }[];      // text: a try's preview
   error?: string; createdAt: string; endedAt?: string;
 };
-type InboxMessage = {                   // the person's inbox (apps' notifications, H.9; I.3)
+type InboxMessage = {                   // the person's inbox (apps' notifications, H.9; I.3; H.11)
   id: string; source: "app" | "automation"; name: string;   // the app's, the automation's
-  agent?: string;                       // an automation's agent
+  agent?: string;                       // an automation's agent, the agent an app ran
   person: string;                       // "owner", or a person an app is shared with
   title: string; status?: "ok" | "attention" | "failed";   // an app's notification: none
   summary?: string;                     // an app's body; an agent's summary; a failure's error
   data?: unknown;                       // an agent run's whole result
   runId?: string; sessionId?: string;   // an automation's run; an agent run's session
+  app?: string;                         // the app it opens: the app's own message, an app's run,
+                                        // or the app its automation names (I.1); shown as "Open
+                                        // <app>" (the web UI, the phone when it is shared with
+                                        // the device's person, `handler inbox`'s OPENS)
   at: string; read: boolean;
 };
 ```
@@ -2759,6 +3639,30 @@ schema and the account's terms checked; the CLI); `tests/apps/test_apps_coach.py
 one real-podman test of the script's sandbox (read-only input and definition, no network,
 `handler-llm` on PATH; skipped without the toolbox); the web UI flow in `tests/e2e/test_web_ui.py`.
 
+
+### I.11 Speech written down: the `transcribe` service
+
+The second service (`docs/dev/design/services.md`): the interface `transcribe/v1`
+(`handler_control/data/interfaces/transcribe/v1/`), one tool `transcribe_audio`; its connector is
+built into handlerd (`transcribe.py`), its bindings are the providers' speech models. Its caller
+today is handlerd itself, for Voice (D.25); scripts and agents reach it later through the service
+router, like `llm/v1`.
+
+```ts
+type TranscribeRequest = { model: string;   // "provider/model", a speech model
+                           audio: string;   // base64, ≤ 1 MiB decoded
+                           format: "webm" | "ogg" | "mp4" | "wav" | "mp3";
+                           language?: string };   // two letters, a hint
+type TranscribeResponse = { text: string; ms: number };
+// errors (S3): refused (not a speech model), limit (the recording too large), unavailable (the
+// provider failed, did not answer in 60 s, or cannot be reached)
+```
+
+- handlerd posts the recording to the provider's `transcriptions` endpoint
+  (`<endpoint>/audio/transcriptions`, multipart: `file`, `model`, `language`, `response_format =
+  json`) with its key resolved from its reference; an endpoint written for containers is called on
+  the loopback. The answer's `text`, trimmed.
+
 ## 2. Cross-cutting invariants
 
 1. Nothing an agent does can execute on, or read from, the host outside its mounts (A2, P1, P4),
@@ -2769,17 +3673,18 @@ one real-podman test of the script's sandbox (read-only input and definition, no
    `permissions`, the harness) but **not** in ACP. ACP traffic is identical either way.
 4. Secrets travel only as references (E2) until `render`, then only via env or files (B3), as
    phantoms where they can be (E3: the value only to the sandbox's proxy). Never in
-   argv, logs or transcripts (the control plane MUST redact known secret values in logs).
+   argv, logs or transcripts (the control plane MUST redact known secret values in logs). A
+   provider's key used by handlerd itself (I.5, the model alone D.18) never leaves it.
 5. Every control-plane listener binds loopback and requires the token. The token is as powerful
    as the user: it can edit accounts, providers and agents. It lives in a `0600` file that no
    sandbox gets: no API writes a host path that is, holds or is inside the daemon's own folders
    (the work folders, D.13).
-   Mini apps' origins (H.4) take a per-app cookie derived from it instead, which opens that app
+   Apps' origins (H.4) take a per-app cookie derived from it instead, which opens that app
    only.
 6. **No sandbox ever reaches Handler's own files**, read or write, by any feature and at any
    confinement: the token, the secret store (`<data>/secrets.json`), and the definitions Handler acts
    on (accounts, providers, bindings, `folders.toml`, automations and their `state.json`,
-   `agents.json`, `projects.json`). A sandbox gets only a subfolder made for it (its session's
+   `agents.json`, `projects.json`, `handler-needs.json`). A sandbox gets only a subfolder made for it (its session's
    `agent/` and `work/`, an account's harness state, a skill read-only as a run's subject, an
    automation run's copy of its folder and its `input/`, `output/`), never a folder holding one
    of those files. What Handler acts on is written by the owner only: through the Control API (the
@@ -2791,12 +3696,12 @@ one real-podman test of the script's sandbox (read-only input and definition, no
 |---|---|
 | `tests/sandbox` | each sandbox impl |
 | `tests/harness` | each harness adapter + image; rebuild, check, switch (D.4) |
-| `tests/acp-endpoint` | control plane with fake agent |
+| `tests/acp_endpoint` | control plane with fake agent |
 | `tests/control` | control plane HTTP API |
 | `tests/sessions` | control plane with fake agent (F) |
 | `tests/addons` | addon and binding validation, composition (G), each addon image and its check (G.4) |
-| `tests/apps` | mini apps (H): deploy, origin, cookie, same-origin rule, data across versions, rollback, idle stop, secrets and egress, shortcuts, host files, an automation's call, notifications — real podman |
-| `tests/remote/test_remote_apps.py`, `test_remote_queue.py` | mini apps from devices (H.8, H.10): persons, scopes, the app channel, queued calls, push subscriptions |
+| `tests/apps` | apps (H): deploy, origin, cookie, same-origin rule, data across versions, rollback, idle stop, secrets and egress, needs given (a host file, an agent set up from its definition), an automation's call, notifications, runs — real podman |
+| `tests/remote/test_remote_apps.py`, `test_remote_queue.py` | apps from devices (H.8, H.10): persons, scopes, the app channel, queued calls, push subscriptions |
 | `tests/automations` (§I) | control plane with fake agent and fake sandbox: stops, runs, cursors, appends, try, the `llm` service through a stub provider, the CLI; the run's sandbox on real podman |
 | `tests/e2e` | real Claude + Vibe agents, podman impl |
 

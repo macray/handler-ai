@@ -1,9 +1,12 @@
-"""Serving mini apps (H.4): each at its own origin, http://<name>.localhost:<port>/.
+"""Serving apps (H.4): each at its own origin, http://<name>.localhost:<port>/.
 
 An app's code is written by an agent, so it never shares an origin with handler's web UI (which
 holds the token) nor with another app. Browsers resolve *.localhost to the loopback address and
 treat it as a secure context. Requests whose Host is not `<app>.localhost:<port>` go to handler (a
 rebinding attack names another host, so it never reaches an app).
+
+An app's draft opened (H.16) is served the same way at http://<name>--draft.localhost:<port>/,
+from its own copies, each of its pages with a banner saying it is the draft.
 
 On an app's origin:
     /_handler/login?code=…  redeems a one-time link (POST /v1/apps/{name}/open): sets the
@@ -19,6 +22,7 @@ import html
 import mimetypes
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -28,11 +32,13 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from handler_contracts import API_PREFIX, PERSON_HEADER, is_within
+from handler_contracts import API_PREFIX, PERSON_HEADER, START_HEADER, is_within
 
-from .apps import COOKIE_NAME, AppError, AppStore
+from .apps import COOKIE_NAME, DRAFT, AppError, AppStore, Backend, read_manifest
 
-HOST_RE = re.compile(r"^(?P<app>[a-z][a-z0-9-]{0,29})\.localhost:(?P<port>\d+)$")
+HOST_RE = re.compile(
+    r"^(?P<app>[a-z][a-z0-9-]{0,29}?)(?P<draft>--draft)?\.localhost:(?P<port>\d+)$"
+)
 LOGIN_PATH = "/_handler/login"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # RFC 9110 §7.6.1 and friends: never forwarded by a proxy.
@@ -43,6 +49,9 @@ HOP_BY_HOP = frozenset(
     }
 )  # fmt: skip
 COOKIE_MAX_AGE = 365 * 24 * 3600
+# taken out of a request before the backend gets it: handlerd sets the person and the start
+# token (H.4, H.11), and puts the cookies back without its own
+HANDLER_HEADERS = ("cookie", PERSON_HEADER.lower(), START_HEADER.lower())
 
 CSP = "; ".join(
     [
@@ -84,7 +93,11 @@ class AppOrigins:
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
                     return
-                response = await self.handle(Request(scope, receive), m["app"])
+                request = Request(scope, receive)
+                if m["draft"]:
+                    response = await self.handle_draft(request, m["app"])
+                else:
+                    response = await self.handle(request, m["app"])
                 response.headers["Content-Security-Policy"] = CSP  # the backend's too
                 response.headers["X-Content-Type-Options"] = "nosniff"
                 response.headers["Referrer-Policy"] = "no-referrer"
@@ -106,6 +119,33 @@ class AppOrigins:
         if request.method not in ("GET", "HEAD"):
             return Response(status_code=405, headers={"Allow": "GET, HEAD"})
         return self.static(name, request.url.path)
+
+    async def handle_draft(self, request: Request, name: str) -> Response:
+        """An app's draft opened (H.16): its own origin, cookie and copies."""
+        draft = name + DRAFT
+        preview = self.store.previews.get(name)
+        if preview is None:
+            text = "It was used, thrown away or left idle: open it again from Handler."
+            return page(f"The draft of {name} is closed", text, 404)
+        if request.url.path == LOGIN_PATH:
+            return self.login(request, draft)
+        api = request.url.path == API_PREFIX.rstrip("/") or request.url.path.startswith(API_PREFIX)
+        if denial := self.denial(request, draft, api=api):
+            return denial
+        if api:
+            preview.backend.last_used = time.monotonic()
+            return await self.forward(request, name, preview.backend, start=False)
+        if request.method not in ("GET", "HEAD"):
+            return Response(status_code=405, headers={"Allow": "GET, HEAD"})
+        return self.draft_static(name, request.url.path)
+
+    def draft_static(self, name: str, path: str) -> Response:
+        root = self.store.app_dir(name + DRAFT) / "code"
+        try:
+            manifest = read_manifest(root)
+        except AppError as e:
+            return page("Draft unavailable", str(e), 500)
+        return self.serve(root / manifest.ui.dir, path, banner=name)
 
     def denial(self, request: Request, name: str, *, api: bool) -> Response | None:
         if not self.store.cookie_matches(name, request.cookies.get(COOKIE_NAME)):
@@ -144,7 +184,12 @@ class AppOrigins:
             manifest = self.store.manifest(name, record.current.seq)
         except AppError as e:
             return page("App unavailable", str(e), 500)
-        root = os.path.realpath(self.store.version_dir(name, record.current.seq) / manifest.ui.dir)
+        return self.serve(self.store.version_dir(name, record.current.seq) / manifest.ui.dir, path)
+
+    def serve(self, ui: Path, path: str, banner: str | None = None) -> Response:
+        """A file of a built UI (index.html for a client-side route); `banner`: an opened
+        draft's, each of its pages saying so first."""
+        root = os.path.realpath(ui)
         wanted = os.path.realpath(os.path.join(root, path.lstrip("/")))
         if not is_within(wanted, root):
             return page("Not found", path, 404)
@@ -156,22 +201,39 @@ class AppOrigins:
             wanted = os.path.join(root, "index.html")
         media_type = mimetypes.guess_type(wanted)[0] or "application/octet-stream"
         cache = "no-cache" if wanted.endswith(".html") else "max-age=300"
+        if banner is not None and wanted.endswith(".html"):
+            text = Path(wanted).read_text(errors="replace")
+            return HTMLResponse(with_banner(text, banner), headers={"Cache-Control": "no-store"})
         return FileResponse(wanted, media_type=media_type, headers={"Cache-Control": cache})
+
+    async def answered(self, r: httpx.Response, start: str | None) -> None:
+        await r.aclose()
+        self.store.end_start(start)
 
     async def proxy(self, request: Request, name: str) -> Response:
         try:
             backend = await self.store.ensure_running(name)
         except AppError as e:
             return page(f"{name} did not start", str(e), 503)
+        return await self.forward(request, name, backend, start=True)
+
+    async def forward(
+        self, request: Request, name: str, backend: Backend, *, start: bool
+    ) -> Response:
+        """The request to the backend, as the owner (H.4); `start`: with a start token (H.11),
+        never for an opened draft, which starts nothing."""
         headers = [
             (k, v)
             for k, v in request.headers.items()
-            if k not in HOP_BY_HOP and k not in ("cookie", PERSON_HEADER.lower())
+            if k not in HOP_BY_HOP and k not in HANDLER_HEADERS
         ]
         if cookies := without_handler_cookie(request.headers.get("cookie", "")):
             headers.append(("cookie", cookies))
-        # H.4: only the owner is local (docs/dev/design/miniapps.md)
+        # H.4: only the owner is local (docs/dev/design/apps.md)
         headers.append((PERSON_HEADER, "owner"))
+        token = self.store.issue_start(name, "owner") if start else None  # H.11: until answered
+        if token is not None:
+            headers.append((START_HEADER, token))
         upstream = backend.client.build_request(
             request.method,
             request.url.path,
@@ -182,6 +244,7 @@ class AppOrigins:
         try:
             r = await backend.client.send(upstream, stream=True)
         except httpx.HTTPError as e:
+            self.store.end_start(token)
             return page(f"{name} did not answer", str(e) or type(e).__name__, 502)
 
         async def body() -> AsyncIterator[bytes]:
@@ -193,7 +256,7 @@ class AppOrigins:
             body(),
             status_code=r.status_code,
             headers={k: v for k, v in r.headers.items() if k.lower() not in HOP_BY_HOP},
-            background=BackgroundTask(r.aclose),
+            background=BackgroundTask(self.answered, r, token),
         )
 
 
@@ -212,3 +275,20 @@ def without_handler_cookie(header: str) -> str:
     """The Cookie header minus handler's own cookie: the backend has no use for it."""
     parts = [p.strip() for p in header.split(";") if p.strip()]
     return "; ".join(p for p in parts if p.split("=", 1)[0].strip() != COOKIE_NAME)
+
+
+BANNER = (
+    '<div style="position:sticky;top:0;z-index:2147483647;padding:8px 14px;font:14px/1.4 '
+    "system-ui,sans-serif;color:#5b3c00;background:repeating-linear-gradient(-45deg,#fdf4e3,"
+    '#fdf4e3 12px,#fbecd0 12px,#fbecd0 24px);border-bottom:1px solid #f0d9a8" '
+    "data-handler-draft><b>Draft of {name}, not the one you use.</b> What you do here changes "
+    "copies: {name}'s data and your folders are untouched. Use it or throw it away in Handler, "
+    "on {name}'s page.</div>"
+)
+
+
+def with_banner(page_html: str, name: str) -> str:
+    """An opened draft's page, its banner first in its body (H.16)."""
+    banner = BANNER.format(name=html.escape(name))
+    m = re.search(r"<body[^>]*>", page_html, re.IGNORECASE)
+    return page_html[: m.end()] + banner + page_html[m.end() :] if m else banner + page_html

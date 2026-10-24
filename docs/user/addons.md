@@ -11,8 +11,8 @@ Three places an addon comes from:
 
 | Source | How |
 |---|---|
-| the catalog Handler ships (`shopify`, `playwright`) | Settings → Addons → Available to install → Install…, or `handler addon add shopify` |
-| a folder on this machine | Settings → Addons → Install from a folder or an archive…, or `handler addon add ./my-addon` |
+| a [source](sources.md): Handler's offers `shopify` and `playwright`; one you added, its own | Library → Addons → Install an addon → shopify, or `handler addon add shopify` (`--from SOURCE` for one you added) |
+| a folder on this machine | Library → Addons → Install an addon → From a folder or an archive, or `handler addon add ./my-addon` |
 | an `https://…tar.gz` archive (a forge's archive of an addon's repository works) | the URL, or `handler addon add https://…/archive/main.tar.gz` |
 
 Before anything is installed you see what it brings: the hosts its agents may reach, the secrets
@@ -23,17 +23,19 @@ shows it again.
 
 An installed addon goes to `~/.config/handler-ai/addons/<name>/` and is recorded, with where it came
 from, in `~/.config/handler-ai/addons.lock.toml`. Its image is then built and checked (Settings →
-Images); agents get it through a **configuration** of it (Settings → Addons opens its Configure
-form right after the install: its settings and secrets; in the files, a binding) that you select
-in the agent's settings.
+Images); agents get it through a **configuration** of it (Library → Addons opens its Configure
+dialog right after the install: its settings and secrets; in the files, a binding) that you select
+in the agent's settings. An addon's image missing (a built-in addon, a build that failed), Handler
+builds it as soon as an agent uses the addon; until it is built, that agent's sessions do not
+start: the session says what it needs, with **Prepare now**.
 
-- Update: when Handler ships a newer catalog addon, Settings → Addons says so; See the update shows it again
-  before installing it. An addon from a folder or a URL: Reinstall looks at its source again.
-- Remove: Settings → Addons → Uninstall, or `handler addon rm NAME` (refused while a configuration
+- Update: when the source an addon came from holds a newer one, Library → Addons says so ("update available"); a
+  click shows it again before installing it. An addon from a folder or a URL: Details → Reinstall looks at its source again.
+- Remove: Library → Addons → Details → Uninstall, or `handler addon rm NAME` (refused while a configuration
   uses it).
-- `handler addon list` lists them all with where each comes from; `handler addon catalog` what Handler ships.
+- `handler addon list` lists them all with where each comes from; `handler source list` what the sources offer.
 
-Built-in addons (`miniapp`) come with Handler and need no install. An addon of yours with a built-in
+Built-in addons (`app-builder`) come with Handler and need no install. An addon of yours with a built-in
 one's name replaces it.
 
 ## Writing one

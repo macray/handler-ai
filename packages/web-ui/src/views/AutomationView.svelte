@@ -44,7 +44,7 @@
     const all = await api.sessions();
     known = all;
     stopped = all
-      .filter((s) => s.state === "stopped" && !s.input)
+      .filter((s) => s.state === "stopped" && !s.unattended)
       .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt));
     trySession ||= stopped[0]?.id ?? "";
   }

@@ -1,0 +1,4 @@
+# One of Handler's needs (D.18): what the agent given for it does for Handler, and the
+# version of the definition beside this file (one more on each change of it).
+description = "Writes an app with you, or changes one: each session works on a draft of its code, kept by Handler, used when you say so."
+version = 1

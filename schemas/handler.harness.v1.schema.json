@@ -496,7 +496,8 @@
         "enum": [
           "anthropic",
           "openai-chat",
-          "responses"
+          "responses",
+          "transcriptions"
         ],
         "type": "string"
       },

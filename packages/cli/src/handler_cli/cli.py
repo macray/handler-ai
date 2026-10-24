@@ -21,20 +21,25 @@ Working with agents:
 What exists (`handler NOUN -h` for each):
     handler session list | show | stop | share   sessions
     handler agent list | show | rm | network     agents, their network (log-only, enforce)
-    handler project list | show                  projects (created and edited in the web UI)
+    handler project list | show | export-agents | import-agents
+                                                 projects (created and edited in the web UI),
+                                                 their agents to a file and back
     handler account list | add | token | login | import | rm
                                                  subscriptions and their login
     handler provider list | templates | add | rm API keys and local model servers
     handler secret list | set | rm               the secret store
-    handler addon list | catalog | add | rm      addons an agent can get
+    handler addon list | add | rm                addons an agent can get
+    handler source list | add | refresh | rm     where apps, agents and addons come from
     handler binding list                         addons with their settings and secrets
     handler knowledge list                       knowledge folders an agent can get
     handler image list | rebuild                 the images agents run in
-    handler app …                                mini apps: register, deploy, open
+    handler app …                                apps: install, deploy, open
     handler automation …                         when a session stops or at a time, run a script,
                                                  an agent or an app's route
     handler inbox                                what handler told you: apps' notifications,
-                                                 automations' results and failures
+                                                 agents' results, failed runs
+    handler ask "…"                              say what you want: Handler picks which of
+                                                 your apps does it, and runs it
 
 Handler itself:
     handler setup [--no-build] [--yes]           after installing: start handlerd as a service,
@@ -67,7 +72,7 @@ the same command in the same folder always gives the same agent, made with the f
 the first time. In a project's folder (or below), `run`, `acp` and `terminal` use the project's
 agent named AGENT, or the one using that ACCOUNT or PROVIDER (default agent first); an account
 or provider none of its agents uses runs the default agent, unless it is not made for the
-project's context (refused; --anyway runs it there outside the project). A flag that differs
+project's area (refused; --anyway runs it there outside the project). A flag that differs
 from the agent's settings is never ignored: handler says what differs and asks "Save this to the
 agent?" (yes saves it, no starts nothing); without a terminal, --save saves it, else it is
 refused. Something to try once is another agent: --name NAME (outside projects).
@@ -88,6 +93,7 @@ from . import (
     addon_commands,
     agent_commands,
     app_commands,
+    ask_commands,
     automation_commands,
     bridge,
     daemon_commands,
@@ -98,6 +104,7 @@ from . import (
     secret_commands,
     session_commands,
     setup,
+    source_commands,
     terminal_client,
 )
 from .client import ClientError, Daemon, base_url, read_token
@@ -109,12 +116,12 @@ def add_agent_options(s: argparse.ArgumentParser) -> None:
     s.add_argument(
         "--harness",
         help="the harness, for a provider (an account has its own); in a project's folder: "
-        "which of the agent's models",
+        "which agent, the one running it",
     )
     s.add_argument(
         "--model",
         help="the model (default: the harness's or the provider's); in a project's folder: "
-        "which of the agent's models",
+        "which agent, the one running it",
     )
     s.add_argument("--name", help="a name, e.g. the use case (several per folder are fine)")
     s.add_argument("--network", choices=["none", "filtered", "open"], help="default: filtered")
@@ -181,12 +188,13 @@ def acp(d: Daemon, args: argparse.Namespace) -> int:
 
 def terminal(d: Daemon, args: argparse.Namespace) -> int:
     """D.16: an agent of the folder's project, else (or --anyway) an account or provider; one
-    sandbox for this terminal."""
-    found = session_commands.project_agent(d, args.access, os.path.abspath(args.scope), args)
+    sandbox for this terminal, mounting only the folder (in a project's sub-folder: that one)."""
+    folder = os.path.abspath(args.scope)
+    found = session_commands.project_agent(d, args.access, folder, args)
     agent, model = found if found is not None else session_commands.open_ad_hoc(d, args)
-    model = model or agent["models"][0]
+    model = model or agent["model"]
     print(terminal_identity(d, model), file=sys.stderr)
-    return terminal_client.run(d, agent["id"], args.args, session_commands.access_of(model))
+    return terminal_client.run(d, agent["id"], args.args, folder, session_commands.access_of(model))
 
 
 def terminal_identity(d: Daemon, model: dict[str, Any]) -> str:
@@ -281,10 +289,12 @@ NOUNS: dict[str, Any] = {
     "provider": provider_commands,
     "secret": secret_commands,
     "addon": addon_commands,
+    "source": source_commands,
     "image": image_commands,
     "app": app_commands,
     "automation": automation_commands,
     "inbox": inbox_commands,
+    "ask": ask_commands,
     "daemon": daemon_commands,
     "setup": setup,
 }

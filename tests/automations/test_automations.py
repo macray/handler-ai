@@ -326,7 +326,7 @@ def write(daemon: Daemon, name: str, toml: str) -> Path:
 
 def reviewer(daemon: Daemon, name: str, account: str = "fake") -> dict[str, Any]:
     """A folderless agent with an interface: the fake agent answers its input's `answer`."""
-    body = {"models": [{"account": account}], "permissions": "bypass", "name": name}
+    body = {"model": {"account": account}, "permissions": "bypass", "name": name}
     with daemon.http() as c:
         r = c.post("/v1/agents", json=body | {"interface": {"fields": FIELDS, "result": RESULT}})
         assert r.status_code == 201, r.text
@@ -385,7 +385,7 @@ def test_an_agent_run_needs_its_result_and_its_account_s_terms(daemon: Daemon) -
     with daemon.http() as c:
         r = c.post(
             "/v1/agents",
-            json={"models": [{"account": "fake"}], "permissions": "bypass", "name": "loose"}
+            json={"model": {"account": "fake"}, "permissions": "bypass", "name": "loose"}
             | {"interface": {"result": {"type": "object"}}},
         )
         assert r.status_code == 201, r.text

@@ -1,0 +1,307 @@
+{
+  "$id": "urn:handler.control/v1/agents-file",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AgentDefinition": {
+      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)\nand those Handler ships for its needs (D.18).",
+      "properties": {
+        "agentName": {
+          "title": "Agentname",
+          "type": "string"
+        },
+        "agentDescription": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentdescription"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructions"
+        },
+        "network": {
+          "default": "filtered",
+          "enum": [
+            "none",
+            "filtered",
+            "open"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "egress": {
+          "default": "enforce",
+          "enum": [
+            "enforce",
+            "log-only"
+          ],
+          "title": "Egress",
+          "type": "string"
+        },
+        "allow": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "confinement": {
+          "default": "strict",
+          "enum": [
+            "strict",
+            "nested",
+            "privileged"
+          ],
+          "title": "Confinement",
+          "type": "string"
+        },
+        "permissions": {
+          "default": "bypass",
+          "enum": [
+            "ask",
+            "accept-edits",
+            "bypass"
+          ],
+          "title": "Permissions",
+          "type": "string"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInterface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "addons": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": "Addons",
+          "type": "array"
+        },
+        "knowledge": {
+          "default": [],
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^/\\x00]",
+            "type": "string"
+          },
+          "title": "Knowledge",
+          "type": "array"
+        },
+        "display": {
+          "default": false,
+          "title": "Display",
+          "type": "boolean"
+        },
+        "modelAlone": {
+          "default": false,
+          "title": "Modelalone",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agentName"
+      ],
+      "title": "AgentDefinition",
+      "type": "object"
+    },
+    "AgentInterface": {
+      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
+      "properties": {
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "timeoutSec": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 86400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
+        }
+      },
+      "title": "AgentInterface",
+      "type": "object"
+    },
+    "AgentsFileAgent": {
+      "description": "One of an agents file's agents (D.23): its definition and the checks that come with it.",
+      "properties": {
+        "part": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Part",
+          "type": "string"
+        },
+        "definition": {
+          "$ref": "#/$defs/AgentDefinition"
+        },
+        "checks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentsFileCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "part",
+        "definition"
+      ],
+      "title": "AgentsFileAgent",
+      "type": "object"
+    },
+    "AgentsFileCheck": {
+      "description": "A check that comes with an agents file's agent (D.20, D.23): copied to each agent set\nup.",
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Input",
+          "type": "object"
+        },
+        "answer": {
+          "additionalProperties": true,
+          "title": "Answer",
+          "type": "object"
+        },
+        "compare": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Compare",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "answer",
+        "compare"
+      ],
+      "title": "AgentsFileCheck",
+      "type": "object"
+    }
+  },
+  "description": "Agents written so they can be set up again in another project (D.23): their definitions\nwithout what is yours (the models they run as, their folder, the addon configurations and\nknowledge folders they were given), with what they need instead.",
+  "properties": {
+    "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "place": {
+      "default": "project",
+      "enum": [
+        "project",
+        "outside"
+      ],
+      "title": "Place",
+      "type": "string"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentsFileAgent"
+      },
+      "minItems": 1,
+      "title": "Agents",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "agents"
+  ],
+  "title": "AgentsFile",
+  "type": "object"
+}

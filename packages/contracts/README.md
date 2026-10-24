@@ -12,11 +12,11 @@
 | `harness.py` | B — HarnessDescriptor, HarnessLaunch |
 | `sandbox.py` | A — SandboxSpec, exit codes |
 | `acp_endpoint.py` | C — wire constants (subprotocol, policy error codes) |
-| `control.py` | D — Control API resources, with sessions (F), remote control (D.7) and mini apps (H) |
+| `control.py` | D — Control API resources, with sessions (F), remote control (D.7) and apps (H) |
 | `terminal.py` | D.16 — the terminal WebSocket's messages |
 | `remote.py` | D.7 — what a paired device and Handler say inside the envelopes (control channel, app channels) |
 | `addon.py` | G — AddonManifest, Binding |
-| `miniapp.py` | H — MiniAppManifest |
+| `app.py` | H — AppManifest |
 | `schemas.py` | generates `schemas/*.schema.json` (language-neutral form, used by the TypeScript UI) |
 
 After changing a model: `uv run python -m handler_contracts.schemas` (CI fails on drift).

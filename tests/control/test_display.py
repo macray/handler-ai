@@ -60,6 +60,6 @@ def test_display_only_for_agents_that_ask(daemon: Daemon, display: socket.socket
     with daemon.http() as c:
         r = c.post(
             "/v1/agents",
-            json={"models": [{"account": "fake"}], "scope": str(scope), "display": True},
+            json={"model": {"account": "fake"}, "scope": str(scope), "display": True},
         )
     assert r.status_code == 409 and "no Wayland display" in r.json()["detail"]

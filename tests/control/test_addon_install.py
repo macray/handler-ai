@@ -1,5 +1,5 @@
-"""G.5 through the Control API: the catalog, preview, install (its image built afterwards),
-remove. The test daemon has the catalog's playwright and shopify installed."""
+"""G.5 through the Control API: preview, install (its image built afterwards), remove. The test
+daemon has the official source's fake-browser and fake-shop installed (D.26: test_sources.py)."""
 
 from pathlib import Path
 
@@ -8,14 +8,13 @@ from ..support.daemon import Daemon
 MANIFEST = 'apiVersion = "handler.addon/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
 
 
-def test_the_catalog_says_what_is_installed(daemon: Daemon) -> None:
+def test_an_installed_addon_says_where_it_came_from(daemon: Daemon) -> None:
     with daemon.http() as c:
-        entries = {e["name"]: e for e in c.get("/v1/addon-catalog").json()}
+        c.get("/v1/sources")  # read once
         listed = {a["name"]: a for a in c.get("/v1/addons").json()}
-    assert entries["shopify"]["installed"] and entries["shopify"]["description"]
-    assert listed["shopify"]["source"] == "catalog:shopify"
-    assert not listed["shopify"]["updateAvailable"]  # what handler ships
-    assert listed["miniapp"]["builtin"] and "source" not in listed["miniapp"]
+    assert listed["fake-shop"]["source"] == "source:official/fake-shop"
+    assert not listed["fake-shop"]["updateAvailable"]  # what the source holds
+    assert listed["app-builder"]["builtin"] and "source" not in listed["app-builder"]
 
 
 def test_preview_install_and_remove_from_a_folder(daemon: Daemon, tmp_path: Path) -> None:
@@ -37,8 +36,8 @@ def test_what_cannot_be_installed_or_removed(daemon: Daemon) -> None:
     with daemon.http() as c:
         bad = c.post("/v1/addons/preview", json={"source": "relative/notes"})
         assert bad.status_code == 422 and "absolute path" in bad.json()["detail"]
-        stale = {"source": "catalog:shopify", "digest": "0" * 64}
+        stale = {"source": "source:official/fake-shop", "digest": "0" * 64}
         assert c.post("/v1/addons/install", json=stale).status_code == 422
-        used = c.delete("/v1/addons/playwright")  # the daemon's `browser` binding uses it
+        used = c.delete("/v1/addons/fake-browser")  # the daemon's `browser` binding uses it
         assert used.status_code == 409 and "browser" in used.json()["detail"]
-        assert c.delete("/v1/addons/miniapp").status_code == 409  # built-in
+        assert c.delete("/v1/addons/app-builder").status_code == 409  # built-in

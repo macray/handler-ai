@@ -59,8 +59,12 @@ def egress_target(url: str) -> str:
 AbsolutePath = Annotated[str, AfterValidator(_absolute_path)]
 """Absolute, normalized path: starts with '/', no '.', '..' or empty segments."""
 
+# An app's name (H.1): a DNS label (its origin is http://<name>.localhost:<port>), kept short
+# for socket paths.
+AppName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,29}$")]
+
 HostPath = Annotated[str, BeforeValidator(_expand_home), AfterValidator(_absolute_path)]
-"""Host path in a hand-written document (providers, bindings, mini app manifests): an
+"""Host path in a hand-written document (providers, bindings, app manifests): an
 AbsolutePath, or '~' / '~/rel' for the host user's home, expanded when the document is read."""
 
 HomePath = Annotated[str, AfterValidator(_home_path)]
@@ -100,27 +104,27 @@ class Document(BaseModel):
 ResourceName = Annotated[str, Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9_.-]*$")]
 """The name of an account, a provider or a binding: its file's stem."""
 
-ANY_CONTEXT = "any"
-"""In an account's or a provider's contexts: usable in every project (a local model)."""
+ANY_AREA = "any"
+"""In an account's or a provider's areas: usable in every project (a local model)."""
 
 
 def _not_any(name: str) -> str:
-    if name.lower() == ANY_CONTEXT:
-        raise ValueError(f"'{ANY_CONTEXT}' is not a context's name: it means every context")
+    if name.lower() == ANY_AREA:
+        raise ValueError(f"'{ANY_AREA}' is not an area's name: it means every area")
     return name
 
 
-_CONTEXT = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$")
-ContextName = Annotated[str, _CONTEXT, AfterValidator(_not_any)]
-"""A project context (D.19): "Work", "Personal", a client's name."""
-AccessContext = Annotated[str, _CONTEXT]
-"""Where an account or a provider may be used (D.19): a context's name, or `any`."""
-ContextColor = Literal["blue", "violet", "cyan", "pink", "slate"]
-"""A context's colour (D.19): never the accent's nor a status's (orange, green, amber, red)."""
+_AREA = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9])?$")
+AreaName = Annotated[str, _AREA, AfterValidator(_not_any)]
+"""An area (D.19): "Work", "Personal", a client's name."""
+AccessArea = Annotated[str, _AREA]
+"""Where an account or a provider may be used (D.19): an area's name, or `any`."""
+AreaColor = Literal["blue", "violet", "cyan", "pink", "slate"]
+"""An area's colour (D.19): never the accent's nor a status's (orange, green, amber, red)."""
 
 
 class StrictDocument(Document):
-    """Hand-written document (accounts, providers, bindings, mini app manifests): unknown keys
+    """Hand-written document (accounts, providers, bindings, app manifests): unknown keys
     are errors (typo protection)."""
 
     model_config = ConfigDict(extra="forbid")

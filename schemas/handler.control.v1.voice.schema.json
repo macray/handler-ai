@@ -1,0 +1,86 @@
+{
+  "$id": "urn:handler.control/v1/voice",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "SpeechModelInfo": {
+      "description": "A provider's speech model (`speech = true`), one Voice can use.",
+      "properties": {
+        "model": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "local": {
+          "title": "Local",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "model",
+        "name",
+        "provider",
+        "local"
+      ],
+      "title": "SpeechModelInfo",
+      "type": "object"
+    }
+  },
+  "description": "`GET /v1/voice`: the settings, and the speech models there are to choose from.",
+  "properties": {
+    "model": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/.+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "readAloudSpoken": {
+      "default": true,
+      "title": "Readaloudspoken",
+      "type": "boolean"
+    },
+    "readAloudTyped": {
+      "default": false,
+      "title": "Readaloudtyped",
+      "type": "boolean"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/SpeechModelInfo"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "problem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Problem"
+    }
+  },
+  "required": [
+    "models"
+  ],
+  "title": "Voice",
+  "type": "object"
+}

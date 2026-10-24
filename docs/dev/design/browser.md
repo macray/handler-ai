@@ -39,8 +39,7 @@ Where each part runs:
 | **A** — hosted MCP server, the person's Chrome (`--extension`) | host, behind a handlerd gateway | host | no | mostly (tool filter, dedicated Chrome profile) | later, opt-in (UB4) |
 | B — MCP server in the sandbox, host browser over CDP | sandbox | host | no | **no** (CDP reads `file://`, downloads anywhere) | rejected |
 
-Option C covers UB4 partly: the person can log in by hand in the window, and a binding can keep
-that browser profile (§7).
+Option C does not cover UB4 yet: the browser starts logged out every session (§7).
 
 ## 4. Findings
 
@@ -126,22 +125,24 @@ agent start: `HANDLER_WAYLAND_SOCKET`, else `WAYLAND_DISPLAY`, else the only `wa
   - `--proxy-server "$HTTPS_PROXY"` and `--proxy-bypass "$NO_PROXY"` when set (read from the
     sandbox's env: `render` never learns proxy details, B2);
   - `--disable-gpu --disable-dev-shm-usage` (no GPU; podman's `/dev/shm` is 64 MB);
-  - a storage state from the binding's `storage_state` secret, written to a private file (§7);
   - `--output-dir` in a private temporary folder, removed on exit.
 - **Check** (`playwright-mcp-check`, offline): the installed Playwright launches the toolbox's
   Chromium headless and reads a page; a toolbox rebuild re-runs it (`addons.md` §4.5).
 
 ## 7. Logins
 
-- **Storage state** (implemented): cookies and local storage saved once from a dedicated account
-  (`npx playwright open --save-storage=…`), kept as one line of JSON in the person's password store
-  and given by the binding's `storage_state` secret; every session starts from it, nothing is saved
-  back, so sessions do not conflict. Steps: the addon's `PROVISIONING.md`.
+None built: the browser starts logged out every session (`--isolated`).
+
+- **Storage state** (removed): cookies and local storage saved once from a dedicated account
+  (`npx playwright open --save-storage=…`), given by a binding's secret. Removed, unused: a
+  session saved on the host and replayed from the sandbox (another IP, another browser) is refused
+  by many sites, it expires and must be saved again by hand, and the agent can read it (the
+  secret's value, not a phantom: the browser reads it from a file, not from an HTTP header).
 - **Kept profile** (not implemented): a binding's browser profile as a state mount; the person
   logs in once by hand in the headed window. One session at a time per profile (a profile is
   locked by its browser); bindings have no mounts today.
 
-Either way the account is a dedicated one, with the rights the agent needs (`addons.md` §8.1).
+When one is built, the account is a dedicated one, with the rights the agent needs (`addons.md` §8.1).
 
 ## 8. macOS
 

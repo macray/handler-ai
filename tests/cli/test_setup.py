@@ -6,6 +6,7 @@ import argparse
 import pytest
 
 from handler_cli import daemon_commands, setup
+from handler_control import __version__
 
 from ..support.daemon import Daemon
 
@@ -18,7 +19,7 @@ def test_setup_reports_the_runtime_and_the_toolbox(
     monkeypatch.setattr(daemon_commands, "install", lambda dry_run: 0)
     code = setup.dispatch(argparse.Namespace(no_build=True, yes=False))
     out = capsys.readouterr().out
-    assert "handlerd 0.1.0 is running at" in out
+    assert f"handlerd {__version__} is running at" in out
     assert "podman" in out  # the runtime check (A.8), whatever this machine has
     if code == 0:
         assert f"Your toolbox (the tools every agent gets): {daemon.config_dir}/toolbox" in out

@@ -1,0 +1,1198 @@
+{
+  "$id": "urn:handler.control/v1/source-item-detail",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonPreview": {
+      "description": "What installing from `source` would add (G.5), shown before the user decides; `digest`\nnames exactly this content: an install of other content is refused.",
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "commands": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "env": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "array"
+        },
+        "settings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AddonSlotInfo"
+          },
+          "title": "Settings",
+          "type": "array"
+        },
+        "secretSlots": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AddonSlotInfo"
+          },
+          "title": "Secretslots",
+          "type": "array"
+        },
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "mcp": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "replaces": {
+          "anyOf": [
+            {
+              "enum": [
+                "builtin",
+                "installed",
+                "own"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replaces"
+        }
+      },
+      "required": [
+        "source",
+        "digest",
+        "name"
+      ],
+      "title": "AddonPreview",
+      "type": "object"
+    },
+    "AddonSlotInfo": {
+      "description": "A setting or secret slot of an addon (G.1), for the binding form.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AddonSlotInfo",
+      "type": "object"
+    },
+    "AgentDefinition": {
+      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)\nand those Handler ships for its needs (D.18).",
+      "properties": {
+        "agentName": {
+          "title": "Agentname",
+          "type": "string"
+        },
+        "agentDescription": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentdescription"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructions"
+        },
+        "network": {
+          "default": "filtered",
+          "enum": [
+            "none",
+            "filtered",
+            "open"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "egress": {
+          "default": "enforce",
+          "enum": [
+            "enforce",
+            "log-only"
+          ],
+          "title": "Egress",
+          "type": "string"
+        },
+        "allow": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "confinement": {
+          "default": "strict",
+          "enum": [
+            "strict",
+            "nested",
+            "privileged"
+          ],
+          "title": "Confinement",
+          "type": "string"
+        },
+        "permissions": {
+          "default": "bypass",
+          "enum": [
+            "ask",
+            "accept-edits",
+            "bypass"
+          ],
+          "title": "Permissions",
+          "type": "string"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInterface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "addons": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": "Addons",
+          "type": "array"
+        },
+        "knowledge": {
+          "default": [],
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^/\\x00]",
+            "type": "string"
+          },
+          "title": "Knowledge",
+          "type": "array"
+        },
+        "display": {
+          "default": false,
+          "title": "Display",
+          "type": "boolean"
+        },
+        "modelAlone": {
+          "default": false,
+          "title": "Modelalone",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agentName"
+      ],
+      "title": "AgentDefinition",
+      "type": "object"
+    },
+    "AgentInterface": {
+      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
+      "properties": {
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "timeoutSec": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 86400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
+        }
+      },
+      "title": "AgentInterface",
+      "type": "object"
+    },
+    "AgentsFile": {
+      "description": "Agents written so they can be set up again in another project (D.23): their definitions\nwithout what is yours (the models they run as, their folder, the addon configurations and\nknowledge folders they were given), with what they need instead.",
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "place": {
+          "default": "project",
+          "enum": [
+            "project",
+            "outside"
+          ],
+          "title": "Place",
+          "type": "string"
+        },
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentsFileAgent"
+          },
+          "minItems": 1,
+          "title": "Agents",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "agents"
+      ],
+      "title": "AgentsFile",
+      "type": "object"
+    },
+    "AgentsFileAgent": {
+      "description": "One of an agents file's agents (D.23): its definition and the checks that come with it.",
+      "properties": {
+        "part": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Part",
+          "type": "string"
+        },
+        "definition": {
+          "$ref": "#/$defs/AgentDefinition"
+        },
+        "checks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentsFileCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "part",
+        "definition"
+      ],
+      "title": "AgentsFileAgent",
+      "type": "object"
+    },
+    "AgentsFileCheck": {
+      "description": "A check that comes with an agents file's agent (D.20, D.23): copied to each agent set\nup.",
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Input",
+          "type": "object"
+        },
+        "answer": {
+          "additionalProperties": true,
+          "title": "Answer",
+          "type": "object"
+        },
+        "compare": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Compare",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "answer",
+        "compare"
+      ],
+      "title": "AgentsFileCheck",
+      "type": "object"
+    },
+    "AppManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "const": "handler.app/v1",
+          "title": "Apiversion",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "server": {
+          "$ref": "#/$defs/AppManifestServer",
+          "default": {
+            "entry": "server/main.ts"
+          }
+        },
+        "ui": {
+          "$ref": "#/$defs/AppManifestUi",
+          "default": {
+            "dir": "ui/dist"
+          }
+        },
+        "needs": {
+          "$ref": "#/$defs/AppManifestNeeds",
+          "default": {
+            "egress": [],
+            "secrets": [],
+            "files": {},
+            "notify": false,
+            "agents": {}
+          }
+        },
+        "routes": {
+          "default": {},
+          "patternProperties": {
+            "^(POST|PUT|PATCH|DELETE) /api/[A-Za-z0-9/_.-]*$": {
+              "enum": [
+                "sync",
+                "queued"
+              ],
+              "type": "string"
+            }
+          },
+          "title": "Routes",
+          "type": "object"
+        },
+        "automations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AppManifestSuggestedAutomation"
+          },
+          "maxItems": 5,
+          "title": "Automations",
+          "type": "array"
+        },
+        "actions": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "$ref": "#/$defs/AppManifestAction"
+            }
+          },
+          "title": "Actions",
+          "type": "object"
+        },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Resources"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "apiVersion",
+        "name",
+        "version"
+      ],
+      "title": "AppManifest",
+      "type": "object"
+    },
+    "AppManifestAction": {
+      "additionalProperties": false,
+      "description": "An action: something the person can ask the app in a sentence (H.12), what Ask's router\nreads, what the app's page lists (with Try). Done by its code (`route`: the backend answers an\nActionResult at once) or by one of its agents (`agent`: a run of the agent given for that need,\nits form filled with the action's fields).",
+      "properties": {
+        "description": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "examples": {
+          "default": [],
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Examples",
+          "type": "array"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "AppManifestAction",
+      "type": "object"
+    },
+    "AppManifestAgentNeed": {
+      "additionalProperties": false,
+      "description": "A job the app starts runs of (H.11): which agent is the person's choice at install, one of\ntheirs that fits or one set up from the definition the app ships.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "worksIn": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worksin"
+        }
+      },
+      "required": [
+        "from"
+      ],
+      "title": "AppManifestAgentNeed",
+      "type": "object"
+    },
+    "AppManifestFileNeed": {
+      "additionalProperties": false,
+      "description": "A folder (or a file) of the person's the backend reads (or writes), H.9: which one is the\nperson's choice at install, mounted at the same path.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "mode": {
+          "default": "ro",
+          "enum": [
+            "ro",
+            "rw"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "init": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Init",
+          "type": "array"
+        }
+      },
+      "title": "AppManifestFileNeed",
+      "type": "object"
+    },
+    "AppManifestNeeds": {
+      "additionalProperties": false,
+      "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
+      "properties": {
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "secrets": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Secrets",
+          "type": "array"
+        },
+        "files": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "$ref": "#/$defs/AppManifestFileNeed"
+            }
+          },
+          "title": "Files",
+          "type": "object"
+        },
+        "notify": {
+          "default": false,
+          "title": "Notify",
+          "type": "boolean"
+        },
+        "agents": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "$ref": "#/$defs/AppManifestAgentNeed"
+            }
+          },
+          "title": "Agents",
+          "type": "object"
+        }
+      },
+      "title": "AppManifestNeeds",
+      "type": "object"
+    },
+    "AppManifestServer": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "default": "server/main.ts",
+          "title": "Entry",
+          "type": "string"
+        }
+      },
+      "title": "AppManifestServer",
+      "type": "object"
+    },
+    "AppManifestSuggestedAutomation": {
+      "additionalProperties": false,
+      "description": "An automation the app suggests (`[[automations]]`, I.1): made by the person from the app's\npage, off until they turn it on; its results open the app.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/Schedule"
+        },
+        "run": {
+          "$ref": "#/$defs/AppManifestSuggestedRun"
+        }
+      },
+      "required": [
+        "description",
+        "when",
+        "run"
+      ],
+      "title": "AppManifestSuggestedAutomation",
+      "type": "object"
+    },
+    "AppManifestSuggestedRun": {
+      "additionalProperties": false,
+      "description": "What a suggested automation runs: the agent given for one of the app's needs.",
+      "properties": {
+        "agent": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Agent",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/AutomationAgentInput",
+          "default": {
+            "fields": {}
+          }
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "title": "AppManifestSuggestedRun",
+      "type": "object"
+    },
+    "AppManifestUi": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "default": "ui/dist",
+          "title": "Dir",
+          "type": "string"
+        }
+      },
+      "title": "AppManifestUi",
+      "type": "object"
+    },
+    "AutomationAgentInput": {
+      "additionalProperties": false,
+      "description": "What the agent's run is started with (D.18 `SessionInput`).",
+      "properties": {
+        "fields": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "title": "AutomationAgentInput",
+      "type": "object"
+    },
+    "Resources": {
+      "additionalProperties": false,
+      "properties": {
+        "memory": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+[kmgKMG]?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory"
+        },
+        "cpus": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+(\\.\\d+)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpus"
+        }
+      },
+      "title": "Resources",
+      "type": "object"
+    },
+    "Schedule": {
+      "additionalProperties": false,
+      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
+      "properties": {
+        "every": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Every"
+        },
+        "at": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
+        },
+        "days": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri",
+                  "sat",
+                  "sun"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Days"
+        }
+      },
+      "title": "Schedule",
+      "type": "object"
+    },
+    "Source": {
+      "description": "A git repository Handler reads to offer things to install (D.26). The official one is\nHandler's; any other was added by the person, who trusts it.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "official": {
+          "default": false,
+          "title": "Official",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit"
+        },
+        "fetchedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fetchedat"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "items": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceItem"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "url"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "SourceItem": {
+      "description": "Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an\nagents file's content) or an addon (`addons/<name>/`).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "app",
+            "agents",
+            "addon"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "installed": {
+          "default": false,
+          "title": "Installed",
+          "type": "boolean"
+        },
+        "update": {
+          "default": false,
+          "title": "Update",
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "notes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceNote"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "SourceItem",
+      "type": "object"
+    },
+    "SourceNote": {
+      "description": "One thing a source's item does, in a few words, for its card (D.26): \"uses 1 folder of\nyours\", \"reaches 2 sites\".",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "weakens": {
+          "default": false,
+          "title": "Weakens",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "SourceNote",
+      "type": "object"
+    }
+  },
+  "description": "`GET /v1/sources/{id}/{apps|agents|addons}/{name}`: an item's page (D.26), before\nanything is installed: its README, and what its kind's manifest says it may touch.",
+  "properties": {
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "item": {
+      "$ref": "#/$defs/SourceItem"
+    },
+    "readme": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Readme"
+    },
+    "app": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppManifest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "agents": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentsFile"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "addon": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AddonPreview"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "source",
+    "item"
+  ],
+  "title": "SourceItemDetail",
+  "type": "object"
+}

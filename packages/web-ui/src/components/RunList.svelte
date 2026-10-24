@@ -37,11 +37,11 @@
         <Table.Row>
           <Table.Cell><a href={href({ view: "run", id: r.id })} data-testid="run-link"><StatusBadge status={STATE[runState(r)] ?? "failed"} /></a></Table.Cell>
           <Table.Cell class="max-w-80 truncate">
-            <a class="text-foreground hover:underline" href={href({ view: "run", id: r.id })}>{inputSummary(r.input) ?? "nothing"}</a>
+            <a class="text-foreground hover:underline" href={href({ view: "run", id: r.id })}>{inputSummary(r) ?? "nothing"}</a>
           </Table.Cell>
           <Table.Cell>
             {#if verdict}<span class="text-sm font-medium {TONE[verdict.tone]}">{verdict.value}</span>{:else}<span class="text-muted-foreground">{runState(r)}</span>{/if}
-            {#if digest && r.input?.subject?.digest && r.input.subject.digest !== digest}
+            {#if digest && r.subject && r.subject.digest !== digest}
               <span class="ml-2 text-xs text-warn" title="The skill's files changed after this run read them">changed since</span>
             {/if}
           </Table.Cell>

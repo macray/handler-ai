@@ -1,4 +1,4 @@
-// The phone's side of a mini app's backend calls (docs/dev/design/miniapps.md §5.2–5.3).
+// The phone's side of an app's backend calls (docs/dev/design/apps.md §5.2–5.3).
 import { beforeEach, describe, expect, it } from "vitest";
 import { carry, queuedCalls, type FrameFetch } from "../src/lib/apps";
 import type { Mailbox } from "../src/lib/mailbox.svelte";

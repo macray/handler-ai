@@ -8,11 +8,14 @@ from .test_cli import handler
 MANIFEST = 'apiVersion = "handler.addon/v1"\nname = "memo"\negress = ["memo.example.com:443"]\n'
 
 
-def test_catalog_lists_what_handler_ships(daemon: Daemon) -> None:
-    out = handler(daemon, "addon", "catalog").stdout
-    assert "shopify" in out and "playwright" in out
+def test_sources_list_what_they_offer(daemon: Daemon) -> None:
+    out = handler(daemon, "source", "list").stdout
+    assert "official ·" in out and "Handler's" in out
+    assert "fake-shop" in out and "fake-browser" in out and "journal" in out
     # where the installed one came from
-    assert "catalog:shopify" in handler(daemon, "addon", "list").stdout
+    assert "source:official/fake-shop" in handler(daemon, "addon", "list").stdout
+    added = handler(daemon, "source", "add", "https://example.invalid/acme")  # asked: no terminal
+    assert added.returncode == 1 and "Handler does not check" in added.stdout
 
 
 def test_add_shows_what_it_brings_then_installs(daemon: Daemon, tmp_path: Path) -> None:

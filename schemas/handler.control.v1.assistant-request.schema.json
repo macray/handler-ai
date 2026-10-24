@@ -1,0 +1,60 @@
+{
+  "$id": "urn:handler.control/v1/assistant-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AskTurn": {
+      "description": "One turn of an exchange with Ask: the person's words, or what Handler answered.",
+      "properties": {
+        "who": {
+          "enum": [
+            "you",
+            "handler"
+          ],
+          "title": "Who",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "text"
+      ],
+      "title": "AskTurn",
+      "type": "object"
+    }
+  },
+  "description": "`POST /v1/ask`: the exchange so far, the person's words last. Stateless: the client\nsends it whole each time (a reply to a question is one more turn).",
+  "properties": {
+    "turns": {
+      "items": {
+        "$ref": "#/$defs/AskTurn"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Turns",
+      "type": "array"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timezone"
+    }
+  },
+  "required": [
+    "turns"
+  ],
+  "title": "AssistantRequest",
+  "type": "object"
+}

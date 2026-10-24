@@ -4,6 +4,6 @@
 </script>
 
 <div class="space-y-1.5">
-  <h1 class="text-2xl font-semibold tracking-tight">{title}</h1>
+  <h1 class="text-[1.75rem] leading-tight font-semibold tracking-[-0.022em]">{title}</h1>
   {#if description}<p class="max-w-2xl text-sm text-muted-foreground">{description}</p>{/if}
 </div>

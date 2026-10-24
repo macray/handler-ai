@@ -1,0 +1,4 @@
+# One of Handler's needs (D.18): what the agent given for it does for Handler, and the
+# version of the definition beside this file (one more on each change of it).
+description = "Reviews a skill of the library before your agents use it: what it does, what it makes them run and reach, and where it does not do what it says."
+version = 1

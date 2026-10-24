@@ -2,25 +2,34 @@
   "$id": "urn:handler.control/v1/session",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "SessionAppDraft": {
+      "description": "A session working on a draft of an app's code (H.15): its folder, kept by Handler, starts\nas a copy of `app`'s code, or empty for a new app (none). Used (`POST\n/v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app.",
+      "properties": {
+        "app": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App"
+        }
+      },
+      "title": "SessionAppDraft",
+      "type": "object"
+    },
     "SessionInput": {
-      "description": "What a run of an agent with an interface is started with (D.18).",
+      "description": "What a session of an agent with an interface is started with (D.18): a job's run, a\nbrief's session.",
       "properties": {
         "fields": {
           "additionalProperties": true,
           "default": {},
           "title": "Fields",
           "type": "object"
-        },
-        "subject": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SessionSubject"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "title": "SessionInput",
@@ -57,7 +66,7 @@
       "type": "object"
     },
     "SessionSubject": {
-      "description": "The handler object a run works on (D.18).",
+      "description": "What a run works on (D.18): the skill its form's skill field named, as it saw it.",
       "properties": {
         "skill": {
           "maxLength": 64,
@@ -67,20 +76,13 @@
           "type": "string"
         },
         "digest": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Digest"
+          "title": "Digest",
+          "type": "string"
         }
       },
       "required": [
-        "skill"
+        "skill",
+        "digest"
       ],
       "title": "SessionSubject",
       "type": "object"
@@ -109,8 +111,15 @@
       "title": "Projectid"
     },
     "harness": {
-      "title": "Harness",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Harness"
     },
     "account": {
       "anyOf": [
@@ -223,6 +232,18 @@
       "default": null,
       "title": "Error"
     },
+    "missingImage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Missingimage"
+    },
     "harnessVersion": {
       "anyOf": [
         {
@@ -242,10 +263,37 @@
         "cli",
         "editor",
         "phone",
-        "automation"
+        "automation",
+        "app",
+        "check",
+        "ask"
       ],
       "title": "Origin",
       "type": "string"
+    },
+    "app": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "App"
+    },
+    "waitingFor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Waitingfor"
     },
     "lastStopReason": {
       "anyOf": [
@@ -282,10 +330,37 @@
       ],
       "default": null
     },
+    "unattended": {
+      "default": false,
+      "title": "Unattended",
+      "type": "boolean"
+    },
+    "subject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionSubject"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "output": {
       "anyOf": [
         {
           "$ref": "#/$defs/SessionOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "appDraft": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionAppDraft"
         },
         {
           "type": "null"

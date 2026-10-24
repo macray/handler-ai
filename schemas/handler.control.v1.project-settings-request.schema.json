@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/project-settings-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A project's own settings: the body of a full update (PUT). Nothing in it is an agent's:\nwhich skills it gives to all its agents is set on the skills (D.17).",
+  "description": "A project's own settings: the body of a full update (PUT). Nothing in it is an agent's.",
   "properties": {
     "name": {
       "anyOf": [
@@ -53,7 +53,7 @@
       "title": "Caches",
       "type": "string"
     },
-    "context": {
+    "area": {
       "anyOf": [
         {
           "maxLength": 32,
@@ -66,7 +66,18 @@
         }
       ],
       "default": null,
-      "title": "Context"
+      "title": "Area"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
     }
   },
   "required": [

@@ -27,7 +27,7 @@ contain no harness-specific code and unattended runs work the same for every har
 | UC3 | Run an agent with an interface on a form or a Handler object, unattended, and get a result of a known shape |
 | UC4 | Several harnesses and settings on the same project, and several projects at once |
 | UC5 | Follow and drive shared sessions from a phone, through a gateway that cannot read them |
-| UC6 | Let agents write small web apps (mini apps) that a person deploys and uses |
+| UC6 | Let agents write small web apps that a person deploys and uses |
 | UC7 | When a session stops, run your own script on its conversation, unattended, and append what it finds to a note (automations) |
 | UC8 | At a time (every hour, every weekday at 08:30), run one of your agents or an app's route, and be told the result in an inbox |
 
@@ -46,7 +46,7 @@ folders.
 | **Project** | A code folder, its caches and skills, and its agents |
 | **Session** | A conversation held by the daemon: it owns one sandbox, which outlives the clients attached to it; it has an event log |
 | **Addon + configuration** | An addon brings programs, skills and egress for one kind of system; a configuration (a binding in the files) is one set of its settings and credentials, what an agent is given |
-| **Mini app** | A small web app (Deno backend + UI) an agent writes and a person deploys; it runs in its own sandbox |
+| **App** | A small web app (Bun backend + UI) an agent writes and a person deploys; it runs in its own sandbox |
 | **Automation** (I) | *When this happens, run that*: when a session stops or at a time, a script in its own sandbox (calling models through handlerd's `llm` service), an agent's run or an app's route; only the owner turns one on |
 | **Inbox** (I.9) | What Handler tells the person: apps' notifications, automations' results and failures; written by handlerd only |
 
@@ -66,8 +66,9 @@ Design rules (decided 2026-10-02 and 2026-10-04, when profiles and policies were
   addon's hosts) or *copied* (starting values copied once, never linked: the presets, "Duplicate
   this agent"). No global → profile → project → agent cascade, no "apply to all".
 - **Optional parts, not kinds.** An interface, no project, no folder are optional parts of one
-  agent, not kinds of agents. A built-in agent (skill reviewer, skill creator) exists at most once:
-  you choose its models, the rest starts from Handler's defaults and is yours.
+  agent, not kinds of agents. A helper (skill reviewer, skill creator) is the agent given for
+  one of Handler's needs, as for an app's: you set one up from the definition Handler ships for
+  it (choosing its model), or give one that fits.
 - **Triggers live on automations**, never on agents: "run this agent every Monday" is an
   automation whose run is that agent: what does the work and how it starts are two questions.
 
@@ -79,7 +80,7 @@ Design rules (decided 2026-10-02 and 2026-10-04, when profiles and policies were
  ┌─────────────┴─────────────────────────────────────────────────────────────┐
  │ CONTROL PLANE  handlerd (127.0.0.1, token)                                 │
  │  config stores · agents, projects · launch pipeline · ACP policy           │
- │  sessions · image builds · remote connector · mini apps                    │
+ │  sessions · image builds · remote connector · apps                    │
  └──────┬──────────────────────────────┬──────────────────────────────────────┘
         │ B: import                    │ A: executable, SandboxSpec on fd 3
    HARNESS ADAPTERS                SANDBOX
@@ -110,7 +111,7 @@ Design rules (decided 2026-10-02 and 2026-10-04, when profiles and policies were
 3. Harness-specific knowledge lives only in the harness adapters and their data
    (`handler_harness/data/harnesses/<name>/`); addon-specific knowledge only in the addon's folder.
 4. The container engine is reached only through the sandbox's executable: containers that run
-   something (agents, mini apps, the check of an addon image) with `launch`, images (build, inspect,
+   something (agents, apps, the check of an addon image) with `launch`, images (build, inspect,
    read their version file, tag, remove, pull) with its `image` verbs (A.7). The harness adapters'
    `images` only says what to build and where an image records its version (`Recipe`,
    `version_file`); the control plane's `runtime` asks the executable. Checked by

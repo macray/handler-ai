@@ -1,0 +1,68 @@
+{
+  "$id": "urn:handler.control/v1/uses",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "UseRef": {
+      "description": "A thing at the other end of a use (D.22), and how it is used, in words.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "agent",
+            "skill",
+            "knowledge",
+            "addon",
+            "account",
+            "provider",
+            "automation",
+            "app",
+            "project",
+            "handler"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "how": {
+          "title": "How",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "label",
+        "how"
+      ],
+      "title": "UseRef",
+      "type": "object"
+    }
+  },
+  "description": "What a thing uses and what uses it (D.22).",
+  "properties": {
+    "uses": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UseRef"
+      },
+      "title": "Uses",
+      "type": "array"
+    },
+    "usedBy": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UseRef"
+      },
+      "title": "Usedby",
+      "type": "array"
+    }
+  },
+  "title": "Uses",
+  "type": "object"
+}

@@ -7,7 +7,7 @@ that harness reads: environment variables, and the content of its config file sl
 
 Every field of a provider's model reaches the harness where it has a setting for it (B9): the
 context window is what it measures the conversation against, and it compacts early enough to leave
-room for a reply of `max_output` tokens (`reserve`).
+room for a reply of `max_output` tokens (`reserve`), at most a fifth of the window.
 
 The `native` table of a model (`[models.native.<harness>]`) is merged into the entry written for
 that harness, for what only it knows (a chat template, a compat flag).
@@ -25,6 +25,7 @@ CONTAINER_HOST = "host.containers.internal"  # a container's name for the machin
 _LOOPBACK = ("localhost", "127.0.0.1", "::1")
 NO_KEY = "none"  # what a server that checks nothing is given as a key
 REPLY_RESERVE = 16384  # room left for a reply when the model gives no max_output (pi's default)
+RESERVE_SHARE = 0.2  # the most of a window kept free: a small window still compacts at 80 %
 
 
 class ProviderError(ValueError):
@@ -79,9 +80,11 @@ def egress(descriptor: HarnessDescriptor, provider: Provider) -> str:
 
 def choose_model(provider: Provider, wanted: str | None, harness: str) -> ProviderModel:
     if wanted is None:
-        return provider.models[0]
+        if not provider.chat_models:
+            raise ProviderError("provider serves speech models only")
+        return provider.chat_models[0]
     if (model := provider.model_named(wanted)) is None:
-        known = ", ".join(m.id for m in provider.models)
+        known = ", ".join(m.id for m in provider.chat_models)
         raise ProviderError(f"provider has no model '{wanted}' (it serves: {known})")
     return model
 
@@ -109,8 +112,9 @@ def express(
 
 def reserve(model: ProviderModel, context: int) -> int:
     """The tokens a harness keeps free in a `context` window for the reply (B9): the model's
-    `max_output`, at most half the window."""
-    return min(model.max_output or REPLY_RESERVE, context // 2)
+    `max_output`, at most a fifth of the window (a `max_output` as large as the window would
+    otherwise compact a small one at half)."""
+    return min(model.max_output or REPLY_RESERVE, int(context * RESERVE_SHARE))
 
 
 def _merged(call: Call, entry: dict[str, Any]) -> dict[str, Any]:
@@ -240,7 +244,7 @@ def vibe(call: Call) -> Expressed:
 
 def pi(call: Call) -> Expressed:
     """pi: a provider in models.json, chosen in settings.json, which also says how much of the
-    window compaction keeps free (`reserveTokens`, else pi keeps 16384)."""
+    window compaction keeps free (`reserveTokens`)."""
     m = call.model
     entry: dict[str, Any] = {
         "id": m.id,
@@ -271,10 +275,8 @@ def pi(call: Call) -> Expressed:
         "defaultThinkingLevel": "medium" if m.reasoning else "off",
         "quietStartup": True,
     }
-    if m.max_output:
-        settings["compaction"] = {
-            "reserveTokens": reserve(m, m.context_window or 128000)
-        }  # pi's default window
+    window = m.context_window or 128000  # pi's own without one
+    settings["compaction"] = {"reserveTokens": reserve(m, window)}
     return Expressed(
         env={key_env: call.key} if call.key else {},
         secret_env=[key_env] if call.key else [],

@@ -21,9 +21,9 @@ def test_ensure_creates_folders_and_json_files_once(tmp_path: Path) -> None:
     claude = catalog.get("claude-code").descriptor
     on_claude = RunsAs(harness="claude-code", account="perso")
     on_codex = RunsAs(harness="codex", provider="llamacpp")
-    agent = AgentRecord(models=[on_claude, on_codex], scope="/code/x", id="a1")
+    agent = AgentRecord(model=on_claude, scope="/code/x", id="a1")
     folder = agent_state.root(tmp_path, agent, on_claude)
-    # its own, one per model it runs with
+    # its own, one per model it runs with (its own or one picked for a session)
     assert folder == tmp_path / "agent-state" / "a1" / "claude-code@perso"
     assert agent_state.root(tmp_path, agent, on_codex).name == "codex@llamacpp"
     agent_state.ensure(claude, folder)

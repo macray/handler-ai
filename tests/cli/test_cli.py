@@ -69,7 +69,7 @@ def test_run_makes_an_ad_hoc_agent_in_the_current_directory(daemon: Daemon) -> N
     r = run(daemon, "fake", cwd=scope)
     assert r.returncode == 0, r.stderr
     row = agent_row(daemon, scope)
-    assert "(ad hoc)" in row and "fake · account fake" in row
+    assert "outside projects" in row and "fake · account fake" in row
     agent_id = row.split()[0]
     shown = handler(daemon, "agent", "show", agent_id).stdout
     assert agent_id in shown and "fake · account fake" in shown and str(scope) in shown
@@ -182,18 +182,18 @@ def test_service_unit(daemon: Daemon) -> None:
 
 
 def test_addons_bindings_and_selection(daemon: Daemon) -> None:
-    """The repository's addons (shopify) through the CLI; images are covered by tests/addons."""
-    assert "shopify" in handler(daemon, "addon", "list").stdout
+    """The official source's addons (fake-shop) through the CLI; images: tests/addons."""
+    assert "fake-shop" in handler(daemon, "addon", "list").stdout
     bindings = daemon.config_dir / "bindings"
     bindings.mkdir(exist_ok=True)
     (bindings / "shop.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "shopify"\n'
-        'settings = { store = "dev.myshopify.com" }\n'
+        'apiVersion = "handler.binding/v1"\naddon = "fake-shop"\n'
+        'settings = { store = "dev.shop.example.com" }\n'
         'secrets = { theme_token = { env = "HANDLER_TEST_UNUSED" } }\n'
     )
     (bindings / "broken.toml").write_text('apiVersion = "handler.binding/v1"\naddon = "nope"\n')
     listed = handler(daemon, "binding", "list").stdout
-    assert "store=dev.myshopify.com" in listed and "theme_token" in listed
+    assert "store=dev.shop.example.com" in listed and "theme_token" in listed
     assert "unknown addon 'nope'" in listed
 
     scope = daemon.make_scope()
@@ -210,21 +210,43 @@ def test_addons_bindings_and_selection(daemon: Daemon) -> None:
 def test_project_list_and_show(daemon: Daemon) -> None:
     folder = daemon.make_scope()
     agents = [
-        {"models": [{"account": "fake"}], "name": "dev"},
-        {"models": [{"account": "fake"}], "name": "review", "default": True},
+        {"model": {"account": "fake"}, "name": "dev"},
+        {"model": {"account": "fake"}, "name": "review", "default": True},
     ]
     with daemon.http() as c:
         body = {"folder": str(folder), "name": "shop", "agents": agents}
         assert c.post("/v1/projects", json=body).status_code == 201
     listed = handler(daemon, "project", "list").stdout
     row = next(line.split() for line in listed.splitlines() if line.startswith("shop "))
-    assert row[1:] == ["-", "review,", "dev", str(folder)]  # no context; the default agent first
+    assert row[1:] == ["-", "review,", "dev", str(folder)]  # no area; the default agent first
     out = handler(daemon, "project", "show", "shop").stdout
     assert out.splitlines()[0] == f"shop · {folder}"
     rows = [line.split() for line in out.splitlines()[2:] if line.startswith(("review", "dev"))]
     assert [r[0] for r in rows] == ["review", "dev"] and rows[0][1] == "*"
     r = handler(daemon, "project", "show", "nope")
     assert r.returncode == 1 and "no project 'nope'" in r.stderr
+
+
+def test_project_agents_exported_and_imported(daemon: Daemon, tmp_path: Path) -> None:
+    """D.23: a project's agents written as a file (what of yours is left out said), then read
+    again: the address of the web UI's set-up page printed."""
+    folder = daemon.make_scope()
+    agents = [{"model": {"account": "fake"}, "name": "dev", "bindings": ["browser"]}]
+    with daemon.http() as c:
+        body = {"folder": str(folder), "name": "My kit", "agents": agents}
+        assert c.post("/v1/projects", json=body).status_code == 201
+    out = tmp_path / "kit.zip"
+    r = handler(daemon, "project", "export-agents", "My kit", "-o", str(out))
+    assert r.returncode == 0, r.stderr
+    assert f"wrote {out}: dev" in r.stdout
+    assert "account fake" in r.stdout and "addon configuration browser" in r.stdout
+    r = handler(daemon, "project", "import-agents", str(out))
+    assert r.returncode == 0, r.stderr
+    assert "&then=/setup/my-kit" in r.stdout
+    with daemon.http() as c:
+        assert c.get("/v1/agents-files/my-kit").json()["agents"][0]["part"] == "dev"
+    r = handler(daemon, "project", "import-agents", str(tmp_path / "nope.zip"))
+    assert r.returncode == 1 and "no such file" in r.stderr
 
 
 def test_secret_set_list_rm(daemon: Daemon) -> None:
@@ -247,19 +269,19 @@ def test_secret_set_list_rm(daemon: Daemon) -> None:
     assert handler(daemon, "secret", "rm", path).returncode != 0  # 404
 
 
-def test_provider_from_a_template_and_contexts(daemon: Daemon) -> None:
+def test_provider_from_a_template_and_areas(daemon: Daemon) -> None:
     templates = handler(daemon, "provider", "templates").stdout
     assert "llamacpp" in templates and "openrouter" in templates
     with daemon.http() as c:
-        assert c.post("/v1/contexts", json={"name": "Lab", "color": "blue"}).status_code == 201
+        assert c.post("/v1/areas", json={"name": "Lab", "color": "blue"}).status_code == 201
     r = handler(
         daemon, "provider", "add", "local", "--from", "llamacpp", "--model", "tiny",
-        "--endpoint", "openai-chat=http://host.containers.internal:8080/v1", "--context", "Lab",
+        "--endpoint", "openai-chat=http://host.containers.internal:8080/v1", "--area", "Lab",
     )  # fmt: skip
     assert r.returncode == 0 and "local: created" in r.stdout, r.stderr
     with daemon.http() as c:
         made = next(p for p in c.get("/v1/providers").json() if p["name"] == "local")
-    assert [m["id"] for m in made["models"]] == ["tiny"] and made["contexts"] == ["Lab"]
+    assert [m["id"] for m in made["models"]] == ["tiny"] and made["areas"] == ["Lab"]
     assert made["endpoints"]["openai-chat"] == "http://host.containers.internal:8080/v1"
     assert "codex" in made["files"]  # the template's config files come with it
     row = next(line for line in handler(daemon, "provider", "list").stdout.splitlines()
@@ -270,7 +292,7 @@ def test_provider_from_a_template_and_contexts(daemon: Daemon) -> None:
     assert handler(daemon, "provider", "rm", "local").returncode == 0
     assert "local " not in handler(daemon, "provider", "list").stdout
 
-    r = handler(daemon, "account", "add", "lab", "codex", "--context", "Lab")
+    r = handler(daemon, "account", "add", "lab", "codex", "--area", "Lab")
     assert r.returncode == 0, r.stderr
     row = next(line for line in handler(daemon, "account", "list").stdout.splitlines()
                if line.startswith("lab "))  # fmt: skip

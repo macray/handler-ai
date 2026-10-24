@@ -67,7 +67,7 @@
     </div>
     {#if invalid}
       <p class="text-xs text-muted-foreground">
-        {invalid} invalid configuration(s): see <a class="text-link hover:underline" href={href({ view: "settings", section: "addons" })}>Settings → Addons</a>.
+        {invalid} invalid configuration(s): see <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Addons</a>.
       </p>
     {/if}
   </div>

@@ -19,7 +19,7 @@ Built in (always loaded: the web UI's Apps page needs it):
 
 | Addon | Image | Commands | Slots |
 |---|---|---|---|
-| `miniapp` | `localhost/handler-ai-addon-miniapp` | `deno` | none: writes mini apps (`docs/dev/design/miniapps.md`) with its skill and template |
+| `app-builder` | none (Bun is in the toolbox) | none | none: writes apps (`docs/dev/design/apps.md`) with its skill and template |
 
 The others are in the catalog (`../catalog/`, contract G.5): shipped with Handler, loaded only once the
 user installs them. Installing and writing addons, for users: `docs/user/addons.md`.
@@ -31,7 +31,7 @@ the agent's and its project's, its MCP server (`[mcp]`) to every session of the 
 
 Images and updates (contract G.4, same as harness images):
 - `addon.toml` names the image without a tag; agents mount `:latest`.
-- Build or update: `handler image rebuild addon:<name>` or **Rebuild** in the web UI (Settings → Addons). The
+- Build or update: `handler image rebuild addon:<name>` or **Rebuild** in the web UI (Settings → Images). The
   daemon builds an untagged image, checks it (mounted into the toolbox, no network: `bin/` holds exactly
   `commands`, none of them is already in the toolbox, `version` is readable, `check` exits 0), then
   tags it `:latest`. A toolbox rebuild also

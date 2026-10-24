@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/check-update-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "compare": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Compare",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "compare"
+  ],
+  "title": "CheckUpdateRequest",
+  "type": "object"
+}

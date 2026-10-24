@@ -1,5 +1,6 @@
-"""Checking a freshly built harness image before agents get it (contract D.4), and an addon image
-(G.4, `check_addon` at the end).
+"""Checking a freshly built harness image before agents get it (contract D.4), an addon image
+(G.4, `check_addon`), and what Handler needs from a new toolbox but does not stop it for (B.6,
+`check_toolbox`, at the end).
 
 The image is started through the real pipeline (render → compose → sandbox), with no network and a
 dummy value in every secret slot: a harness with a token login on an account (a dummy token), any
@@ -299,6 +300,28 @@ async def check_addon(
                 raise ImageCheckError(f"'{' '.join(manifest.check)}' exited with {code}")
     log("check: commands, version and check ok")
     return version
+
+
+async def check_toolbox(settings: Settings, toolbox: str, log: Log) -> list[str]:
+    """B.6: the toolbox has Bun, which the agents that write apps build and test them with (any
+    version: an app's tests run again on the apps' own when it is deployed, H.6). The toolbox is
+    the person's: without it, a warning (the rebuild still switches), for those agents only."""
+    with _scratch_scope(settings, "toolbox-") as scope:
+        spec = compose.toolbox_check_spec(
+            name=f"handler-check-{uuid.uuid4().hex[:8]}",
+            toolbox=toolbox,
+            scope=scope,
+            argv=["sh", "-c", "command -v bun"],
+        )
+        code, found = await _run_check(spec, log)
+    if code == 0:
+        log(f"check: Bun at {found}")
+        return []
+    log(f"warning: {NO_BUN}")
+    return [NO_BUN]
+
+
+NO_BUN = "The toolbox has no Bun: agents cannot build or test apps."
 
 
 async def _run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:

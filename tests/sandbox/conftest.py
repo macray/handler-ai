@@ -149,8 +149,11 @@ def _spec_fd(doc: dict[str, Any]) -> int:
         return os.dup(f.fileno())  # the dup keeps the (unlinked) file alive
 
 
-def popen(binary: str, doc: dict[str, Any], **kwargs: Any) -> subprocess.Popen[bytes]:
-    """Start `<binary> launch` with the spec on fd 3."""
+def popen(
+    binary: str, doc: dict[str, Any], unchained: bool = False, **kwargs: Any
+) -> subprocess.Popen[bytes]:
+    """Start `<binary> launch` with the spec on fd 3; `unchained`: its proxy never goes out through
+    the upstream one (as on every real host: for local destinations)."""
     fd = _spec_fd(doc)
 
     def setup() -> None:
@@ -161,7 +164,7 @@ def popen(binary: str, doc: dict[str, Any], **kwargs: Any) -> subprocess.Popen[b
             [binary, "launch"],
             pass_fds=(fd, 3),  # 3 must survive close_fds, which runs after preexec_fn
             preexec_fn=setup,  # noqa: PLW1509 — fd 3 is the contract
-            env=os.environ | upstream_env(),
+            env=os.environ | ({} if unchained else upstream_env()),
             **kwargs,
         )
     finally:
@@ -169,9 +172,14 @@ def popen(binary: str, doc: dict[str, Any], **kwargs: Any) -> subprocess.Popen[b
 
 
 def run(
-    binary: str, doc: dict[str, Any], stdin: bytes = b"", timeout: float = 120
+    binary: str,
+    doc: dict[str, Any],
+    stdin: bytes = b"",
+    timeout: float = 120,
+    unchained: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
-    proc = popen(binary, doc, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    pipes = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    proc = popen(binary, doc, unchained=unchained, **pipes)
     out, err = proc.communicate(stdin, timeout=timeout)
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 

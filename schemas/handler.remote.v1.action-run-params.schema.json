@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.remote/v1/action-run-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/action_run` \u2192 RemoteActionRun: an agent's action read again (H.12).",
+  "properties": {
+    "app": {
+      "title": "App",
+      "type": "string"
+    },
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "runId": {
+      "title": "Runid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "app",
+    "action",
+    "runId"
+  ],
+  "title": "ActionRunParams",
+  "type": "object"
+}

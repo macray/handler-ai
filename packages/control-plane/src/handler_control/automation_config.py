@@ -3,7 +3,9 @@ from running in them, and its state (on or off, since when, the cursors, its sch
 
 The folder is the truth: read on every use. handler writes it only when the owner creates one (an
 example copied, or the web UI's form written as automation.toml); never a sandbox (invariant 6).
-The state is handlerd's: `<state>/automations/<name>/state.json`.
+The state is handlerd's: `<state>/automations/<name>/state.json`, with what the names of its file
+were bound to (I.1): the agent it runs, the agents and projects `only` names, by id, and the names
+they were read from.
 
     load, load_all     a folder's automation.toml, parsed (or why it is not)
     problems           what keeps it from running, read from its folder alone (I.1)
@@ -132,11 +134,9 @@ def problems(
     providers_dir: Path,
     store: secrets.SecretStore,
     knowledge_root: Path,
-    projects: set[str],
-    agents: set[str],
 ) -> list[str]:
-    """What keeps it from running (I.1): its file, its models, its notes, the names of `only`
-    (renamed things show up)."""
+    """What keeps it from running (I.1), read from its file alone: the file, its models, its
+    notes."""
     if (definition := loaded.definition) is None:
         return [loaded.error or "invalid"]
     found: list[str] = []
@@ -147,12 +147,6 @@ def problems(
             knowledge.check_note(knowledge_root, append.to)
         except knowledge.KnowledgeError as e:
             found.append(f"append.to {e}")
-    if definition.only is not None:
-        for kind, names, known in (
-            ("project", definition.only.project, projects),
-            ("agent", definition.only.agent, agents),
-        ):
-            found += [f"only.{kind}: no {kind} named {n}" for n in names or [] if n not in known]
     return found
 
 
@@ -165,6 +159,11 @@ class State:
     since: datetime | None = None  # turned on then: stops before are not read (I.7)
     cursors: dict[str, int] = field(default_factory=dict)  # session id → last seq a run covered
     last_slot: datetime | None = None  # the schedule's slot it last ran for (I.2)
+    # what its names were bound to (I.1): the agent run's, {"id", "name", "project"} (the names
+    # it was read from); `only`'s agents (a name: every agent of that name then) and projects
+    agent: dict[str, Any] | None = None
+    only_agents: dict[str, list[str]] = field(default_factory=dict)
+    only_projects: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -172,6 +171,9 @@ class State:
             "since": self.since.isoformat() if self.since else None,
             "cursors": self.cursors,
             "lastSlot": self.last_slot.isoformat() if self.last_slot else None,
+            "agent": self.agent,
+            "onlyAgents": self.only_agents,
+            "onlyProjects": self.only_projects,
         }
 
 
@@ -190,6 +192,9 @@ def read_state(state_root: Path, name: str) -> State:
             since=datetime.fromisoformat(data["since"]) if data.get("since") else None,
             cursors={str(k): int(v) for k, v in (data.get("cursors") or {}).items()},
             last_slot=datetime.fromisoformat(data["lastSlot"]) if data.get("lastSlot") else None,
+            agent=data.get("agent"),
+            only_agents={str(k): list(v) for k, v in (data.get("onlyAgents") or {}).items()},
+            only_projects={str(k): str(v) for k, v in (data.get("onlyProjects") or {}).items()},
         )
     except (ValidationError, ValueError, TypeError):
         return State()

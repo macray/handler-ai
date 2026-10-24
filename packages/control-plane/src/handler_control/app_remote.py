@@ -1,4 +1,4 @@
-"""Mini apps from paired devices (H.8, docs/dev/design/miniapps.md §5.2): the `app:<name>` channel
+"""Apps from paired devices (H.8, docs/dev/design/apps.md §5.2): the `app:<name>` channel
 of the remote connector. The phone never talks to the app's origin: it gets the app's UI as one
 self-contained HTML page, shows it in a sandboxed frame with no network, and carries its backend
 calls here, sealed like everything else.
@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from handler_contracts import (
     API_PREFIX,
     PERSON_HEADER,
+    START_HEADER,
     AppHttpAnswer,
     AppHttpParams,
     AppUi,
@@ -185,6 +186,9 @@ class AppChannel:
             backend = await self.store.ensure_running(name)
         except AppError as e:
             return answer(503, {"content-type": "text/plain"}, f"{name} did not start: {e}")
+        start = self.store.issue_start(name, person)  # H.11: the owner's, until it is answered
+        if start is not None:
+            headers[START_HEADER] = start
         try:
             async with backend.client.stream(
                 method, target.path, params=target.query, headers=headers, content=body
@@ -197,6 +201,8 @@ class AppChannel:
                         return answer(502, {}, f"the answer is over {RESPONSE_BYTES // 2**20} MiB")
         except httpx.HTTPError as e:
             return answer(502, {"content-type": "text/plain"}, f"{name} did not answer: {e}")
+        finally:
+            self.store.end_start(start)
         kept = {k: v for k, v in r.headers.items() if k.lower() in RESPONSE_HEADERS}
         return answer(r.status_code, kept, data)
 

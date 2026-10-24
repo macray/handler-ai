@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "AgentInterface": {
-      "description": "What a run of an agent takes and gives back (D.18): a form, a handler object to work on, and\nthe result its final message holds. An agent with one runs unattended, so in permission mode\n`bypass`: no one is there to answer its requests.",
+      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
       "properties": {
         "fields": {
           "anyOf": [
@@ -18,46 +18,52 @@
           "default": null,
           "title": "Fields"
         },
-        "subject": {
+        "result": {
           "anyOf": [
             {
-              "const": "skill",
-              "type": "string"
+              "additionalProperties": true,
+              "type": "object"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Subject"
-        },
-        "result": {
-          "additionalProperties": true,
-          "title": "Result",
-          "type": "object"
+          "title": "Result"
         },
         "timeoutSec": {
-          "default": 1800,
-          "exclusiveMinimum": 0,
-          "maximum": 86400,
-          "title": "Timeoutsec",
-          "type": "integer"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 86400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutsec"
         }
       },
-      "required": [
-        "result"
-      ],
       "title": "AgentInterface",
       "type": "object"
     },
     "AgentModel": {
-      "description": "One of an agent's models (D.1): its harness resolved, and what it needs now.",
+      "description": "An agent's model (D.1): its harness resolved, and what it needs now.",
       "properties": {
         "harness": {
-          "minLength": 1,
-          "pattern": "^[a-z0-9][a-z0-9-]*$",
-          "title": "Harness",
-          "type": "string"
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Harness"
         },
         "account": {
           "anyOf": [
@@ -127,6 +133,61 @@
       "title": "AgentModel",
       "type": "object"
     },
+    "AgentOrigin": {
+      "description": "What an agent was set up from, kept for good: the definition of an app's need (H.2), an\nagents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it\ncame from: where the agent lives is its home (`projectId`, `app`, `chat`).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "app",
+            "agents-file",
+            "handler-need"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "AgentOrigin",
+      "type": "object"
+    },
     "Connection": {
       "description": "One of an agent's running sandboxes: a plain connection (C), a session's (F) or a\nterminal's (D.16).",
       "properties": {
@@ -164,7 +225,7 @@
       "type": "object"
     },
     "ModelAccess": {
-      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one or more (D.1); a session runs with one.",
+      "description": "What an agent runs as (E): a harness and the account or the provider its model calls use\n(exactly one), and the model. An agent has one (D.1); a session runs with it or another picked\nfor that session (D.19). An agent on the model alone (D.18) has no harness: a provider only\n(AgentSettings checks it).",
       "properties": {
         "harness": {
           "anyOf": [
@@ -245,14 +306,10 @@
       "type": "object"
     }
   },
-  "description": "What sessions are opened on: a harness on an account or a provider (what, one of its\nmodels) working in a folder (where), with its settings. An agent of a project has a\n`projectId` (its settings all its own; its folder, caches and skills its project's); an\nad-hoc one has none (`handler run`, `handler acp` and `handler terminal` outside projects).",
+  "description": "What sessions are opened on: a harness on an account or a provider (what, its model)\nworking in a folder (where), with its settings. Its home: a project (`projectId`: its\nsettings all its own; its folder, caches and skills its project's), an app (`app`: one of its\nparts), Chat (`chat`: someone you talk to), or none (outside projects: made on the Other\nfolders page, or by `handler run`, `handler acp` and `handler terminal`).",
   "properties": {
-    "models": {
-      "items": {
-        "$ref": "#/$defs/AgentModel"
-      },
-      "title": "Models",
-      "type": "array"
+    "model": {
+      "$ref": "#/$defs/AgentModel"
     },
     "network": {
       "enum": [
@@ -341,6 +398,11 @@
       ],
       "default": null
     },
+    "modelAlone": {
+      "default": false,
+      "title": "Modelalone",
+      "type": "boolean"
+    },
     "scope": {
       "anyOf": [
         {
@@ -405,7 +467,7 @@
       "default": null,
       "title": "Instructions"
     },
-    "origin": {
+    "app": {
       "anyOf": [
         {
           "type": "string"
@@ -415,7 +477,23 @@
         }
       ],
       "default": null,
-      "title": "Origin"
+      "title": "App"
+    },
+    "chat": {
+      "default": false,
+      "title": "Chat",
+      "type": "boolean"
+    },
+    "origin": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentOrigin"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "remoteStart": {
       "default": false,
@@ -438,7 +516,7 @@
       "title": "Projectskills",
       "type": "array"
     },
-    "context": {
+    "area": {
       "anyOf": [
         {
           "type": "string"
@@ -448,7 +526,7 @@
         }
       ],
       "default": null,
-      "title": "Context"
+      "title": "Area"
     },
     "acpUrl": {
       "title": "Acpurl",
@@ -481,7 +559,7 @@
     }
   },
   "required": [
-    "models",
+    "model",
     "network",
     "confinement",
     "permissions",
