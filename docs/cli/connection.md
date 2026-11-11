@@ -18,6 +18,19 @@ A connection is what an agent gets: `github-agent` is the `github` tool as the a
 token; `browser` is the `playwright` tool with its default settings. Make one in the web UI (Library → Tools → its name →
 Connect); it is kept in `~/.config/handler-ai/connections/` ([where things are kept](../configuration.md)).
 
+You can also write one by hand, `~/.config/handler-ai/connections/github-agent.toml` (the token
+of an account made for the agent: `tools/github/PROVISIONING.md` of the tool's source):
+
+```toml
+apiVersion  = "handler.connection/v1"
+tool        = "github"
+description = "GitHub, as the agent's own account"
+secrets     = { token = { command = ["pass", "show", "github/agent-token"] } }
+```
+
+`browser.toml` needs only the first three lines (`tool = "playwright"`), plus `settings = {
+headless = "1" }` to keep it headless.
+
 ## Output
 
 One line per connection: its name, its tool, its settings, the secrets it refers to, its error if

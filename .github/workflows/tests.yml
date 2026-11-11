@@ -47,3 +47,18 @@ jobs:
       - run: uv sync --locked
       - run: uv run ty check --python-platform darwin
       - run: uv run pytest -n auto --dist loadfile -rs
+
+  # what the release workflow checks before PyPI: the wheel, installed as a user does in a bare
+  # container (scripts/smoke-install.sh); here too, so that a release is not the first to see it
+  install:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-24.04
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no major tags since its v8
+      - uses: oven-sh/setup-bun@v2
+      - run: uv sync --locked
+      - run: scripts/build-wheel.sh dist
+      - run: CONTAINER=docker scripts/smoke-install.sh dist/handler_ai-*.whl

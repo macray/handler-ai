@@ -344,10 +344,12 @@ def test_a_file_given_is_that_file_until_replaced(runtime: Runtime, scope: Path)
     agenda.write_text("a\n")
     try:
         given = {"source": str(agenda), "target": str(agenda), "writable": False}
-        script = f"cat {agenda}; sleep 3; cat {agenda}; sleep 3; cat {agenda}"
+        # `-` once the first cat has ended: written to before, it reads on and prints `b` too
+        script = f"cat {agenda}; echo -; sleep 3; cat {agenda}; sleep 3; cat {agenda}"
         proc = popen(runtime.binary, spec(scope, sh(script), folders=[given]), stdout=-1, stderr=-1)
         assert proc.stdout is not None
         assert proc.stdout.readline() == b"a\n"
+        assert proc.stdout.readline() == b"-\n"
         with agenda.open("a") as f:  # in place
             f.write("b\n")
         time.sleep(4)  # its second read

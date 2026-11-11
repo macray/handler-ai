@@ -116,7 +116,7 @@ rw at the **same absolute path**) × its settings. A **project** groups a folder
 ACP connections get one ephemeral sandbox each; daemon-held **sessions** (contract F) own a sandbox
 that outlives WebSocket attachments and are what the web UI, `handler run/start/attach`, runs and
 phones use. Configuration is TOML in `~/.config/handler-ai/`: `accounts/`, `providers/`, `connections/`
-(tool × credentials; `bindings` in the code), `skills/`, `folders.toml`; examples in `examples/`. Agents and projects
+(tool × credentials; `bindings` in the code), `skills/`, `folders.toml` (a connection example: `docs/cli/connection.md`). Agents and projects
 are daemon state (`~/.local/state/handler-ai/agents.json`, `projects.json`).
 
 ## Design principles

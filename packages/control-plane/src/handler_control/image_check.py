@@ -47,6 +47,7 @@ from .sandbox_process import stop
 from .settings import Settings
 
 CHECK_TIMEOUT = 180.0  # image start included
+STDERR_DRAIN_TIMEOUT = 5.0
 DUMMY_SECRET = "handler-image-check"
 CLIENT_INFO = {"name": "handler-image-check", "version": "1"}
 # in the check's scratch scope: the probe server's environment
@@ -374,6 +375,9 @@ async def _run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:
         async with asyncio.timeout(CHECK_TIMEOUT):
             out = await proc.stdout.read()
             code = await proc.wait()
+        # its last lines (why it did not start) read before `said` is: a process ended can
+        # still have them in the pipe; a little while only (a child of its may hold stderr open)
+        await asyncio.wait({stderr}, timeout=STDERR_DRAIN_TIMEOUT)
     except TimeoutError:
         raise ImageCheckError(f"no answer within {CHECK_TIMEOUT:.0f} s") from None
     finally:

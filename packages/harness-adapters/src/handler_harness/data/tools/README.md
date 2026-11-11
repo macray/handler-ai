@@ -14,7 +14,7 @@ tools/<name>/
 
 A tool is generic. To use one that has settings, write a **connection** in
 `~/.config/handler-ai/connections/<name>.toml` (`handler.connection/v1`: the tool, its settings,
-secret references; example in `examples/connections/`) and give it to an agent (web UI: **Tools**
+secret references; example in `docs/cli/connection.md`) and give it to an agent (web UI: **Tools**
 in its form; CLI: `--tool NAME=CONNECTION`).
 
 Built in (always loaded: the web UI's Apps page needs it):

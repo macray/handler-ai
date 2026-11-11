@@ -3,6 +3,18 @@
 What each release lets you do, grouped by what you do. One release is one commit in the public
 repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+## 0.3.2
+
+### Fixed
+
+- A toolbox build whose check could not start sometimes said only "its check exited with 66",
+  not why.
+
+### Changed
+
+- **Connection examples are in the docs** ([`handler connection`](docs/cli/connection.md)): the
+  `examples/` folder is gone.
+
 ## 0.3.1
 
 ### Fixed
