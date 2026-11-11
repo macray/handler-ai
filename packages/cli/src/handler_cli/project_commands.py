@@ -6,8 +6,8 @@ handler project show NAME            its agents (`*`: the default one), what eac
                                      settings
 handler project export-agents NAME   its agents (all, or those named with --agent) as one file,
     [--agent AGENT]... [-o FILE]     NAME-agents.zip, to set them up in another project or to
-                                     share (D.23): never their models, folder, addon
-                                     configurations, knowledge folders or conversations. Says what
+                                     share (D.23): never their models, folder, tool
+                                     connections, notes folders or conversations. Says what
                                      it leaves out
 handler project import-agents FILE   read an agents file: its agents are then set up in the web
                                      UI (it asks each one's model): the page's address is printed
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent_commands import describe_agent, runs
-from .client import ClientError, Daemon, base_url, read_token
+from .client import ClientError, Daemon
 from .output import table
 from .session_commands import agent_label
 
@@ -118,7 +118,7 @@ def import_agents(d: Daemon, file: str, source_id: str | None) -> int:
         read = d.request("POST", "/v1/agents-files/import", content=path.read_bytes()).json()
     for a in read["agents"]:
         print(f"  {a['definition']['agentName']}: {a['definition'].get('agentDescription') or ''}")
-    url = f"{base_url()}/#token={read_token()}&then=/setup/{read['name']}"
+    url = d.call("POST", "/v1/ui/open", {"then": f"/setup/{read['name']}"})["url"]
     print(f"set them up in the web UI (it asks each one's model): {url}")
     return 0
 

@@ -47,11 +47,11 @@ def cut(text: str) -> str:
     return f"{text[:HEAD]}\n… ({left} characters left out) …\n{text[-TAIL:]}"
 
 
-def fenced(text: str, info: str = "") -> str:
+def fenced(text: str) -> str:
     """A code block that the text cannot close (its fence is longer than any run of backticks)."""
     longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
     fence = "`" * max(3, longest + 1)
-    return f"{fence}{info}\n{text}\n{fence}"
+    return f"{fence}\n{text}\n{fence}"
 
 
 def block_text(block: Any) -> str:
@@ -129,8 +129,16 @@ def line(event: Event) -> str | None:
         "started": "Agent started",
         "stopped": f"Session stopped{how}: {detail}",
         "permission answered": f"Permission answered: {detail}",
+        "told agent": f"Handler told the agent: {event.get('text', '')}",
+        "model unreached": f"Handler: {model_unreached(event)}",
     }.get(event.get("event", ""))
     return f"[{seq}] {shown}" if shown else None
+
+
+def model_unreached(event: Event) -> str:
+    """What Handler said of the model's host not answering (F.9), as the session showed it."""
+    local = " Is the server listening on 0.0.0.0?" if event.get("local") else ""
+    return f"The model at {event.get('host')} does not answer ({event.get('error')}).{local}"
 
 
 def render(events: Sequence[Event], header: Sequence[tuple[str, str]]) -> str:

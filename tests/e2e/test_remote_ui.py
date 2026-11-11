@@ -41,7 +41,7 @@ def daemon() -> Iterator[Daemon]:
 def desk(browser: Browser, daemon: Daemon) -> Iterator[Page]:
     context = browser.new_context()
     page = context.new_page()
-    page.goto(f"{daemon.base_url}/#token={daemon.token}")
+    page.goto(daemon.ui_url())
     yield page
     context.close()
 
@@ -66,9 +66,9 @@ def say(phone: Page, text: str) -> None:
 
 
 def set_up_remote(desk: Page, daemon: Daemon, gateway: Gateway, name: str) -> str:
-    """Settings → Remote: the gateway, then a new device; returns its pairing link."""
-    desk.goto(f"{daemon.base_url}/#/settings/remote")
-    settings = desk.get_by_test_id("remote-settings")
+    """Settings → Your phone: the gateway, then a new device; returns its pairing link."""
+    desk.goto(f"{daemon.base_url}/#/settings/phone")
+    settings = desk.get_by_test_id("phone-settings")
     if settings.get_by_test_id("gateway-url").is_visible():
         settings.get_by_test_id("gateway-url").fill(gateway.url)
         settings.get_by_test_id("host-token").fill(gateway.host_token)
@@ -84,6 +84,11 @@ def set_up_remote(desk: Page, daemon: Daemon, gateway: Gateway, name: str) -> st
     return link
 
 
+@pytest.mark.rule(
+    "device.paired-from-this-computer-only",
+    "share.off-closes-the-devices-at-once",
+    "phone.an-ordinary-attachment",
+)
 def test_phone_drives_a_shared_session(
     desk: Page, phone: Page, daemon: Daemon, gateway: Gateway
 ) -> None:
@@ -94,8 +99,6 @@ def test_phone_drives_a_shared_session(
     toggle = desk.get_by_test_id("remote-toggle")
     toggle.click()
     expect(toggle).to_have_attribute("aria-pressed", "true")
-    # the menu says it on the session's line (a phone), not in a Remote row
-    expect(desk.get_by_test_id("session-item").get_by_test_id("session-shared")).to_have_count(1)
 
     # the phone pairs (the key leaves the address bar) and lists it
     phone.goto(link)
@@ -110,7 +113,8 @@ def test_phone_drives_a_shared_session(
     say(phone, "hello from the phone")
     expect(phone.get_by_test_id("agent-message").last).to_have_text("ok", timeout=20_000)
     expect(phone.get_by_test_id("send-state")).to_have_count(0)  # delivered: nothing said
-    expect(desk.get_by_test_id("user-message").last).to_have_text("hello from the phone")
+    # the session's first prompt: what its filtered network means, then the person's words
+    expect(desk.get_by_test_id("user-message").last).to_contain_text("hello from the phone")
 
     # a permission request: asked on both, answered on the phone, withdrawn on the desk
     say(phone, "permission")
@@ -126,7 +130,9 @@ def test_phone_drives_a_shared_session(
     interrupt = phone.get_by_test_id("interrupt")
     interrupt.click()
     expect(interrupt).to_have_text("Tap again to interrupt")
-    expect(phone.get_by_test_id("working")).to_be_visible()
+    # the first tap only asks: the status line says so instead of "working", nothing stops
+    expect(phone.get_by_text("Tap ■ again to interrupt")).to_be_visible()
+    expect(phone.get_by_test_id("turn-stopped")).to_have_count(0)
     interrupt.click()
     expect(phone.get_by_test_id("turn-stopped")).to_contain_text("Interrupted", timeout=20_000)
     expect(desk.get_by_test_id("turn-stopped")).to_contain_text("Interrupted")
@@ -139,6 +145,7 @@ def test_phone_drives_a_shared_session(
     expect(phone.get_by_test_id("shared-session")).to_have_count(0, timeout=20_000)
 
 
+@pytest.mark.rule("device.revoked-is-refused")
 def test_revoked_phone_is_locked_out(
     desk: Page, phone: Page, daemon: Daemon, gateway: Gateway
 ) -> None:
@@ -153,6 +160,7 @@ def test_revoked_phone_is_locked_out(
     expect(phone.get_by_text("The gateway does not know this device")).to_be_visible(timeout=40_000)
 
 
+@pytest.mark.rule("phone.starts-only-the-agents-you-marked")
 def test_phone_starts_a_session(desk: Page, phone: Page, daemon: Daemon, gateway: Gateway) -> None:
     """An agent marked "Can be started from your phone": the phone starts a session with a
     request, opens it once the host shares it, and the desk lists it under its project."""
@@ -183,7 +191,5 @@ def test_phone_starts_a_session(desk: Page, phone: Page, daemon: Daemon, gateway
     expect(phone.get_by_test_id("session-group").filter(has_text="shop")).to_be_visible()
 
     desk.goto(f"{daemon.base_url}/#/projects/{project['id']}")
-    item = desk.get_by_label("open sessions").locator(
-        f'[data-testid="session-item"][title$="{folder}"]'
-    )
-    expect(item).to_contain_text("coder · report", timeout=15_000)  # listed there too (polled)
+    item = desk.get_by_test_id("agent-session").filter(has_text="report")
+    expect(item).to_be_visible(timeout=15_000)  # listed with its agent's sessions

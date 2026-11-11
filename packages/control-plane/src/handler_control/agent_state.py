@@ -1,7 +1,9 @@
 """The state handler keeps for an agent: the harness's own history and settings (contract E).
 
     <data>/agent-state/<agent id>/<harness>@<account|provider>/<slot>
-                                        one folder or file per state slot of the harness
+                                        one folder per state slot of the harness: the slot
+                                        itself, or, for a file, the folder holding only it
+                                        (`<slot>/<slot>`, contract A.1)
 
 Each agent keeps its own (a project's transcripts never reach another project), one per model it
 runs with: the harness's and its login's (another harness never reads them). Every state slot of
@@ -36,10 +38,11 @@ def ensure(descriptor: HarnessDescriptor, folder: Path) -> None:
     rewritten once there."""
     for name in owned_slots(descriptor):
         slot = descriptor.state_slots[name]
-        path = folder / name
         if slot.kind == "dir":
-            path.mkdir(parents=True, mode=0o700, exist_ok=True)
-        elif not path.exists():
+            (folder / name).mkdir(parents=True, mode=0o700, exist_ok=True)
+            continue
+        path = folder / name / name
+        if not path.exists():
             path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
             default = "{}\n" if slot.target.endswith(".json") else ""
             path.write_text(slot.initial if slot.initial is not None else default)

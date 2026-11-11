@@ -443,6 +443,26 @@
           "default": null,
           "title": "Error"
         },
+        "refused": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RefusedHost"
+          },
+          "title": "Refused",
+          "type": "array"
+        },
+        "said": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Said"
+        },
         "createdAt": {
           "format": "date-time",
           "title": "Createdat",
@@ -485,6 +505,42 @@
         }
       },
       "title": "AutomationServices",
+      "type": "object"
+    },
+    "RefusedHost": {
+      "description": "A host the network filter refused to a run, or to a session while nobody could answer, and\nthe agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your\nanswer (as the agent's lists say now).",
+      "properties": {
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowed",
+                "kept blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision"
+        }
+      },
+      "required": [
+        "host",
+        "count"
+      ],
+      "title": "RefusedHost",
       "type": "object"
     },
     "Schedule": {

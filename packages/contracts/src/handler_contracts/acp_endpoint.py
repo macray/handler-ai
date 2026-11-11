@@ -28,7 +28,7 @@ class AcpCloseCode(IntEnum):
     ATTACHED_ELSEWHERE = 4001  # F.7: more attachments than allowed, the oldest is closed
     SESSION_STOPPED = 4002  # F.4: stop, idle timeout or agent exit
     TOO_SLOW = 4003  # F.7: the client did not read its traffic fast enough
-    # remote access to the session was switched off (docs/dev/design/remote.md)
+    # remote access to the session was switched off (remote design)
     REMOTE_DISABLED = 4004
 
 
@@ -38,6 +38,8 @@ class SessionErrorCode(IntEnum):
     ONE_SESSION_PER_ATTACHMENT = -32010
     TURN_IN_PROGRESS = -32011
     UNATTENDED = -32012  # a run of a job takes no prompt (D.18)
+    NOT_REFUSED_HERE = -32013  # a card's answer for a host not blocked in this session (F.9)
+    NOT_APPLIED = -32014  # a card's answer saved, not applied to every running sandbox (F.9)
 
 
 class PolicyErrorCode(IntEnum):
@@ -51,12 +53,16 @@ class PolicyErrorCode(IntEnum):
 
 PolicyRule = Literal["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"]
 
-BLOCKED_AGENT_METHOD_PREFIXES = ("fs/", "terminal/")
-"""Agent→client methods never forwarded (P4)."""
+AGENT_REQUESTS = ("session/request_permission",)
+"""The agent→client requests passed (P4): any other is answered with an error, never passed."""
 
-CWD_CHECKED_METHODS = ("session/new", "session/load", "session/resume")
-"""Client→agent methods whose `cwd` is checked against the scope (P2), and which get the
-platform's MCP servers (P8)."""
+AGENT_NOTIFICATIONS = ("session/update",)
+"""The agent→client notifications passed, besides extensions (`_…`, P6): any other is dropped
+(P4)."""
+
+SESSION_METHODS = ("session/new", "session/load", "session/resume")
+"""Client→agent methods that start or reopen a conversation: they get the platform's MCP servers
+(P8) and their `cwd` is checked (P2), as is that of any other request carrying one."""
 
 
 def acp_path(agent_id: str) -> str:

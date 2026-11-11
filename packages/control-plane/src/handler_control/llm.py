@@ -26,8 +26,7 @@ import httpx
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from handler_contracts import LlmRequest, LlmResponse, LlmUsage, Provider
-from handler_harness.providers import CONTAINER_HOST
+from handler_contracts import CONTAINER_HOST, LlmRequest, LlmResponse, LlmUsage, Provider
 
 from . import interfaces, providers, secrets
 from .services import ServiceError

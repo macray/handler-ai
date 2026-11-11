@@ -169,10 +169,6 @@ def resolve(ref: SecretRef, store: SecretStore) -> str:
     raise SecretError(f"unsupported secret reference {ref!r}")
 
 
-def resolve_all(refs: dict[str, SecretRef] | None, store: SecretStore) -> dict[str, str]:
-    return {slot: resolve(ref, store) for slot, ref in (refs or {}).items()}
-
-
 # A vendor's prefix ("sk-ant-oat01-", "github_pat_", "shptka_"): words ending with "-" or "_", the
 # first of letters only. Kept in a phantom (some clients check a key's form) when what follows
 # is long enough to stay secret.
@@ -234,7 +230,7 @@ def visible(value: str | None, hosts: Sequence[str] | None) -> str | None:
     words for the person; None when its proxy gives it. `value` None: not known (a command's,
     not run)."""
     if hosts is None:
-        return "its addon gives it as it is (it signs with it, or does not speak HTTP)"
+        return "its tool gives it as it is (it signs with it, or does not speak HTTP)"
     if not hosts:
         return "no host to give it to: what it belongs to reaches none"
     if value is not None and not _INJECTABLE.match(value):

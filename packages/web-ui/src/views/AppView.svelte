@@ -1,5 +1,6 @@
 <script lang="ts">
-  // An app's page (contract H, docs/dev/design/apps.md), `#/apps/<name>`: what it is and Open
+  import PinButton from "../components/PinButton.svelte";
+  // An app's page (contract H, apps design), `#/apps/<name>`: what it is and Open
   // first (a new version to deploy said there); then what you gave it (its folders, agents and
   // secrets: each its value and Change…, a dialog changes it), its actions, what you can ask it (H.12, each
   // with Try), what runs by itself (its suggested automations), Under the hood folded (its code,
@@ -33,6 +34,7 @@
   import Dialog from "../components/Dialog.svelte";
   import FolderPicker from "../components/FolderPicker.svelte";
   import LoadingCards from "../components/LoadingCards.svelte";
+  import HelperCard from "../components/HelperCard.svelte";
   import PageHeader from "../components/PageHeader.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import When from "../components/When.svelte";
@@ -40,6 +42,7 @@
   import { Input } from "$lib/components/ui/input";
   import { appOf } from "../lib/agents";
   import { agentChoice, reaches, suggested } from "../lib/apps";
+  import { runtime } from "../lib/runtime.svelte";
   import { fromSourceWords } from "../lib/sources";
   import { api } from "../lib/api";
   import { whenSentence } from "../lib/automations";
@@ -54,6 +57,7 @@
   let error = $state<string | null>(null);
   let busy = $state<string | null>(null); // what it is doing ("deploying…")
   let problem = $state<string | null>(null);
+  let creatorCard = $state(false); // no App creator yet: its set-up card
   let log = $state<string | null>(null); // its log, shown under the hood
   let agents = $state<Agent[]>([]); // to name the agents its needs are given
   let automations = $state<AutomationView[]>([]); // which of its suggestions are made
@@ -81,7 +85,7 @@
   };
 
   // Apps are shared with persons, not devices: you ("owner") and the persons family members'
-  // devices were paired for (Settings → Remote).
+  // devices were paired for (Settings → Your phone).
   const devicesOf = $derived.by(() => {
     const out: Record<string, string[]> = { owner: [] };
     for (const d of remote.status?.devices ?? []) (out[d.person ?? "owner"] ??= []).push(d.name);
@@ -223,15 +227,16 @@
   const stateWords = (a: App): string => (a.state === "stopped" ? "asleep, starts when opened" : a.state === "failed" ? "failed" : a.state);
 </script>
 
-<PageHeader title={name} parent={{ label: "Apps", href: href({ view: "apps" }) }} titled>
+<PageHeader width="max-w-5xl" title={name} parent={{ label: "Apps", href: href({ view: "apps" }) }}>
   {#snippet actions()}
     {#if app}
+      <PinButton kind="app" id={name} label={name} withText />
       {#if !draft}
         <Button
           size="sm"
           variant="ghost"
           title={app.fromSource ? "With the App creator, on a draft of its code: once used, it is yours (its source no longer offers it a new version)" : "With the App creator, on a draft of its code"}
-          onclick={() => act("opening the App creator…", () => startDraft(name))}
+          onclick={() => act("opening the App creator…", async () => (creatorCard = !(await startDraft(name))))}
           data-testid="app-improve"><WandSparkles />Change it</Button
         >
       {/if}
@@ -242,6 +247,11 @@
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-5xl px-8 py-10" data-testid="app-page">
     {#if error}<p class="text-sm text-danger" data-testid="apps-error">{error}</p>{/if}
+    {#if creatorCard}
+      <div class="mb-8">
+        <HelperCard need="app-creator" title={`Change ${name}`} onready={() => ((creatorCard = false), void act("opening the App creator…", () => startDraft(name)))} />
+      </div>
+    {/if}
     {#if !app}
       {#if !error}<LoadingCards count={2} height="h-24" />{/if}
     {:else}
@@ -252,7 +262,6 @@
       <div class="flex flex-wrap items-center gap-4">
         <span class="flex size-14 shrink-0 items-center justify-center rounded-2xl {a.state === 'failed' ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}"><AppWindow class="size-7" /></span>
         <div class="min-w-0 flex-1 space-y-1.5">
-          <h1 class="text-[1.75rem] leading-tight font-semibold tracking-[-0.022em]">{a.name}</h1>
           {#if a.description ?? a.source.description}<p class="text-sm text-muted-foreground">{a.description ?? a.source.description}</p>{/if}
           <p class="flex flex-wrap items-center gap-2 text-xs">
             <span class="fact">{fromSourceWords(a.fromSource, []) ?? "made by you"} · {a.current ? a.current.version : "not installed"}</span>
@@ -325,11 +334,17 @@
                 {#each a.files ?? [] as f (f.name)}
                   {@const home = f.path ? projects.list.find((p) => p.folder === f.path) : undefined}
                   <li class="flex items-center gap-3 px-4 py-3 {f.path ? '' : 'bg-warn/10'}" data-testid="app-need-folder">
-                    <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Folder class="size-4" /></span>
+                    <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">{#if f.file}<FileText class="size-4" />{:else}<Folder class="size-4" />{/if}</span>
                     <div class="min-w-0 flex-1">
-                      <p class="text-xs text-muted-foreground">{f.description ?? "A folder"} · {f.mode === "rw" ? "it reads and writes it" : "it reads it"}</p>
+                      <p class="text-xs text-muted-foreground">{f.description ?? (f.file ? "A file" : "A folder")} · {f.mode === "rw" ? "it reads and writes it" : "it reads it"}</p>
                       {#if f.path}
                         <p class="truncate font-mono text-[13px] font-medium" title={f.path}>{f.path}</p>
+                        {#if f.file}
+                          <p class="text-xs text-muted-foreground" data-testid="app-need-file-hint">
+                            {name} sees what you change in this file. If your editor replaces the file when it saves, {name} sees your changes after a restart.
+                            {#if a.state === "running" && !busy}<button type="button" class="text-link hover:underline" onclick={() => act("restarting…", () => api.stopApp(a.name))} data-testid="app-need-file-restart">Restart</button>{/if}
+                          </p>
+                        {/if}
                         {#if home}<p class="text-xs text-muted-foreground">the folder of the project <a class="text-link hover:underline" href={href({ view: "project", id: home.id })}>{home.name}</a></p>{/if}
                       {:else}
                         <p class="font-medium text-warn">Not given yet</p>
@@ -532,6 +547,11 @@
               <ul class="space-y-1.5 text-muted-foreground">
                 {#each reaches(a.current.needs, a, agentName) as line (line)}<li>{line}</li>{/each}
               </ul>
+              {#if runtime.last?.supports?.limits === false}
+                <p class="text-xs text-warn" data-testid="app-no-limits">
+                  Its memory and CPU limits are not applied on this computer: it can use all of them (Settings → Sandboxes says why).
+                </p>
+              {/if}
               <p class="text-xs text-muted-foreground">What {a.current.version} asked for when you deployed it; a version that asks for more says so before it is deployed.</p>
             {:else}
               <p class="text-muted-foreground">Said on its install page, before anything is installed.</p>
@@ -541,7 +561,7 @@
           {#if a.current}
             <section class="space-y-2 rounded-[10px] border bg-card p-4 shadow-panel" data-testid="app-persons">
               <h2 class="font-semibold">On phones</h2>
-              <p class="text-xs text-muted-foreground">It always opens on this computer. Also on the paired phones of the people ticked here (Settings → Remote).</p>
+              <p class="text-xs text-muted-foreground">It always opens on this computer. Also on the paired phones of the people ticked here (Settings → Your phone).</p>
               <div class="flex flex-wrap gap-2">
                 {#each [...new Set([...Object.keys(devicesOf), ...(a.persons ?? [])])].sort() as person (person)}
                   {@const names = devicesOf[person] ?? []}

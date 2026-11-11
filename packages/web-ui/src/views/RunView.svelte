@@ -14,7 +14,6 @@
   import * as Collapsible from "$lib/components/ui/collapsible";
   import OutputView from "../components/OutputView.svelte";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import { api } from "../lib/api";
   import type { Agent, Session } from "../lib/contracts.gen";
@@ -109,7 +108,7 @@
 
   async function remove(): Promise<void> {
     if (!run || !confirm("Delete this run, its result and its conversation?")) return;
-    const back = agent ? { view: "agent" as const, id: agent.id } : { view: "home" as const };
+    const back = agent ? { view: "agent" as const, id: agent.id } : { view: "projects" as const };
     await api.deleteSession(run.id);
     navigate(back, true);
   }
@@ -123,7 +122,7 @@
   };
 </script>
 
-<PageHeader {title} {parent} titled>
+<PageHeader width="max-w-4xl" {title} {parent}>
   {#snippet actions()}
     {#if run?.waitingFor}
       <Button variant="ghost" size="sm" onclick={cancel} title="It will not start" data-testid="run-cancel"><X />Cancel</Button>
@@ -147,8 +146,7 @@
 </PageHeader>
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-4xl space-y-8 px-8 py-10">
-    <PageTitle {title} description="An unattended run: what it was given and what it gave back." />
-    {#if error}<p class="text-sm text-danger">{error}</p>{/if}
+        {#if error}<p class="text-sm text-danger">{error}</p>{/if}
     {#if run}
       {#if kept && agent}
         <p class="text-sm" data-testid="run-kept">Kept as a check: <a class="text-link hover:underline" href={href({ view: "agent", id: agent.id })}>its checks</a>.</p>

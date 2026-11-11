@@ -1,7 +1,7 @@
 # handler-gateway — remote-control relay
 
 A mailbox between Handler hosts and their paired devices (phone, tablet), for remote control of
-shared agent sessions ([`docs/dev/design/remote.md`](../docs/dev/design/remote.md)). Handler polls it outbound; Handler never
+shared agent sessions. Handler polls it outbound; Handler never
 listens to the outside. It relays **end-to-end encrypted envelopes it cannot read or forge**:
 assume it can be compromised, the design does.
 
@@ -58,4 +58,4 @@ by SHA-256 hash. Limits: 20 requests/s per caller (burst 60), 256 KiB per comman
 per upload, 500 queued envelopes per host (then 503: commands are never dropped silently), 5000
 per device (the oldest are dropped: the device re-syncs from Handler's session log).
 
-What a compromised gateway can and cannot do: [`docs/dev/design/remote.md` §2](../docs/dev/design/remote.md).
+What a compromised gateway can and cannot do: [your phone, security](../docs/phone.md#security).

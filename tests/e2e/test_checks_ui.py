@@ -53,7 +53,7 @@ def daemon(stub: StubLlm) -> Iterator[Daemon]:
 def page(browser: Browser, daemon: Daemon) -> Iterator[Page]:
     context = browser.new_context()
     page = context.new_page()
-    page.goto(f"{daemon.base_url}/#token={daemon.token}")
+    page.goto(daemon.ui_url())
     yield page
     context.close()
 
@@ -71,6 +71,11 @@ def finished_run(daemon: Daemon, agent: dict[str, Any]) -> str:
     raise AssertionError("the run did not end")
 
 
+@pytest.mark.rule(
+    "check.kept-from-a-real-run",
+    "check.free-text-is-never-compared",
+    "check.passes-when-what-it-compares-comes-back",
+)
 def test_keep_a_run_as_a_check_then_run_it(page: Page, daemon: Daemon, stub: StubLlm) -> None:
     body = {
         "name": "tone",
@@ -114,6 +119,12 @@ def improving(body: dict[str, Any]) -> str:
     return SEND if RULE in text else REWRITE
 
 
+@pytest.mark.rule(
+    "improve.the-writer-is-the-one-you-gave",
+    "improve.judged-by-the-checks",
+    "improve.within-its-budget",
+    "improve.nothing-changes-until-kept",
+)
 def test_improve_until_the_checks_pass_then_keep(page: Page, daemon: Daemon, stub: StubLlm) -> None:
     body = {
         "name": "judge",

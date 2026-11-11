@@ -28,7 +28,6 @@ from pathlib import Path
 from dulwich.ignore import IgnoreFilter
 
 from handler_contracts import (
-    SandboxSpec,
     SessionChanges,
     SessionFile,
     SessionFileChange,
@@ -42,6 +41,7 @@ from handler_contracts import (
 from .files import write_private
 
 MAX_FILES = 50_000  # beyond, changes are not followed
+FOUND = 20  # paths a search returns
 MAX_READ = 1 << 20  # a file shown, a .gitignore read
 GIT_TIMEOUT = 10.0
 IMAGES = {
@@ -52,8 +52,6 @@ IMAGES = {
 }
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC  # a FIFO does not block
-
-BROWSABLE = ("scope", "knowledge", "subject", "config")
 
 Stats = dict[str, list[int]]  # path → [size, mtime_ns]
 Chain = list[tuple[str, IgnoreFilter]]  # (folder, its ignore rules), deepest first
@@ -74,22 +72,9 @@ class TooManyFilesError(Exception):
 # ── what the sandbox sees ───────────────────────────────────────────────
 
 
-def record_mounts(recorded: Path, spec: SandboxSpec, at: datetime) -> None:
-    mounts = [
-        SessionMount(
-            target=m.target,
-            kind=m.kind,
-            read_only=m.read_only,
-            source=m.source,
-            browsable=m.kind in BROWSABLE,
-        )
-        for m in spec.mounts
-    ]
-    mounts += [
-        SessionMount(target=i.target, kind="tools", read_only=True, source=i.image, browsable=False)
-        for i in spec.image_mounts
-    ]
-    found = SessionMounts(started_at=at, mounts=mounts)
+def record_mounts(recorded: Path, seen: list[SessionMount], at: datetime) -> None:
+    """What the session's sandbox sees (compose.seen), as of its start `at`."""
+    found = SessionMounts(started_at=at, mounts=seen)
     write_private(recorded, found.model_dump_json(by_alias=True, exclude_none=True))
 
 
@@ -170,6 +155,16 @@ def read(root: Path, relative: str, baseline: Path | None) -> SessionFile:
     if change == "modified" and commit:
         view = view.model_copy(update={"before": git_text(root, commit, path)})
     return view
+
+
+def read_bytes(root: Path, relative: str) -> tuple[bytes, int]:
+    """(its first MAX_READ + 1 bytes, its size): a file read as `read` reads it, inside the
+    folder and through no link on the way (a plan file, D.27)."""
+    parts = _parts(relative)
+    if not parts:
+        raise PathError("not a file")
+    data, size, _ = _read_file(root, parts)
+    return data, size
 
 
 def host_path(root: Path, relative: str) -> tuple[Path, bool]:
@@ -305,7 +300,7 @@ def changes(root: Path, baseline: Path, since: datetime) -> SessionChanges:
     return SessionChanges(since=since, git=git, files=found + deleted)
 
 
-def find(root: Path, query: str, limit: int = 20) -> SessionFound:
+def find(root: Path, query: str) -> SessionFound:
     """The files whose path holds the query's letters in order, case aside: those whose name
     starts with it first, then whose name, then whose path holds it, then the others; the shorter
     path first. No query: the most recently modified. Ignored files and `.git` are not searched."""
@@ -316,9 +311,9 @@ def find(root: Path, query: str, limit: int = 20) -> SessionFound:
     q = query.lower()
     if not q:
         recent = sorted(files, key=lambda p: files[p][1], reverse=True)
-        return SessionFound(paths=recent[:limit])
+        return SessionFound(paths=recent[:FOUND])
     ranked = [(rank, len(p), p) for p in files if (rank := _rank(p.lower(), q)) is not None]
-    return SessionFound(paths=[p for _, _, p in sorted(ranked)[:limit]])
+    return SessionFound(paths=[p for _, _, p in sorted(ranked)[:FOUND]])
 
 
 def _rank(path: str, q: str) -> int | None:

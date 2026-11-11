@@ -2,6 +2,8 @@
   // A provider's form (D.12), in its dialog: name, endpoints by protocol, key, models. Starts from a
   // template or from the provider being edited. The key goes to the secret store and is never shown: empty
   // keeps the one it has. Model fields the form does not show (temperature, native…) are kept.
+  // Test asks its server for its models from where a sandbox would (D.12): what it serves fills the
+  // models when none is typed; a server on this computer is ready only once it answered.
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
   import { Button } from "$lib/components/ui/button";
@@ -9,7 +11,9 @@
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import AreasPicker from "./AreasPicker.svelte";
-  import type { ProviderInfo, ProviderModel, ProviderRequest, ProviderTemplate } from "../lib/contracts.gen";
+  import { api } from "../lib/api";
+  import { fillModels, onThisComputer, reachLine, type ReachState } from "../lib/providers";
+  import type { ProviderInfo, ProviderModel, ProviderReach, ProviderRequest, ProviderTemplate } from "../lib/contracts.gen";
 
   let {
     start,
@@ -50,13 +54,46 @@
   let removeKey = $state(false);
   let saving = $state(false);
 
+  // the last test, and the endpoints it was of: changed since, it says nothing of them
+  // svelte-ignore state_referenced_locally — an edited provider shows its last test
+  let reach = $state<ProviderReach | null>(editing?.reached ?? null);
+  // svelte-ignore state_referenced_locally
+  let tested = $state(editing?.reached ? JSON.stringify(given()) : "");
+  let testing = $state(false);
+  let testError = $state<string | null>(null);
+
+  /** The endpoints typed, the empty ones left out. */
+  function given(): Record<string, string> {
+    return Object.fromEntries(Object.entries(endpoints).filter(([, url]) => url?.trim()).map(([p, url]) => [p, url.trim()]));
+  }
+  const local = $derived(Object.values(endpoints).some((url) => url && onThisComputer(url)));
+  const reachState: ReachState = $derived(
+    testing ? "testing" : !reach || tested !== JSON.stringify(given()) ? "untested" : reach.ok ? "ready" : "not reached",
+  );
+  const served = $derived(reach?.ok ? (reach.models ?? []) : []);
+
+  async function test(): Promise<void> {
+    testing = true;
+    testError = null;
+    const asked = given();
+    try {
+      reach = await api.testProvider({ endpoints: asked, key: key.trim() || null, provider: editing?.name ?? null });
+      tested = JSON.stringify(asked);
+      if (reach.ok) models = fillModels(models, reach.models ?? []).map(row);
+    } catch (e) {
+      testError = (e as Error).message;
+    } finally {
+      testing = false;
+    }
+  }
+
   const handWritten = $derived(editing?.key && editing.key !== "secret");
   const asksForKey = $derived(editing ? editing.key === "secret" || !editing.key : Boolean((start as ProviderTemplate).needsKey));
 
   async function submit(): Promise<void> {
     saving = true;
     try {
-      const filled = Object.fromEntries(Object.entries(endpoints).filter(([, url]) => url.trim()));
+      const filled = given();
       const kept = models.filter((m) => m.id.trim());
       await onsave({
         name: name.trim(),
@@ -99,6 +136,31 @@
         <Input id="provider-endpoint-{protocol}" class="font-mono text-xs" placeholder="not spoken" bind:value={endpoints[protocol]} data-testid={`provider-endpoint-${protocol}`} />
       {/each}
     </div>
+    {#if local}
+      <p class="text-xs {reachState === 'not reached' ? 'text-warn' : 'text-muted-foreground'}" data-testid="provider-listen">
+        A server on this computer must listen where sandboxes reach it, not only on 127.0.0.1: start llama-server with
+        <code class="font-mono">--host 0.0.0.0 --jinja</code>, Ollama with <code class="font-mono">OLLAMA_HOST=0.0.0.0</code>.
+      </p>
+    {/if}
+    <div class="flex flex-wrap items-center gap-3 pt-1">
+      <Button type="button" variant="outline" size="sm" onclick={() => void test()} disabled={testing || !Object.keys(given()).length} data-testid="provider-test">
+        {testing ? "Testing…" : "Test"}
+      </Button>
+      <p
+        class="min-w-0 flex-1 text-xs whitespace-normal {reachState === 'ready' ? 'text-ok' : reachState === 'not reached' ? 'text-danger' : 'text-muted-foreground'}"
+        data-testid="provider-reach"
+        data-state={reachState}
+      >
+        {#if reachState === "testing"}
+          Asking it for its models, from where a sandbox would…
+        {:else if reachState === "untested" || !reach}
+          {local ? "Not tested yet: Test asks it for its models, from where a sandbox would." : "Test asks it for its models."}
+        {:else}
+          {reachLine(reach)}
+        {/if}
+      </p>
+    </div>
+    {#if testError}<p class="text-xs text-danger" data-testid="provider-test-error">{testError}</p>{/if}
   </fieldset>
 
   {#if handWritten}
@@ -130,7 +192,11 @@
       The first is the default. In tokens: <em>context</em>, what the model reads at most; <em>reply</em>, what it writes at most. A <em>speech</em> model writes down what
       you say (Settings → Voice), at the speech to text endpoint: never one agents run on.
       An agent sums up its conversation before it fills the context, keeping room for a reply (at most a fifth of the context).
+      Test fills them from what the server serves, with its context when it says it.
     </p>
+    {#if !models.length}
+      <p class="text-xs text-warn" data-testid="provider-no-model">No model yet: Test lists what the server serves, or add one.</p>
+    {/if}
     <div class="overflow-x-auto rounded-[10px] border">
       <div class="grid min-w-[42rem] grid-cols-[1.4fr_1fr_6.5rem_6.5rem_auto_auto_auto_2rem] items-center gap-x-2 gap-y-1.5 p-2.5">
         <span class="px-1 text-xs text-muted-foreground">id</span>
@@ -143,7 +209,7 @@
         <span></span>
         {#each models as model, i (i)}
           <div class="contents" data-testid="provider-model">
-            <Input class="font-mono text-xs" placeholder="id" bind:value={model.id} />
+            <Input class="font-mono text-xs" placeholder="id" list="provider-served" bind:value={model.id} />
             <Input placeholder="name" bind:value={model.name} />
             <Input type="number" placeholder="tokens" bind:value={model.contextWindow} />
             <Input type="number" placeholder="16384" bind:value={model.maxOutput} data-testid="provider-model-reply" />
@@ -155,6 +221,7 @@
         {/each}
       </div>
     </div>
+    <datalist id="provider-served">{#each served as m (m.id)}<option value={m.id}></option>{/each}</datalist>
     <Button type="button" variant="ghost" size="sm" onclick={() => models.push(row({ id: "" }))}><Plus />Add a model</Button>
   </fieldset>
 

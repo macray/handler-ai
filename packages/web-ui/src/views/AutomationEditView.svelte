@@ -11,7 +11,6 @@
   import { Label } from "$lib/components/ui/label";
   import * as NativeSelect from "$lib/components/ui/native-select";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
   import RunFields from "../components/RunFields.svelte";
   import When from "../components/When.svelte";
   import { accessLabel } from "../lib/access";
@@ -20,13 +19,15 @@
   import { DAYS, formOf, howOften, SCHEDULE_PRESETS, scheduleOf, scheduleProblem, suggestName, WEEKDAYS, type Day, type ScheduleForm } from "../lib/automations";
   import type { Agent, App, Automation, AutomationCheck, AutomationView, Project } from "../lib/contracts.gen";
   import { GROUP, SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
+  import { USE_LABEL, useOfAgent } from "../lib/interface";
   import { agentLabel } from "../lib/projects.svelte";
   import { fieldsOf, fieldValues, formValues, type Schema } from "../lib/runs";
   import { href, navigate } from "../lib/router.svelte";
 
   let { name: editing, agent: chosenAgent }: { name?: string; agent?: string } = $props();
 
-  let agents = $state<Agent[]>([]);
+  let agents = $state<Agent[]>([]); // jobs: only they run unattended
+  let others = $state<Agent[]>([]); // the agents of projects that are not jobs: one can be made a job
   let projectList = $state<Project[]>([]);
   let apps = $state<App[]>([]);
   let loaded = $state(false);
@@ -58,7 +59,8 @@
   $effect(() => {
     Promise.all([api.agents(), api.projects(), api.apps(), editing ? api.automation(editing) : null]).then(
       ([a, p, x, current]) => {
-        agents = a.filter((ag) => ag.interface?.result); // jobs: only they run unattended
+        agents = a.filter((ag) => ag.interface?.result);
+        others = a.filter((ag) => ag.projectId && !ag.interface?.result && !ag.app);
         projectList = p;
         apps = x;
         if (current) fill(current);
@@ -72,6 +74,10 @@
   });
 
   const agent = $derived(agents.find((a) => a.id === agentId));
+  // the agent it was opened for (a project's Automations tab: its default) when it is no job: a
+  // job made from it is offered first, then the other agents of projects
+  const notJob = $derived(others.find((a) => a.id === chosenAgent));
+  const makeable = $derived(notJob ? [notJob, ...others.filter((a) => a !== notJob)] : others);
   const projectOf = (a: Agent): string | null => projectList.find((p) => p.id === a.projectId)?.name ?? null;
   const fields = $derived(fieldsOf(agent?.interface?.fields as Schema | undefined));
   const schedule = $derived<ScheduleForm | null>(
@@ -216,22 +222,13 @@
   const CHIP_OFF = "bg-card text-muted-foreground hover:text-foreground";
 </script>
 
-<PageHeader
-  titled
+<PageHeader width="max-w-3xl"
   title={editing ? `Change ${editing}` : "New automation"}
-  parent={editing ? { label: editing, href: href({ view: "automation", name: editing }) } : { label: "Automations", href: href({ view: "automations" }) }}
+  parent={editing ? { label: editing, href: href({ view: "automation", name: editing }) } : { label: "Library › Automations", href: href({ view: "automations" }) }}
 />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-3xl space-y-10 px-8 py-10">
-    <PageTitle
-      title={editing ? `Change ${editing}` : "New automation"}
-      description={editing
-        ? enabled
-          ? "It is on: your change applies at its next run."
-          : "It is off: nothing runs before you turn it on."
-        : "When this happens, run that. Nothing runs before you turn it on."}
-    />
-    {#if error}<p class="text-sm text-danger" data-testid="new-automation-error">{error}</p>{/if}
+        {#if error}<p class="text-sm text-danger" data-testid="new-automation-error">{error}</p>{/if}
 
     <section class="space-y-4" aria-labelledby="group-when">
       <h2 id="group-when" class={GROUP}>When</h2>
@@ -316,12 +313,26 @@
       </div>
 
       {#if what === "agent"}
-        {#if loaded && !agents.length}
-          <p class="rounded-lg border bg-card px-4 py-6 text-center text-sm text-muted-foreground" data-testid="no-unattended-agent">
-            None of your agents runs unattended yet. In an agent's settings, under <em>How it is started</em>, tick
-            <em>Runs unattended</em>: it then has a form and a result, and an automation can run it.
-          </p>
-        {:else}
+        {#if loaded && (!agents.length || notJob)}
+          <div class="space-y-2" data-testid="no-unattended-agent">
+            <p class="text-sm text-muted-foreground">
+              {agents.length ? `${agentLabel(notJob!)} is not a job` : "None of your agents is a job yet"}: an automation runs a job, which takes a form, works alone and returns a result.
+            </p>
+            {#if makeable.length}
+              <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm">
+                {#each makeable.slice(0, 4) as a (a.id)}
+                  <li class="flex items-center gap-3 px-4 py-2.5">
+                    <span class="min-w-0 flex-1 truncate"><span class="font-medium">{agentLabel(a)}</span> <span class="fact">{projectOf(a)} · {USE_LABEL[useOfAgent(a)]}</span></span>
+                    <Button size="sm" variant="outline" href={href({ view: "edit-agent", project: a.projectId ?? "", from: a.id, job: true })} data-testid="make-job"
+                      >Make a job from {agentLabel(a)}</Button
+                    >
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+        {#if loaded && agents.length}
           <div class="space-y-1.5">
             <Label for="run-agent">Agent</Label>
             <NativeSelect.Root id="run-agent" bind:value={agentId} class="w-full" data-testid="new-automation-agent">
@@ -377,8 +388,8 @@
         <p class="text-xs text-muted-foreground">Handler starts the app if needed and calls the route as you. What the app notifies comes to your inbox.</p>
       {/if}
       <p class="text-xs text-muted-foreground">
-        A script of your own (in a sandbox without network, adding to a note): start from an example on the
-        <a class="text-link hover:underline" href={href({ view: "automations" })}>Automations</a> page.
+        A script of your own (in a sandbox without network, adding to a note): start from an example in
+        <a class="text-link hover:underline" href={href({ view: "library", shelf: "automations", more: true })}>Library → Automations → Get more</a>.
       </p>
     </section>
 

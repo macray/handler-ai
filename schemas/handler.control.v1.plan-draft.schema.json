@@ -1,0 +1,79 @@
+{
+  "$id": "urn:handler.control/v1/plan-draft",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A plan being written (D.27), kept by Handler, never in a folder of yours: changed by its\nbuilder session or by hand, approved into a plan (a new one each time).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "projectId": {
+      "title": "Projectid",
+      "type": "string"
+    },
+    "folder": {
+      "title": "Folder",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "digest": {
+      "title": "Digest",
+      "type": "string"
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "changedAt": {
+      "format": "date-time",
+      "title": "Changedat",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "fromPlan": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fromplan"
+    }
+  },
+  "required": [
+    "id",
+    "projectId",
+    "folder",
+    "digest",
+    "createdAt",
+    "changedAt"
+  ],
+  "title": "PlanDraft",
+  "type": "object"
+}

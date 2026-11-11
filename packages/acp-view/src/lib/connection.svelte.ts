@@ -6,7 +6,9 @@
 // is `session/load`: the daemon replays the conversation, then the turn in progress (if any)
 // continues live; `_handler/…` notifications tell whether the agent is busy. Other clients may be
 // attached (F.7): their prompts arrive as `user_message_chunk`, and a permission request one of
-// them answered is withdrawn (`_handler/permission_resolved`).
+// them answered is withdrawn (`_handler/permission_resolved`). Handler says things in the
+// conversation too (`_handler/line`): a host its network filter refused, answered here with
+// `_handler/decide_host` (F.9).
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
@@ -19,7 +21,7 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 import type { PromptImage } from "./images";
-import { SessionState } from "./session.svelte";
+import { SessionState, type HostDecision } from "./session.svelte";
 
 /** How a transport ended (a WebSocket close code and reason, or the remote equivalents). */
 export interface Closed {
@@ -96,6 +98,7 @@ export class AcpConnection {
             if (p.request.toolCall.toolCallId === params.toolCallId) p.answer({ outcome: "cancelled" });
           }
         }
+        if (method === "_handler/line") this.session.line(params);
         if (method === "_handler/turn_ended") {
           this.idle(); // a turn started before this attachment (e.g. before a reload)
           this.onTurnEnded?.();
@@ -167,6 +170,12 @@ export class AcpConnection {
     this.session.inTurn = false;
     this.turnStartedAt = null;
     this.interrupting = false;
+  }
+
+  /** A refused host allowed for this agent, or kept blocked: handlerd saves it to the agent and
+   *  applies it to its running sandboxes; every attached client then gets its line (F.9). */
+  async decideHost(host: string, decision: HostDecision): Promise<void> {
+    await this.required().extMethod("_handler/decide_host", { host, decision });
   }
 
   async setMode(modeId: string): Promise<void> {

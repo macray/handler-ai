@@ -1,0 +1,35 @@
+{
+  "$id": "urn:handler.control/v1/create-plan-draft-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/plan-drafts`: an empty draft for a project, or a copy of an approved plan.",
+  "properties": {
+    "projectId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Projectid"
+    },
+    "fromPlan": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fromplan"
+    }
+  },
+  "title": "CreatePlanDraftRequest",
+  "type": "object"
+}

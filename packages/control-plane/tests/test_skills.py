@@ -15,6 +15,7 @@ def skill_md(name: str, description: str = "Does things. Use when asked to.") ->
     return f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
 
 
+@pytest.mark.rule("skill.the-agent-skills-format")
 def test_parse_follows_the_format() -> None:
     assert skills.parse(skill_md("pdf-tools")) == ("pdf-tools", "Does things. Use when asked to.")
     folded = "---\nname: x\ndescription: >\n  on two\n  lines\nlicense: MIT\n---\nbody"
@@ -34,6 +35,7 @@ def test_parse_follows_the_format() -> None:
             skills.parse(bad)
 
 
+@pytest.mark.rule("skill.the-agent-skills-format")
 def test_load_save_rename_delete(tmp_path: Path) -> None:
     assert skills.save(tmp_path, skill_md("one")) == "one"
     (tmp_path / "one" / "scripts").mkdir()
@@ -66,6 +68,7 @@ def test_load_save_rename_delete(tmp_path: Path) -> None:
     assert skills.get(tmp_path, "two").error
 
 
+@pytest.mark.rule("skill.its-files-stay-in-its-folder")
 def test_files_stay_in_their_skill(tmp_path: Path) -> None:
     skills.save(tmp_path, skill_md("tool"))
     skills.write_file(tmp_path, "tool", "scripts/run.sh", b"#!/bin/sh\necho hi\n", True)
@@ -104,6 +107,7 @@ def zipped(files: dict[str, bytes], modes: dict[str, int] | None = None) -> byte
     return buffer.getvalue()
 
 
+@pytest.mark.rule("skill.its-files-stay-in-its-folder")
 def test_archives_out_and_in(tmp_path: Path) -> None:
     library, other = tmp_path / "a", tmp_path / "b"
     skills.save(library, skill_md("tool"))
@@ -145,6 +149,7 @@ def test_archives_out_and_in(tmp_path: Path) -> None:
             skills.unpack(archive)
 
 
+@pytest.mark.rule("skill.agents-get-it-as-the-library-has-it")
 def test_agents_follow_their_skills(tmp_path: Path) -> None:
     registry = AgentRegistry(tmp_path)
     projects = ProjectRegistry(tmp_path, registry)
@@ -186,6 +191,7 @@ def test_agents_follow_their_skills(tmp_path: Path) -> None:
     assert [a.skills for a in loaded.agents(loaded.projects["p_shop"])] == [[]]
 
 
+@pytest.mark.rule("skill.from-a-url-https-only")
 def test_a_skill_from_a_repository_folder() -> None:
     """D.17 import from a URL: one folder of a repository holding several skills."""
     repo = zipped(
@@ -204,6 +210,7 @@ def test_a_skill_from_a_repository_folder() -> None:
         skills.unpack(repo, "")  # the repository's root: two skills
 
 
+@pytest.mark.rule("skill.from-a-url-https-only")
 def test_skill_urls_name_an_archive_and_a_folder(monkeypatch: pytest.MonkeyPatch) -> None:
     github = "https://github.com/acme/skills"
     assert skill_sources.locate(f"{github}/tree/main/skills/pdf") == (

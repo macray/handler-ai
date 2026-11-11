@@ -2,6 +2,7 @@
   // One shared session: the same timeline, permission prompts and composer as the handler web UI,
   // over the encrypted mailbox.
   import Composer from "@handler/acp-view/components/Composer.svelte";
+  import ContextMeter from "@handler/acp-view/components/ContextMeter.svelte";
   import { FollowEnd } from "@handler/acp-view/lib/follow";
   import PermissionPrompt from "@handler/acp-view/components/PermissionPrompt.svelte";
   import Timeline from "@handler/acp-view/components/Timeline.svelte";
@@ -135,7 +136,9 @@
       turnStartedAt={conn.turnStartedAt}
       interrupting={conn.interrupting}
       waiting={conn.permissions.length > 0}
-    />
+    >
+      {#snippet tools()}<ContextMeter usage={conn.session.usage} />{/snippet}
+    </Composer>
     <!-- where a message is, floating above the composer (no line of the screen for it); once
          delivered nothing is said: the agent's answer says it -->
     {#if lastSend && lastSend.state !== "delivered"}<p class="send {lastSend.state}" data-testid="send-state">{SEND_LABEL[lastSend.state]}</p>{/if}

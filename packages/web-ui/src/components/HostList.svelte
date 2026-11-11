@@ -1,8 +1,8 @@
 <script lang="ts">
-  // A list of allowed hosts (HOST:PORT) to add to and remove from. `onchange` gets the new list
-  // (sorted, no duplicates); `saving` disables it while the caller saves. `suggestions`: hosts
-  // offered one click each (e.g. asked for recently, no entry allowing them: never added
-  // automatically, the agent picks them).
+  // The hosts (HOST:PORT) an agent allows, to add to and remove from. `onchange` gets the new list (sorted, no duplicates); `saving`
+  // disables it while the caller saves. `suggestions`: hosts offered one click each to allow
+  // (e.g. asked for recently, no entry allowing them: never added automatically, the person
+  // picks them).
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
   import { Button } from "$lib/components/ui/button";
@@ -14,13 +14,11 @@
     onchange,
     saving = false,
     suggestions = [],
-    empty = "None.",
   }: {
     value: string[];
     onchange: (next: string[]) => void | Promise<void>;
     saving?: boolean;
     suggestions?: string[];
-    empty?: string;
   } = $props();
 
   let input = $state("");
@@ -53,7 +51,7 @@
         </Button>
       </li>
     {:else}
-      <li class="text-xs text-muted-foreground">{empty}</li>
+      <li class="text-xs text-muted-foreground">None: only the hosts below.</li>
     {/each}
   </ul>
   <!-- a div, not a form: this list sits inside other forms -->

@@ -12,7 +12,7 @@ FROM ${TOOLBOX_IMAGE}
 RUN npm install -g --no-fund --no-audit @agentclientprotocol/claude-agent-acp \
     && npm cache clean --force \
     && command -v claude-agent-acp \
-    && adapter=/usr/lib/node_modules/@agentclientprotocol/claude-agent-acp \
+    && adapter="$(npm root -g)"/@agentclientprotocol/claude-agent-acp \
     && sdk="$adapter/node_modules/@anthropic-ai/claude-agent-sdk" \
     && acp_version="$(jq -er .version "$adapter/package.json")" \
     && claude_version="$(jq -er .claudeCodeVersion "$sdk/package.json")" \

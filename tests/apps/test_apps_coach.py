@@ -1,6 +1,6 @@
 """Contract H, A5 on the computer: needs given (a host file, an agent set up from the app's
 definition, H.2), an automation calling the app (I.3), notifications (desktop and inbox), runs of
-the agent (H.11), with the test app tests/fixtures/app-coach in podman. The desktop is a fake
+the agent (H.11), with the test app tests/fixtures/app-coach in a real sandbox. The desktop is a fake
 `notify-send`; the agent is the fake one."""
 
 import os
@@ -13,11 +13,18 @@ import pytest
 
 from handler_control.secrets import SecretStore
 
-from ..support import dev_env
 from ..support.daemon import FAKE_SECRET, Daemon, start_daemon
-from .conftest import AppClient, add_app, api, call_app, copy_fixture, requires_podman
+from .conftest import (
+    AppClient,
+    add_app,
+    api,
+    call_app,
+    copy_fixture,
+    real_sandbox_env,
+    requires_app_runtime,
+)
 
-pytestmark = requires_podman
+pytestmark = requires_app_runtime
 
 
 @pytest.fixture(scope="module")
@@ -37,10 +44,10 @@ def daemon(data_root: Path, desktop: Path) -> Iterator[Daemon]:
     env = {
         "HANDLER_DATA_DIR": str(data_root / "handler"),
         "PATH": f"{desktop.parent / 'bin'}:{os.environ['PATH']}",
-    } | dev_env.home_env()
+    }
     # its own data folder: the fake account's login goes there too (the agent the app runs)
     SecretStore(data_root / "handler").put("accounts/fake/token", FAKE_SECRET)
-    yield from start_daemon(extra_env=env)
+    yield from start_daemon(extra_env=env | real_sandbox_env())
 
 
 @pytest.fixture(scope="module")
@@ -120,6 +127,7 @@ def coach(daemon: Daemon, registered: dict[str, Any]) -> dict[str, Any]:
     return agent
 
 
+@pytest.mark.rule("deploy.what-it-adds-is-said-first", "deploy.only-with-all-it-needs")
 def test_needs_are_shown(daemon: Daemon, registered: dict[str, Any]) -> None:
     added = registered["source"]["addedNeeds"]
     assert added == ["file agenda (ro)", "notifications", "agent coach"]
@@ -132,6 +140,7 @@ def test_needs_are_shown(daemon: Daemon, registered: dict[str, Any]) -> None:
     assert r.status_code == 422 and "folder agenda not given" in r.json()["detail"]
 
 
+@pytest.mark.rule("need.a-folder-in-your-home-never-handler-s")
 @pytest.mark.parametrize("where", ["outside", "handler"])
 def test_files_refused(daemon: Daemon, data_root: Path, where: str) -> None:
     handler_own = data_root / "handler" / "apps"  # handler's data folder: never given to an app
@@ -142,6 +151,7 @@ def test_files_refused(daemon: Daemon, data_root: Path, where: str) -> None:
     assert expected in r.json()["detail"]
 
 
+@pytest.mark.rule("need.yours-kept-by-handler", "need.an-agent-that-fits")
 def test_needs_given(daemon: Daemon, agenda: Path, coach: dict[str, Any]) -> None:
     r = api(daemon, "PUT", "/v1/apps/coach/files/agenda", {"path": str(agenda)})
     assert r.status_code == 200, r.text
@@ -155,6 +165,9 @@ def test_needs_given(daemon: Daemon, agenda: Path, coach: dict[str, Any]) -> Non
     assert r.json()["agents"][0]["agentId"] == coach["id"]
 
 
+@pytest.mark.rule(
+    "notify.only-to-whom-it-is-shared-with", "call.an-app-s-route-as-you", "inbox.what-it-is-told"
+)
 def test_an_automation_s_call_reads_the_file_and_notifies(daemon: Daemon, desktop: Path) -> None:
     r = api(daemon, "POST", "/v1/apps/coach/deploy")
     assert r.status_code == 200, api(daemon, "GET", "/v1/apps/coach/log").json()["text"]
@@ -172,12 +185,14 @@ def test_an_automation_s_call_reads_the_file_and_notifies(daemon: Daemon, deskto
     assert "coach: Today|10:00 dentist|" in desktop.read_text()
 
 
+@pytest.mark.rule("need.a-folder-in-your-home-never-handler-s", "call.an-app-s-route-as-you")
 def test_file_is_read_only(daemon: Daemon, agenda: Path) -> None:
     log = api(daemon, "GET", "/v1/apps/coach/log").json()["text"]
     assert "automation morning: POST /api/cron/morning: 200" in log
     assert agenda.read_text().startswith("10:00 dentist")
 
 
+@pytest.mark.rule("notify.only-to-whom-it-is-shared-with")
 def test_notify_only_persons_it_is_shared_with(daemon: Daemon) -> None:
     browser = AppClient(daemon, "coach")
     browser.login(api(daemon, "POST", "/v1/apps/coach/open").json()["url"])
@@ -188,6 +203,7 @@ def test_notify_only_persons_it_is_shared_with(daemon: Daemon) -> None:
     assert api(daemon, "GET", "/v1/inbox").json()[0]["person"] == "alice"
 
 
+@pytest.mark.rule("automation.with-problems-never-runs")
 def test_an_automation_of_an_unknown_app(daemon: Daemon) -> None:
     folder = daemon.config_dir / "automations" / "nope"
     folder.mkdir(parents=True)
@@ -199,6 +215,7 @@ def test_an_automation_of_an_unknown_app(daemon: Daemon) -> None:
     assert view["problems"] == ["run.app: no app named nope"]
 
 
+@pytest.mark.rule("run.only-while-it-answers-the-owner", "run.its-end-reaches-the-inbox")
 def test_an_app_runs_an_agent_for_the_owner(daemon: Daemon, coach: dict[str, Any]) -> None:
     browser = AppClient(daemon, "coach")
     browser.login(api(daemon, "POST", "/v1/apps/coach/open").json()["url"])
@@ -231,8 +248,29 @@ def test_an_app_runs_an_agent_for_the_owner(daemon: Daemon, coach: dict[str, Any
     assert note["summary"] == "Call the bank before 10." and note["sessionId"] == session["id"]
 
 
+@pytest.mark.rule("run.only-while-it-answers-the-owner")
 def test_an_automation_s_call_runs_no_agent(daemon: Daemon, coach: dict[str, Any]) -> None:
     before = api(daemon, "GET", f"/v1/sessions?agentId={coach['id']}").json()
     run = call_app(daemon, "asker", "coach", "POST /api/cron/ask")
     assert run["state"] == "succeeded", run  # the route answered: without a run
     assert api(daemon, "GET", f"/v1/sessions?agentId={coach['id']}").json() == before
+
+
+@pytest.mark.rule("run.only-while-it-answers-the-owner")
+def test_an_opened_draft_runs_no_agent(daemon: Daemon, coach: dict[str, Any]) -> None:
+    """The app's draft opened, asked what makes the app run its agent: the run is refused (a
+    draft, as a deploy's trial, starts nothing) and no session of the agent starts.
+
+    If this fails: trying a draft runs your agents on your subscription, on the draft's say."""
+    before = api(daemon, "GET", f"/v1/sessions?agentId={coach['id']}").json()
+    drafter = api(daemon, "POST", "/v1/agents", {"name": "drafter", "model": {"account": "fake"}})
+    body = {"agentId": drafter.json()["id"], "appDraft": {"app": "coach"}}
+    session = api(daemon, "POST", "/v1/sessions", body).json()
+    opened = api(daemon, "POST", f"/v1/apps/from-draft/{session['id']}/open")
+    assert opened.status_code == 200, opened.text
+    draft = AppClient(daemon, "coach--draft")
+    assert draft.login(opened.json()["url"]).status_code == 200
+    asked = draft.request_json("POST", "/api/ask", {"request": "Call the bank."})
+    assert isinstance(asked, dict) and asked["ok"] is False, asked  # no start token given
+    assert api(daemon, "GET", f"/v1/sessions?agentId={coach['id']}").json() == before
+    assert api(daemon, "DELETE", f"/v1/sessions/{session['id']}").status_code == 204

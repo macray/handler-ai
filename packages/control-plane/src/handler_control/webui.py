@@ -6,6 +6,7 @@ output rendered in the page cannot load or send anything elsewhere.
 """
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -15,6 +16,7 @@ from starlette.types import ASGIApp
 
 from handler_contracts import DirectoryEntry, DirectoryListing, is_within
 
+from .projects import branch_of
 from .settings import Settings
 
 MAX_ENTRIES = 500
@@ -50,6 +52,41 @@ def list_directories(roots: list[str], path: str | None) -> DirectoryListing:
         parent=parent,
         entries=[
             DirectoryEntry(name=e.name, path=os.path.join(resolved, e.name)) for e in children
+        ],
+    )
+
+
+def recent_directories(roots: list[str], limit: int = 8) -> DirectoryListing:
+    """The folders of the work folders (one level down) changed last, with their git branch: a
+    folder's own time, or its git index's (a commit, a checkout)."""
+
+    def changed(path: str) -> float:
+        times = [os.stat(path).st_mtime]
+        index = Path(path) / ".git" / "index"
+        if index.is_file():
+            times.append(index.stat().st_mtime)
+        return max(times)
+
+    found: list[tuple[float, str]] = []
+    for root in roots:
+        try:
+            entries = list(os.scandir(root))
+        except OSError:
+            continue
+        for e in entries:
+            if e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                found.append((changed(e.path), e.path))
+    found.sort(reverse=True)
+    return DirectoryListing(
+        path=None,
+        entries=[
+            DirectoryEntry(
+                name=os.path.basename(path),
+                path=path,
+                branch=branch_of(path),
+                changed_at=datetime.fromtimestamp(at, UTC),
+            )
+            for at, path in found[:limit]
         ],
     )
 

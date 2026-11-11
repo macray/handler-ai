@@ -44,7 +44,11 @@ JUDGE = {
 def a_project_with_a_checked_job(daemon: Daemon) -> dict[str, Any]:
     with daemon.http() as c:
         assert c.post("/v1/skills", json={"content": skill_md("tidy")}).status_code == 201
-        dev = {"name": "Dev", "model": {"account": "fake"}, "bindings": ["browser"]}
+        dev = {
+            "name": "Dev",
+            "model": {"account": "fake"},
+            "addons": [{"addon": "fake-browser", "binding": "browser"}],
+        }
         body = {"folder": str(daemon.make_scope()), "skills": ["tidy"], "agents": [JUDGE, dev]}
         r = c.post("/v1/projects", json=body)
         assert r.status_code == 201, r.text
@@ -58,6 +62,11 @@ def a_project_with_a_checked_job(daemon: Daemon) -> dict[str, Any]:
     return project
 
 
+@pytest.mark.rule(
+    "definition.only-the-origin-follows",
+    "definition.an-export-leaves-out-what-is-yours",
+    "check.the-agent-s-not-its-settings",
+)
 def test_exported_from_a_project_then_set_up_again(daemon: Daemon) -> None:
     project = a_project_with_a_checked_job(daemon)
     ids = [a["id"] for a in project["agents"]]
@@ -69,7 +78,7 @@ def test_exported_from_a_project_then_set_up_again(daemon: Daemon) -> None:
         assert draft["file"]["version"] == 1
         said = "\n".join(draft["replaced"])
         assert "account fake" in said and "provider stub" in said and project["folder"] in said
-        assert "addon configuration browser" in said and "skill tidy, given by its project" in said
+        assert "connection browser" in said and "skill tidy, given by its project" in said
         assert "provider stub → a provider, chosen at set-up" in said  # Judge, on the model alone
         assert said.count(project["folder"]) == 1  # Dev's: the model alone has no folder
 

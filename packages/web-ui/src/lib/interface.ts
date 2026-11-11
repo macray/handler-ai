@@ -12,7 +12,7 @@ import type { Field, Schema } from "./runs";
 export type Use = "chat" | "brief" | "job";
 
 /** Its name, the same everywhere: the editor's cards, the chip on an agent, its line in a list. */
-export const USE_LABEL: Record<Use, string> = { chat: "Chat", brief: "Brief", job: "Job" };
+export const USE_LABEL: Record<Use, string> = { chat: "Talk", brief: "Brief", job: "Job" };
 
 /** How a saved agent is used. */
 export function useOfAgent(a: { interface?: AgentInterface | null }): Use {

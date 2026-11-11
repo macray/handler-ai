@@ -1,5 +1,5 @@
 <script lang="ts">
-  // One chat session of the sidebar. The agent lives in the daemon and the attachment in the
+  // One chat session. The agent lives in the daemon and the attachment in the
   // session store, so leaving this view (to watch another agent) or reloading does not stop it.
   import AreaTag from "../components/AreaTag.svelte";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
@@ -23,7 +23,6 @@
   import type { Schema } from "../lib/runs";
   import { Button } from "$lib/components/ui/button";
   import * as SidebarUI from "$lib/components/ui/sidebar";
-  import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
   import { fade, fly, type TransitionConfig } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { dragSheet, flungDown } from "@handler/acp-view/lib/sheet";
@@ -39,14 +38,16 @@
   import SessionStatus from "../components/SessionStatus.svelte";
   import Plan from "@handler/acp-view/components/Plan.svelte";
   import Timeline from "@handler/acp-view/components/Timeline.svelte";
-  import { activity } from "@handler/acp-view/lib/tools";
+  import { contextFill, type HostDecision } from "@handler/acp-view/lib/session.svelte";
+  import { activity, askedAtStep } from "@handler/acp-view/lib/tools";
+  import { nextMode } from "../lib/agents";
   import { accessLabel, sessionModel } from "../lib/access";
   import { productName } from "../lib/harnesses.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { LIGHT_LABEL, lightTone, remote } from "../lib/remote.svelte";
-  import { agentLabel, presetOf, projects } from "../lib/projects.svelte";
+  import { agentLabel, projects } from "../lib/projects.svelte";
+  import { safetyLine, widenings } from "../lib/safety";
   import { sessions } from "../lib/sessions.svelte";
-  import { sessionCard } from "../lib/sessioncard.svelte";
   import { api } from "../lib/api";
   import type { AutomationRun, SessionChanges } from "../lib/contracts.gen";
   import { openDraft, useDraft } from "../lib/drafts";
@@ -54,10 +55,29 @@
   let { key }: { key: string } = $props();
 
   const session = $derived(sessions.get(key));
+
+  // What a screen reader is told when the session changes state: one short sentence, never the
+  // streamed text (a live region beside the caption; the first state is the page's, not news).
+  const NEWS: Partial<Record<string, string>> = {
+    "needs-you": "The agent needs you.",
+    replied: "The agent replied.",
+    idle: "The agent finished.",
+    working: "The agent is working.",
+    elsewhere: "This session is open in another tab.",
+    stopped: "The session stopped.",
+    failed: "The session failed.",
+  };
+  let news = $state("");
+  let lastStatus: string | undefined;
+  $effect(() => {
+    const status = session?.status;
+    if (lastStatus !== undefined && status && status !== lastStatus) news = NEWS[status] ?? "";
+    lastStatus = status;
+  });
   const found = $derived(session ? projects.of(session.agent) : undefined); // its project and agent
   const FILES_OPEN = "handler.files-open"; // the files pane stays open from a session to the next
   const FILES_WIDTH = "handler.files-width";
-  let panel = $state<"card" | "files" | "network" | "save" | "automations" | null>(
+  let panel = $state<"files" | "network" | "save" | "automations" | null>(
     localStorage.getItem(FILES_OPEN) ? "files" : null,
   ); // the side panel shown
   let automationRuns = $state<AutomationRun[]>([]); // what ran on it when it stopped (I)
@@ -66,6 +86,8 @@
   // its folder is a draft of an app's code (H.15): Use it makes it the app's next version, or a
   // new app, and the session goes with it
   const draft = $derived(session?.info.appDraft ?? null);
+  // a plan builder's session (D.27): its folder is a plan draft, reviewed from here
+  const planDraft = $derived(session?.info.planDraft ?? null);
   let using = $state(false);
   let drafted = $state<{ what: string; why: string } | null>(null); // why Open or Use it failed
   async function useIt(id: string): Promise<void> {
@@ -94,16 +116,6 @@
   const label = $derived(session ? (found ? agentLabel(found.agent) : projects.label(session.agent)) : "");
   const where = $derived(found ? `${found.project.name} · ${label}` : session?.title ? label : "");
 
-  // Its card goes to the menu's open sessions; with the menu hidden (a narrow window, or closed),
-  // it is a panel here, a tap on the session's name away.
-  const menu = useSidebar();
-  const menuHidden = $derived(menu.isMobile ? !menu.openMobile : !menu.open);
-  $effect(() => {
-    if (session) return sessionCard.show(session.key, card);
-  });
-  $effect(() => {
-    if (!menuHidden && panel === "card") panel = null;
-  });
   // The terminal whatever the state, its conversation kept: stopped, failed or attached
   // elsewhere, what happened and how to go on takes the prompt's place.
   const running = $derived(session ? !["stopped", "failed", "elsewhere"].includes(session.status) : false);
@@ -183,11 +195,9 @@
     else localStorage.removeItem(FILES_OPEN);
   }
 
-  // The frame says what the agent's sandbox lets it do: its safety preset, or its own settings
-  // in words; amber when it weakens the sandbox (an open network, a filter that only logs, more
-  // than a plain container), as everywhere else.
-  const NETWORK: Record<string, string> = { none: "no network", filtered: "filtered network", open: "open network" };
-  const CONFINEMENT: Record<string, string> = { nested: "runs containers", privileged: "privileged", display: "shows windows" };
+  // The frame says what the agent's sandbox lets it do: its network and what weakens its sandbox
+  // beyond what a new agent starts with ("4 sites · Runs containers"); amber when something does
+  // (Any site, learning the sites, more than a plain container, windows on the screen).
   // what it runs on, the account or provider by its name alone (its kind is said where it is made)
   const runsOn = $derived.by(() => {
     const i = session?.info;
@@ -196,15 +206,23 @@
 
   const sandbox = $derived.by(() => {
     const a = session?.agent;
-    if (!a) return { label: "", hint: "", weak: false };
-    const network = NETWORK[a.network ?? "filtered"] ?? a.network ?? "";
-    const confined = a.confinement && a.confinement !== "strict" ? CONFINEMENT[a.confinement] ?? a.confinement : null;
-    const weak = a.network === "open" || a.egress === "log-only" || confined !== null;
-    const preset = presetOf(a);
-    if (preset) return { label: preset.label, hint: preset.hint, weak };
-    const words = [network, a.egress === "log-only" ? "only logged" : null, confined].filter(Boolean).join(" · ");
-    return { label: words, hint: `its own settings: ${words}`, weak };
+    if (!a) return { label: "", weak: false };
+    const sites = new Set([...(a.model.requiredHosts ?? []).map((r) => r.host), ...(a.allow ?? [])]).size;
+    return { label: safetyLine(a, sites), weak: a.network === "open" || widenings(a).length > 0 };
   });
+
+  // hosts its network filter refused in this session that are neither allowed nor kept blocked
+  // yet: a badge on its network button, a card each in the timeline (F.9)
+  const undecided = $derived.by(() => {
+    const a = session?.agent;
+    return (session?.conn?.session.undecided ?? []).filter((h) => !a?.allow?.includes(h) && !a?.blocked?.includes(h));
+  });
+  async function decideHost(host: string, decision: HostDecision): Promise<void> {
+    const s = session;
+    if (!s?.conn) return;
+    await s.conn.decideHost(host, decision);
+    sessions.updateAgent(await api.agent(s.agent.id));
+  }
 
   // a narrow screen shows the panel as a sheet: it leaves downwards, from where it is (a drag
   // may have moved it); beside the session it just goes
@@ -234,22 +252,63 @@
 
   // a path clicked in the conversation: shown in the files pane
   let fileRequest = $state<{ path: string; n: number } | null>(null);
+  // the questions about a step the timeline does not show (yet): pinned under it; the others
+  // are under their step
+  const unplaced = $derived(
+    session?.live && session.conn
+      ? session.conn.permissions.filter((p) => !askedAtStep(session.conn!.session.entries, p.request.toolCall.toolCallId))
+      : [],
+  );
+
+  /** Shift+Tab (or the phone's mode key): the harness's next mode, as Claude Code cycles them. */
+  function cycleMode(): void {
+    const conn = session?.conn;
+    const next = conn && nextMode(conn.session.modes, conn.session.currentMode);
+    if (conn && next) conn.setMode(next).catch((e: Error) => session && (session.error = e.message));
+  }
+
   function openFile(path: string): void {
     if (panel !== "files") togglePanel("files");
     fileRequest = { path, n: (fileRequest?.n ?? 0) + 1 };
   }
 
-  // the files pane's left edge, dragged
+  // the files pane's left edge: dragged (the pointer captured, so a gesture the browser takes
+  // back ends it too), or moved with the arrow keys; a double click goes back to the default
+  const FILES_MIN = 280;
+  const filesMax = () => window.innerWidth - 360;
+  function setFilesWidth(px: number): void {
+    filesWidth = Math.min(Math.max(px, FILES_MIN), filesMax());
+    localStorage.setItem(FILES_WIDTH, String(Math.round(filesWidth)));
+  }
   function resize(event: PointerEvent): void {
-    const pane = (event.currentTarget as HTMLElement).parentElement!;
-    const right = pane.getBoundingClientRect().right;
-    const move = (e: PointerEvent) => (filesWidth = Math.min(Math.max(right - e.clientX, 280), window.innerWidth - 360));
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      localStorage.setItem(FILES_WIDTH, String(Math.round(filesWidth)));
+    if (event.button !== 0) return;
+    const grip = event.currentTarget as HTMLElement;
+    const right = grip.parentElement!.getBoundingClientRect().right;
+    const move = (e: PointerEvent) => (filesWidth = Math.min(Math.max(right - e.clientX, FILES_MIN), filesMax()));
+    const ends = ["pointerup", "pointercancel", "lostpointercapture"] as const;
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      for (const type of ends) grip.removeEventListener(type, end);
+      if (grip.hasPointerCapture(event.pointerId)) grip.releasePointerCapture(event.pointerId);
+      setFilesWidth(filesWidth);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up, { once: true });
+    grip.setPointerCapture(event.pointerId);
+    grip.addEventListener("pointermove", move);
+    for (const type of ends) grip.addEventListener(type, end);
+  }
+  function resizeKey(event: KeyboardEvent): void {
+    const step = event.shiftKey ? 96 : 24;
+    const now = filesWidth || (event.currentTarget as HTMLElement).parentElement!.getBoundingClientRect().width;
+    if (event.key === "ArrowLeft") setFilesWidth(now + step);
+    else if (event.key === "ArrowRight") setFilesWidth(now - step);
+    else if (event.key === "Home") setFilesWidth(filesMax());
+    else if (event.key === "End") setFilesWidth(FILES_MIN);
+    else return;
+    event.preventDefault();
+  }
+  function resetFilesWidth(): void {
+    filesWidth = 0;
+    localStorage.removeItem(FILES_WIDTH);
   }
 
   // Follow new output (streamed text too) while the view is at its end; scrolled up, a button
@@ -275,19 +334,19 @@
     if (!session) return;
     try {
       // with the model this one ran with
-      navigate({ view: "session", key: (await sessions.start(session.agent, undefined, undefined, sessionModel(session.info))).key });
+      navigate({ view: "session", key: (await sessions.start(session.agent, undefined, sessionModel(session.info))).key });
     } catch (e) {
       session.error = (e as Error).message;
     }
   }
 
-  // Remote: share this session with the paired devices (docs/dev/design/remote.md); off after a
+  // Remote: share this session with the paired devices (remote design); off after a
   // stop.
   const shared = $derived(session ? remote.shared(session.key) : false);
   const remoteReady = $derived(Boolean(remote.status?.gatewayUrl));
   const remoteTitle = $derived(
     !remoteReady
-      ? "To share it with your phone, set a gateway first: Settings → Remote"
+      ? "To share it with your phone, set a gateway first: Settings → Your phone"
       : shared
         ? `Shared with your paired devices (${LIGHT_LABEL[remote.light ?? "off"]}). Click to stop sharing.`
         : "Share this session with your paired devices (phone, tablet)",
@@ -309,19 +368,16 @@
       ? "The agent is working. End this session? Its turn is stopped, and its sandbox."
       : "End this session? Its sandbox is stopped.";
     if (!confirm(question)) return;
-    const back = found ? { view: "project" as const, id: found.project.id } : { view: "home" as const };
+    const back = found ? { view: "project" as const, id: found.project.id } : { view: "projects" as const };
     void sessions.close(session); // it leaves the list: read its project before
     navigate(back);
   }
 </script>
 
-<!-- Its card (lib/sessioncard.svelte.ts): under its row in the menu's open sessions, or a panel
-     here when the menu is hidden. What it runs on, what it can reach (its sandbox, its folder), and
-     what can be done with it. -->
-{#snippet card()}
+<!-- What can be done with it, on its header's right: its folder, its sandbox and network, the
+     phone, its agent, another session, the end. -->
+{#snippet actionRow()}
   {#if session}
-    <div class="card-body">
-      <p class="fact" title={session.info.harnessVersion ? `Installed in its image: ${session.info.harnessVersion}` : undefined}>{runsOn}</p>
       <div class="actions">
         <Button
           variant={panel === "files" ? "secondary" : "ghost"}
@@ -342,17 +398,20 @@
         <Button
           variant={showNetwork ? "secondary" : "ghost"}
           size="icon-sm"
-          class={sandbox.weak ? "text-warn hover:text-warn" : ""}
+          class={["badged", sandbox.weak ? "text-warn hover:text-warn" : ""]}
           onclick={() => togglePanel("network")}
           aria-pressed={showNetwork}
-          title="Its sandbox: {sandbox.label} ({sandbox.hint}). Its network: what it reached, what was refused."
+          title="Its sandbox: {sandbox.label}. Its network: what it reached, what was refused.{undecided.length
+            ? ` ${undecided.length} host${undecided.length === 1 ? "" : "s"} blocked, not answered yet.`
+            : ''}"
           aria-label="Sandbox and network"
           data-testid="session-sandbox"
         >
           {#if sandbox.weak}<ShieldAlert />{:else}<ShieldCheck />{/if}
+          {#if undecided.length}<span class="count waits tabular-nums" aria-label="{undecided.length} blocked" data-testid="blocked-count">{undecided.length}</span>{/if}
         </Button>
         {#if session.live && !remoteReady}
-          <Button variant="ghost" size="icon-sm" href={href({ view: "settings", section: "remote" })} title={remoteTitle} aria-label="Remote" data-testid="remote-toggle">
+          <Button variant="ghost" size="icon-sm" href={href({ view: "settings", section: "phone" })} title={remoteTitle} aria-label="Remote" data-testid="remote-toggle">
             <Smartphone />
           </Button>
         {:else if session.live}
@@ -378,7 +437,7 @@
             <ListChecks />
           </Button>
         {/if}
-        {#if !draft && folderless && !isRun}
+        {#if !draft && !planDraft && folderless && !isRun}
           <Button
             variant={panel === "save" ? "secondary" : "ghost"}
             size="icon-sm"
@@ -409,7 +468,6 @@
           <Square />
         </Button>
       </div>
-    </div>
   {/if}
 {/snippet}
 
@@ -432,22 +490,20 @@
   <div class="grid flex-1 place-items-center p-6 text-center text-sm">
     <div class="space-y-3">
       <p class="text-muted-foreground">This session is not open any more.</p>
-      <Button variant="outline" size="sm" href={href({ view: "home" })}>Projects</Button>
+      <Button variant="outline" size="sm" href={href({ view: "projects" })}>Projects</Button>
     </div>
   </div>
 {:else}
   <div class="room term-surface">
     <header class="caption" data-testid="session-header">
       <SidebarUI.Trigger class="text-muted-foreground" />
-      {#if menuHidden}
-        <!-- the menu hidden, the session's card is a tap on its name -->
-        <button type="button" class="title" onclick={() => togglePanel("card")} aria-pressed={panel === "card"} title="Its folder, sandbox and actions" data-testid="session-caption">
-          <h1>{session.title ?? label}</h1><span class="where">{where}</span>{#if found?.project.area}<AreaTag name={found.project.area} />{/if}
-        </button>
-      {:else}
-        <div class="title"><h1>{session.title ?? label}</h1><span class="where">{where}</span>{#if found?.project.area}<AreaTag name={found.project.area} />{/if}</div>
-      {/if}
+      <!-- what it runs on: said when pointed at -->
+      <div class="title" title={session.info.harnessVersion ? `${runsOn} · installed in its image: ${session.info.harnessVersion}` : runsOn} data-testid="session-caption">
+        <h1>{session.title ?? label}</h1><span class="where">{where}</span>{#if found?.project.area}<AreaTag name={found.project.area} />{/if}
+      </div>
       <SessionStatus status={session.status} label />
+      <p class="sr-only" role="status" data-testid="session-news">{news}</p>
+      {@render actionRow()}
     </header>
     {#if draft}
       <!-- what an App creator's session is for: its draft, tried and used from here -->
@@ -483,6 +539,19 @@
         {/if}
       </div>
     {/if}
+    {#if planDraft}
+      <!-- what a plan builder's session is for: its draft, reviewed (and approved) from here -->
+      <div class="draft-bar" data-testid="session-plan-draft">
+        <ListChecks class="size-4 flex-none text-muted-foreground" />
+        <p class="draft-what">
+          A plan for {projects.list.find((p) => p.id === planDraft.projectId)?.name ?? planDraft.folder}
+          <span class="text-muted-foreground">· a draft Handler keeps; the project is seen read-only</span>
+        </p>
+        <div class="draft-actions">
+          <Button size="sm" href={href({ view: "review-plan", draft: planDraft.id })} data-testid="plan-draft-review"><ListChecks />Review this plan</Button>
+        </div>
+      </div>
+    {/if}
   <div
     class="session"
     class:with-network={panel !== null && panel !== "files"}
@@ -500,10 +569,12 @@
               pinPlan
               busy={session.conn.busy}
               asking={session.conn.permissions.map((p) => p.request.toolCall.toolCallId)}
+              permissions={session.live ? session.conn.permissions : []}
               first={session.info.input ? started : undefined}
+              ondecide={decideHost}
+              providers={href({ view: "settings", section: "models" })}
             >
               {#snippet empty()}
-                {@const preset = presetOf(session.agent)}
                 <!-- what it is ready with; stopped before its first turn, the footer says why -->
                 {#if running}
                   <div class="start" data-testid="session-start">
@@ -511,7 +582,7 @@
                     <dl>
                       <dt>Folder</dt><dd>{session.info.scope}</dd>
                       <dt>Model</dt><dd>{accessLabel(session.info)}</dd>
-                      <dt>Safety</dt><dd>{preset ? `${preset.label}: ${preset.hint}` : "its own settings (see Agent)"}</dd>
+                      <dt>Can do</dt><dd>{sandbox.label}</dd>
                     </dl>
                     {#if !isRun && session.conn?.session.commands.length}
                       <div class="commands">
@@ -542,9 +613,9 @@
 
       {#if session.live && planLeft}<Plan entries={plan} />{/if}
 
-      {#if session.live && session.conn?.permissions.length}
+      {#if unplaced.length}
         <div class="asks" data-testid="pinned-permissions">
-          {#each session.conn.permissions as pending (pending.request.toolCall.toolCallId)}
+          {#each unplaced as pending (pending.request.toolCall.toolCallId)}
             <PermissionPrompt {pending} root={session.info.scope} />
           {/each}
         </div>
@@ -582,8 +653,11 @@
             ondeletequeued={() => (session.queued = null)}
             findFiles={async (q) => (await api.sessionFind(session.key, q)).paths}
             activity={activity(session.conn.session.entries, session.info.scope)}
+            onmode={session.conn.session.modes.length ? cycleMode : undefined}
+            context={session.conn.session.usage ? contextFill(session.conn.session.usage).percent : null}
           >
             {#snippet tools()}<SessionControls conn={session.conn!} harness={session.info.harness} />{/snippet}
+            {#snippet settings()}<SessionControls conn={session.conn!} harness={session.info.harness} compact />{/snippet}
           </Composer>
         </footer>
       {:else if session.conn && session.status === "starting"}
@@ -595,7 +669,7 @@
       {:else if !running && session.status !== "elsewhere" && session.info.missingImage}
         <!-- its start refused: an image it needs is not built yet (F.1); prepared from here -->
         <footer class="ended" data-testid="closed">
-          <MissingImage target={session.info.missingImage} agent={label} refused={session.info.lastActivityAt} error={session.info.error ?? session.error} onstart={() => sessions.connect(session)} />
+          <MissingImage target={session.info.missingImage} agent={label} refused={session.info.lastActivityAt} request={session.info.request} error={session.info.error ?? session.error} onstart={() => sessions.connect(session)} />
         </footer>
       {:else if !running}
         <!-- stopped, failed or attached elsewhere: what happened and how to go on, in place of the prompt -->
@@ -647,11 +721,22 @@
       <button type="button" class="scrim" aria-label="close the panel" onclick={() => (panel = null)} transition:scrimFade></button>
       <aside class:files={panel === "files"} data-sheet out:sheetOut>
         <div class="handle" aria-hidden="true" {@attach dragSheet(released)}></div>
-        {#if panel === "card"}
-          {@render card()}
-        {:else if panel === "files"}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="grip" onpointerdown={resize} title="Drag to resize"></div>
+        {#if panel === "files"}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (a focusable separator is a control: ARIA's window splitter) -->
+          <div
+            class="grip"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the files panel"
+            aria-valuemin={FILES_MIN}
+            aria-valuemax={filesMax()}
+            aria-valuenow={filesWidth ? Math.round(filesWidth) : undefined}
+            tabindex="0"
+            title="Drag or use the arrow keys to resize; double-click for the default width"
+            onpointerdown={resize}
+            onkeydown={resizeKey}
+            ondblclick={resetFilesWidth}
+          ></div>
           <SessionFiles sessionId={session.key} folder={session.info.scope} {changes} request={fileRequest} onclose={() => togglePanel("files")} />
         {:else if showNetwork}
           <NetworkPanel agent={session.agent} session={session.info} onchange={(r) => sessions.updateAgent(r)} />
@@ -745,10 +830,6 @@
     text-align: left;
     font-size: inherit;
   }
-  button.title:hover,
-  button.title[aria-pressed="true"] {
-    background: var(--muted);
-  }
   .title h1 {
     min-width: 0;
     flex: none;
@@ -782,29 +863,16 @@
     flex-direction: column;
     min-height: 0;
   }
-  /* the card: in the menu (light or dark, the app's theme) or here (the terminal's) */
-  .card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-family: var(--sans);
-    font-size: 0.8125rem;
-  }
-  .card-body .fact {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--muted-foreground);
-    overflow-wrap: anywhere;
-  }
   .actions {
     display: flex;
+    flex: none;
     align-items: center;
     gap: 0.125rem;
-    margin: 0 -0.25rem;
+    margin: 0 -0.25rem 0 0.5rem;
     color: var(--muted-foreground);
   }
   .actions :global(.end) {
-    margin-left: auto;
+    margin-left: 0.5rem;
   }
   /* what an action has to tell (files changed, shared) sits on its corner: every action keeps one
      size, the row never moves */
@@ -825,6 +893,11 @@
     line-height: 0.9rem;
     text-align: center;
   }
+  /* hosts blocked that wait for an answer: amber, as what waits for you */
+  .actions .count.waits {
+    background: var(--warn);
+    color: var(--background);
+  }
   .actions .count.unseen {
     background: var(--primary);
     color: var(--primary-foreground);
@@ -836,9 +909,6 @@
     width: 0.4rem;
     height: 0.4rem;
     border-radius: 999px;
-  }
-  aside > .card-body {
-    font-size: 0.875rem;
   }
   .screen {
     flex: 1;
@@ -974,15 +1044,29 @@
     padding: 0;
     overflow: hidden;
   }
+  /* 10px to grab, a 2px line to see: the border on hover, the ring when focused */
   .grip {
     position: absolute;
     inset: 0 auto 0 0;
-    width: 6px;
+    width: 10px;
     cursor: col-resize;
+    touch-action: none;
     z-index: 1;
+    outline: none;
   }
-  .grip:hover {
+  .grip::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    transition: background-color var(--dur-1) var(--ease);
+  }
+  .grip:hover::after {
     background: var(--border);
+  }
+  .grip:focus-visible::after,
+  .grip:active::after {
+    background: var(--ring);
   }
   /* A narrow screen: the panel is a sheet from the bottom over the session, which recedes
      behind it (depth: it is still there, a tap on it comes back). */
@@ -1048,6 +1132,12 @@
       background: var(--border);
     }
     .grip {
+      display: none;
+    }
+  }
+  /* a phone, typing: the plan bar gives its line to the conversation (the keyboard is up) */
+  @media (max-width: 600px) and (pointer: coarse) {
+    .term:has(:global(textarea:focus)) :global([data-testid="live-plan"]) {
       display: none;
     }
   }

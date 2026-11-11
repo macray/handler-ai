@@ -1,0 +1,162 @@
+{
+  "$id": "urn:handler.control/v1/provider-reach",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ProviderModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "contextWindow": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contextwindow"
+        },
+        "maxOutput": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxoutput"
+        },
+        "reasoning": {
+          "default": false,
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "images": {
+          "default": false,
+          "title": "Images",
+          "type": "boolean"
+        },
+        "speech": {
+          "default": false,
+          "title": "Speech",
+          "type": "boolean"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "native": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ProviderModel",
+      "type": "object"
+    }
+  },
+  "description": "What a provider's server answered (D.12): `ok` once every endpoint gave its model list.",
+  "properties": {
+    "ok": {
+      "title": "Ok",
+      "type": "boolean"
+    },
+    "at": {
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+    },
+    "urls": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Urls",
+      "type": "array"
+    },
+    "models": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ProviderModel"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "hint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hint"
+    }
+  },
+  "required": [
+    "ok",
+    "at",
+    "urls"
+  ],
+  "title": "ProviderReach",
+  "type": "object"
+}

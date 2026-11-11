@@ -5,8 +5,10 @@ so no browser or system libraries are needed on the host. Skipped when podman, t
 built UI is missing.
 """
 
+import io
 import json
 import re
+import shutil
 import struct
 import time
 import zipfile
@@ -18,15 +20,18 @@ from typing import Any
 import httpx
 import pytest
 from playwright.sync_api import Browser, FilePayload, Locator, Page, Route, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from handler_contracts import terminal_path
 from handler_control import runtime
 from handler_control.settings import TEMPLATES, WEB_UI
 from handler_harness import images
+from handler_harness.render import FILTERED_NETWORK
 
 from ..apps.conftest import app_file
 from ..support import dev_env
 from ..support.daemon import Daemon, fake_terminal, start_daemon
+from ..support.models_server import ModelsServer
 from ..support.terminal import Attached
 from .browser import PW_IMAGE, image_present
 
@@ -56,7 +61,7 @@ def set_knowledge_root(daemon: Daemon, root: Path) -> None:
 def page(browser: Browser, daemon: Daemon) -> Iterator[Page]:
     context = browser.new_context()
     page = context.new_page()
-    page.goto(f"{daemon.base_url}/#token={daemon.token}")
+    page.goto(daemon.ui_url())
     yield page
     context.close()
 
@@ -66,11 +71,49 @@ def pick_account(page: Page, account: str) -> None:
     page.get_by_test_id("access-account").filter(has=page.get_by_text(account, exact=True)).click()
 
 
-def new_project(page: Page, daemon: Daemon, account: str, folder: Path) -> None:
-    """The new-project page with its first agent (on that account) and its folder chosen."""
+def choose_account(page: Page, account: str) -> None:
+    """The agent form's Who works: the second chip's menu, then that account."""
+    page.get_by_test_id("agent-model").get_by_test_id("model-choice-access").click()
+    row = page.get_by_test_id("model-choice-access-row")
+    row.filter(has=page.get_by_text(account, exact=True)).click()
+    page.keyboard.press("Escape")
+
+
+def choose_helper_account(page: Page, account: str, card: Locator | None = None) -> None:
+    """A helper's set-up card (the page's only one, or `card`): Who works, the second chip's
+    menu, then that account."""
+    chip = (card or page.get_by_test_id("helper-card")).get_by_test_id("model-choice-access")
+    row = page.get_by_test_id("model-choice-access-row").filter(
+        has=page.get_by_text(account, exact=True)
+    )
+    for _ in range(3):  # the menu may close while the page loads around it: open it again
+        if not row.is_visible():
+            chip.click()
+        try:
+            row.click(timeout=5_000)
+            break
+        except PlaywrightTimeoutError:
+            continue
+    page.keyboard.press("Escape")
+    expect(chip).to_contain_text(account)
+
+
+def new_project_page(page: Page, daemon: Daemon, folder: Path) -> None:
+    """New project, on another folder than the recent ones."""
     page.goto(f"{daemon.base_url}/#/projects/new")
-    pick_account(page, account)
+    page.get_by_test_id("project-folder-other").click()
     page.get_by_label("folder path").fill(str(folder))
+
+
+def new_project(page: Page, daemon: Daemon, account: str, folder: Path) -> None:
+    """A new project on that folder (made alone), then its first agent set up from its page, on
+    that account."""
+    new_project_page(page, daemon, folder)
+    page.get_by_test_id("project-save").click()
+    page.get_by_test_id("no-agent-set-up").click()
+    choose_account(page, account)
+    page.get_by_test_id("agent-save").click()
+    expect(page.get_by_test_id("project-agents")).to_contain_text("Assistant")
 
 
 def create_project(daemon: Daemon, folder: Path, **body: Any) -> dict[str, Any]:
@@ -87,23 +130,41 @@ def create_project(daemon: Daemon, folder: Path, **body: Any) -> dict[str, Any]:
 def open_run(page: Page, daemon: Daemon, folder: Path | None = None) -> None:
     """A new project (the fake agent on a new folder), then an empty chat session on it."""
     new_project(page, daemon, "fake", folder or daemon.make_scope())
-    page.get_by_test_id("project-save").click()
     page.get_by_test_id("project-start-button").click()
-    expect(page.get_by_test_id("mode-select")).to_have_value("yolo")  # P7, seen in the UI
+    # P7, seen in the UI; the chip waits for /v1/harnesses, which reads every harness image's
+    # version: slow under the parallel suite when the images are built
+    expect(page.get_by_test_id("mode-select")).to_have_value("yolo", timeout=30_000)
 
 
-def items_of(page: Page, folder: Path, group: str = "open sessions") -> Locator:
-    """The sidebar's sessions in `folder` (other tests' running sessions are listed too)."""
-    return page.get_by_label(group).locator(f'[data-testid="session-item"][title$="{folder}"]')
+def bell_items(page: Page, folder: Path, kind: str = "bell-waiting") -> Locator:
+    """The bell's list opened, its items in `folder` (other tests' sessions are listed too)."""
+    if not page.get_by_test_id("bell-list").is_visible():
+        page.get_by_test_id("bell").click()
+    titled = f'[title$="{folder}"]'
+    return (
+        page.get_by_test_id(kind)
+        .filter(has=page.locator(titled))
+        .or_(page.locator(f'[data-testid="{kind}"]{titled}'))
+    )
+
+
+def pin(daemon: Daemon, project_id: str) -> None:
+    """The project in the menu's Pinned, last (only the first project is pinned by itself)."""
+    with daemon.http() as c:
+        items = c.get("/v1/pins").json()["items"]
+        items.append({"kind": "project", "id": project_id})
+        assert c.put("/v1/pins", json={"items": items}).status_code == 200
+
+
+def project_of(daemon: Daemon, folder: Path) -> dict:
+    with daemon.http() as c:
+        return next(p for p in c.get("/v1/projects").json() if p["folder"] == str(folder))
 
 
 def open_new_skill(page: Page, daemon: Daemon) -> None:
-    """Skills, its ways to make a new skill shown (at once when the library is empty)."""
-    page.goto(f"{daemon.base_url}/#/skills")
-    new = page.get_by_test_id("new-skill")
-    expect(new.or_(page.get_by_test_id("skill-new"))).to_be_visible()
-    if new.is_visible():
-        new.click()
+    """Library → Skills → Get more: its ways to make or import a skill."""
+    page.goto(f"{daemon.base_url}/#/library/skills/more")
+    expect(page.get_by_test_id("skill-new")).to_be_visible()
 
 
 def say(page: Page, text: str) -> None:
@@ -117,6 +178,7 @@ def test_token_leaves_the_address_bar(page: Page) -> None:
     assert "token" not in page.url
 
 
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
 def test_chat_through_the_ui(page: Page, daemon: Daemon) -> None:
     open_run(page, daemon)
     say(page, "report")
@@ -144,47 +206,70 @@ def test_supervise_several_sessions(page: Page, daemon: Daemon) -> None:
     open_run(page, daemon, folder)
     say(page, "permission")  # the first agent now waits for an answer
     expect(page.get_by_role("alertdialog")).to_be_visible()
-    page.locator(f'[data-testid="sidebar-project"][title="{folder}"]').click()  # pinned: new
+    page.goto(f"{daemon.base_url}/#/projects/{project_of(daemon, folder)['id']}")
     page.get_by_test_id("project-start-button").click()  # another session, the default agent
     expect(page.get_by_test_id("mode-select")).to_have_value("yolo")
-    items = items_of(page, folder)  # in the menu's open sessions
-    expect(items).to_have_count(2)
-    expect(items.first.get_by_test_id("session-status")).to_have_attribute(
-        "data-status", "needs-you"
-    )
-    statuses = page.get_by_test_id("open-sessions").get_by_test_id("session-status")
-    expect(statuses.first).to_have_attribute("data-status", re.compile("needs-you|replied"))
-    expect(page).to_have_title("(1) Handler")
-    items.first.click()  # waiting for you: listed first
-    page.get_by_role("button", name="Allow").click()
+    expect(page.get_by_test_id("bell")).to_have_attribute("data-state", "waiting")
+    expect(page).to_have_title(re.compile(r"^\(\d+\) Handler$"))  # other tests' sessions too
+    waiting = bell_items(page, folder)  # the bell's list: the one asking, waiting for you
+    expect(waiting).to_have_count(1)
+    expect(waiting).to_contain_text("asks:")
+    link = waiting.locator("a").first.get_attribute("href")
+    waiting.get_by_test_id("bell-allow").click()  # answered in place
+    expect(waiting).to_have_count(0)
+    page.goto(f"{daemon.base_url}/{link}")
     expect(page.get_by_test_id("agent-message").last).to_contain_text('"optionId": "yes"')
-    expect(page).to_have_title("Handler")
 
 
+def test_projects_row_waiting_opens_its_session(page: Page, daemon: Daemon) -> None:
+    """Projects: a project waiting for you says so on its row, and two ways in: its Open
+    session goes to the waiting session, the rest of the row to the project."""
+    folder = daemon.make_scope()
+    open_run(page, daemon, folder)
+    say(page, "permission")  # the agent now waits for an answer
+    expect(page.get_by_role("alertdialog")).to_be_visible()
+    session = page.url
+    project = project_of(daemon, folder)
+    page.goto(f"{daemon.base_url}/#/projects")
+    page.get_by_test_id("project-search").fill(project["name"])
+    row = page.get_by_test_id("project-row")
+    expect(row).to_have_count(1)
+    expect(row.get_by_test_id("project-state")).to_have_text("needs you")
+    row.get_by_test_id("open-session").click()
+    expect(page).to_have_url(session)
+    expect(page.get_by_role("alertdialog")).to_be_visible()
+    page.go_back()
+    page.get_by_test_id("project-search").fill(project["name"])
+    page.get_by_test_id("project-row").get_by_test_id("project-name").click()
+    expect(page.get_by_role("heading", name=project["name"])).to_be_visible()
+    page.goto(f"{daemon.base_url}/#/projects")  # the agents of no project: one row, counted
+    expect(page.get_by_test_id("outside-row")).to_contain_text("Agents outside projects")
+
+
+@pytest.mark.rule("session.outlives-its-clients")
 def test_reload_keeps_the_turn_in_progress(page: Page, daemon: Daemon) -> None:
     """The agent lives in the daemon (F): a reload re-attaches, the pending question is back."""
     folder = daemon.make_scope()
     open_run(page, daemon, folder)
     say(page, "permission")  # the agent now waits for an answer
     expect(page.get_by_role("alertdialog")).to_be_visible()
+    pin(daemon, project_of(daemon, folder)["id"])
     page.reload()
-    item = items_of(page, folder)
-    expect(item.get_by_test_id("session-status")).to_have_attribute("data-status", "needs-you")
-    # its project in the menu says it too, by the most urgent of its sessions
+    # its project in the menu's Pinned says it, by the most urgent of its sessions; the bell too
     dot = page.locator(f'[data-testid="sidebar-project"][title="{folder}"]').get_by_test_id(
         "place-dot"
     )
     expect(dot).to_have_attribute("data-status", "needs-you")
-    expect(page.get_by_test_id("sessions-waiting")).to_be_visible()  # under "waiting for you"
+    expect(page.get_by_test_id("bell")).to_have_attribute("data-state", "waiting")
     expect(page.get_by_test_id("user-message").last).to_contain_text("permission")  # replayed
-    page.get_by_role("button", name="Allow").click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Allow").click()
     expect(page.get_by_test_id("agent-message").last).to_contain_text('"optionId": "yes"')
-    expect(item.get_by_test_id("session-status")).to_have_attribute("data-status", "idle")
     expect(dot).to_have_attribute("data-status", "idle")
 
 
-def test_the_menu_names_each_area_once_above_its_projects(page: Page, daemon: Daemon) -> None:
-    """The pinned projects grouped under their area's name, no tag on each row."""
+def test_a_pinned_project_s_area_is_its_colour(page: Page, daemon: Daemon) -> None:
+    """Pinned is one list in the person's order: a project's area is its folder's colour, no
+    group and no tag."""
     with daemon.http() as c:
         assert c.post("/v1/areas", json={"name": "Menu-e2e", "color": "cyan"}).status_code == 201
         info = next(a for a in c.get("/v1/accounts").json() if a["name"] == "fake")
@@ -193,11 +278,12 @@ def test_the_menu_names_each_area_once_above_its_projects(page: Page, daemon: Da
     folder = daemon.make_scope()
     project = create_project(daemon, folder, name="menu-area-e2e", area="Menu-e2e")
     try:
-        page.goto(f"{daemon.base_url}/#/")
+        pin(daemon, project["id"])
+        page.goto(f"{daemon.base_url}/#/projects")
         page.reload()  # areas are loaded at start (Settings reloads them after a change)
-        expect(page.get_by_test_id("sidebar-area").filter(has_text="Menu-e2e")).to_be_visible()
-        row = page.get_by_label("Menu-e2e", exact=True).get_by_test_id("sidebar-project")
+        row = page.get_by_test_id("sidebar-project").filter(has_text="menu-area-e2e")
         expect(row).to_have_text("menu-area-e2e")
+        expect(row.locator("svg.area-icon")).to_have_count(1)
         expect(row.get_by_test_id("area-tag")).to_have_count(0)
     finally:
         with daemon.http() as c:
@@ -208,15 +294,24 @@ def test_the_menu_names_each_area_once_above_its_projects(page: Page, daemon: Da
 
 
 def test_settings_keep_the_menu(page: Page, daemon: Daemon) -> None:
-    """Settings list their sections in the page: the menu stays, Settings lit at its foot."""
+    """Settings list their sections in the page: the menu stays, Settings lit at its foot. Five
+    everyday ones, then Expert, folded until opened once (this browser)."""
     page.goto(f"{daemon.base_url}/#/")
+    page.evaluate("localStorage.removeItem('handler.settings.expert')")
     page.get_by_test_id("settings-link").click()
     expect(page.get_by_test_id("settings-models")).to_be_visible()
     expect(page.get_by_test_id("projects-link")).to_be_visible()  # the menu is still there
     expect(page.get_by_test_id("settings-link")).to_have_attribute("data-active", "true")
-    page.get_by_test_id("settings-nav").get_by_test_id("settings-nav-areas").click()
+    nav = page.get_by_test_id("settings-nav")
+    expect(nav.locator("a")).to_have_text(
+        ["Model access", "Helpers", "Folders", "Your phone", "Appearance"]
+    )
+    nav.get_by_test_id("settings-expert").click()
+    nav.get_by_test_id("settings-nav-areas").click()
     expect(page.get_by_test_id("settings-areas")).to_be_visible()
     expect(page.get_by_test_id("settings-nav-areas")).to_have_attribute("aria-current", "page")
+    page.reload()  # opened once: stays open
+    expect(nav.get_by_test_id("settings-nav-sandboxes")).to_be_visible()
 
 
 def test_a_broken_gateway_is_said_only_while_a_session_is_shared(
@@ -237,7 +332,7 @@ def test_a_broken_gateway_is_said_only_while_a_session_is_shared(
     page.reload()
     problem = page.get_by_test_id("remote-problem")
     expect(problem).to_contain_text("Your phone can't reach Handler")
-    expect(problem).to_have_attribute("href", "#/settings/remote")
+    expect(problem).to_have_attribute("href", "#/settings/phone")
     status["sharedSessions"] = []  # set up but not in use: the menu says nothing
     with page.expect_response("**/v1/remote"):
         page.reload()
@@ -287,7 +382,8 @@ def test_an_image_goes_with_the_prompt(page: Page, daemon: Daemon) -> None:
     expect(page.get_by_test_id("attached-images").locator("img")).to_have_count(1)
     say(page, "report")
     report = page.get_by_test_id("agent-message").last
-    expect(report).to_contain_text('"prompt": ["(image image/png)", "report"]')
+    told = json.dumps([FILTERED_NETWORK, "(image image/png)", "report"])  # a filtered network's
+    expect(report).to_contain_text(f'"prompt": {told}')
     expect(page.get_by_test_id("attached-images")).to_have_count(0)
     expect(page.get_by_test_id("user-image")).to_have_count(1)
     page.reload()
@@ -312,9 +408,11 @@ def test_at_names_a_file_of_the_folder(page: Page, daemon: Daemon) -> None:
     prompt.press_sequentially("report")
     prompt.press("Enter")
     report = page.get_by_test_id("agent-message").last
-    expect(report).to_contain_text('"prompt": ["look at @src/app.py \\nreport"]')
+    told = json.dumps([f"{FILTERED_NETWORK}\n\nlook at @src/app.py \nreport"])  # filtered
+    expect(report).to_contain_text(f'"prompt": {told}')
 
 
+@pytest.mark.rule("session.attaching-resumes-a-stopped-session")
 def test_closed_session_can_be_resumed(page: Page, daemon: Daemon) -> None:
     open_run(page, daemon)
     say(page, "hello")
@@ -327,6 +425,20 @@ def test_closed_session_can_be_resumed(page: Page, daemon: Daemon) -> None:
     expect(page.get_by_test_id("agent-message").last).to_contain_text('"session/load"')
 
 
+def test_how_full_the_context_is_stays_when_resumed(page: Page, daemon: Daemon) -> None:
+    open_run(page, daemon)
+    meter = page.get_by_test_id("context-meter")
+    expect(meter).to_have_count(0)  # the agent has not said: nothing shown
+    say(page, "usage")
+    expect(meter).to_contain_text("85% · 170k / 200k")
+    page.once("dialog", lambda dialog: dialog.accept())  # "End this session?"
+    page.get_by_test_id("end-session").click()
+    page.get_by_test_id("resume-session").first.click()
+    expect(page.get_by_test_id("agent-message").last).to_contain_text("ok")
+    expect(meter).to_contain_text("85% · 170k / 200k")  # from the daemon's log
+
+
+@pytest.mark.rule("history.the-log-is-the-history")
 def test_a_stopped_session_keeps_its_conversation(page: Page, daemon: Daemon) -> None:
     open_run(page, daemon)
     say(page, "hello")
@@ -337,26 +449,24 @@ def test_a_stopped_session_keeps_its_conversation(page: Page, daemon: Daemon) ->
     expect(page.get_by_test_id("agent-message").last).to_contain_text("ok")  # still readable
     expect(page.get_by_test_id("user-message").first).to_contain_text("hello")
     expect(page.get_by_label("prompt")).to_have_count(0)
-    item = page.get_by_test_id("open-sessions").locator(
-        '[data-testid="session-item"][data-active="true"]'
-    )
-    expect(item.get_by_test_id("session-status")).to_have_attribute("data-status", "stopped")
-    expect(item).to_contain_text("stopped")  # "· open it to resume", then why: the agent exited 3
+    status = page.get_by_test_id("session-header").get_by_test_id("session-status")
+    expect(status).to_have_attribute("data-status", "stopped")
     page.get_by_test_id("reconnect").click()
     expect(page.get_by_label("prompt")).to_be_visible()
-    expect(item.get_by_test_id("session-status")).to_have_attribute("data-status", "idle")
+    expect(status).to_have_attribute("data-status", "idle")
     say(page, "report")
     expect(page.get_by_test_id("agent-message").last).to_contain_text('"session/load"')
 
 
+@pytest.mark.rule("session.a-start-that-fails-says-why")
 def test_a_session_whose_image_is_not_built_says_what_to_prepare(
     page: Page, daemon: Daemon
 ) -> None:
     """F.1: its start refused, what it needs is said and prepared from the session (here the build
-    fails: the test daemon has no toolbox), the daemon's error folded under Details."""
+    fails: the fake harness has no Containerfile, or the test daemon no toolbox), the daemon's
+    error folded under Details."""
     missing = daemon.config_dir.parent / "fake-ran" / "harness-image-missing"
     new_project(page, daemon, "fake", daemon.make_scope())
-    page.get_by_test_id("project-save").click()
     missing.touch()
     try:
         page.get_by_test_id("project-start-button").click()
@@ -365,11 +475,63 @@ def test_a_session_whose_image_is_not_built_says_what_to_prepare(
         expect(panel).to_contain_text("not prepared on this computer yet")
         expect(page.get_by_test_id("error")).to_be_hidden()  # in Details, folded
         page.get_by_test_id("missing-image-prepare").click()
-        expect(panel).to_contain_text("failed: ")
-        expect(panel.get_by_role("link", name="Settings → Images")).to_be_visible()
+        # a real podman build when the machine has a toolbox: slow to fail under load
+        expect(panel).to_contain_text("failed: ", timeout=60_000)
+        expect(panel.get_by_role("link", name="Settings → Sandboxes")).to_be_visible()
         expect(page.get_by_test_id("missing-image-prepare")).to_have_text("Try again")
     finally:
         missing.unlink()
+
+
+@pytest.mark.rule("session.a-first-request-waits-for-its-image")
+def test_a_session_waiting_for_a_build_follows_it_and_starts_with_its_request(
+    page: Page, daemon: Daemon
+) -> None:
+    """F.1, D.4: a toolbox build is running (started elsewhere): the session follows it, starts
+    no second build, starts by itself once it succeeded, and its first request is then sent."""
+    missing = daemon.config_dir.parent / "fake-ran" / "harness-image-missing"
+    new_project(page, daemon, "fake", daemon.make_scope())
+    missing.touch()
+    builds = daemon.config_dir.parent / "state" / "builds"
+    toolbox = builds / "b_toolbox.json"
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    running = {
+        "id": "b_toolbox",
+        "target": "toolbox",
+        "state": "running",
+        "harnesses": ["fake"],
+        "startedAt": started,
+    }
+    try:
+        page.get_by_test_id("project-request").fill("report")
+        page.get_by_test_id("project-request").press("Enter")
+        panel = page.get_by_test_id("missing-image")
+        expect(panel).to_contain_text("can't start yet")
+        expect(page.get_by_test_id("missing-image-request")).to_have_text(
+            "It will start with: report"
+        )
+        toolbox.write_text(json.dumps(running))  # `handler image rebuild toolbox`, say
+        expect(page.get_by_test_id("missing-image-preparing")).to_contain_text(
+            "with the toolbox build"
+        )
+        expect(panel).to_contain_text("the session will start by itself")
+        expect(page.get_by_test_id("missing-image-prepare")).to_have_count(0)
+        asked: list[str] = []  # followed once a second, not once per answer (M13)
+        page.on(
+            "request", lambda r: asked.append(r.url) if "/v1/builds/b_toolbox" in r.url else None
+        )
+        page.wait_for_timeout(3000)
+        assert 1 <= len(asked) <= 6, len(asked)
+        ended = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 1))
+        missing.unlink()
+        toolbox.write_text(json.dumps(running | {"state": "succeeded", "endedAt": ended}))
+        expect(page.get_by_test_id("agent-message").last).to_contain_text('"prompt"')
+        expect(page.get_by_test_id("agent-message").last).to_contain_text("report")
+        made = [json.loads(p.read_text()) for p in builds.glob("*.json")]
+        assert [b["id"] for b in made if b["startedAt"] >= started] == ["b_toolbox"]  # no other
+    finally:
+        missing.unlink(missing_ok=True)
+        toolbox.unlink(missing_ok=True)
 
 
 def test_a_turn_says_what_it_did_and_the_end_is_one_click_away(page: Page, daemon: Daemon) -> None:
@@ -386,6 +548,7 @@ def test_a_turn_says_what_it_did_and_the_end_is_one_click_away(page: Page, daemo
     expect(latest).to_have_count(0)
 
 
+@pytest.mark.rule("files.changes-are-since-the-session-started")
 def test_the_files_pane_follows_what_the_agent_changes(page: Page, daemon: Daemon) -> None:
     folder = daemon.make_scope()
     (folder / "src").mkdir()
@@ -412,6 +575,7 @@ def test_the_files_pane_follows_what_the_agent_changes(page: Page, daemon: Daemo
     expect(page.get_by_test_id("folder-list")).to_contain_text("notes.md")
 
 
+@pytest.mark.rule("session.instructions-go-with-the-first-turn")
 def test_start_with_a_request_and_an_agents_instructions(page: Page, daemon: Daemon) -> None:
     """The project page: add an agent with instructions, choose it, type the request, Enter."""
     folder = daemon.make_scope()
@@ -423,39 +587,101 @@ def test_start_with_a_request_and_an_agents_instructions(page: Page, daemon: Dae
     page.get_by_test_id("agent-instructions").fill("Be brief.")
     page.get_by_test_id("agent-save").click()
     expect(page.get_by_test_id("agent-row")).to_have_count(2)
-    page.get_by_test_id("agent-row").filter(has_text="reviewer").click()
-    expect(page.get_by_test_id("agent-panel")).to_contain_text("reviews, never edits")
+    tab = page.get_by_test_id("agent-row").filter(has_text="reviewer")
+    tab.click()
+    expect(tab).to_have_attribute("title", "reviewer: reviews, never edits")
     page.get_by_test_id("project-request").fill("report")
     page.get_by_test_id("project-request").press("Enter")
-    expect(page.get_by_test_id("agent-message").last).to_contain_text(
-        '"prompt": ["Be brief.\\n\\nreport"]'
-    )
-    expect(page.get_by_test_id("user-message").first).to_have_text("Be brief.\n\nreport")
+    told = json.dumps([f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport"])  # its network is filtered
+    expect(page.get_by_test_id("agent-message").last).to_contain_text(f'"prompt": {told}')
+    shown = f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport"
+    expect(page.get_by_test_id("user-message").first).to_have_text(shown)
     expect(page.get_by_test_id("session-header")).to_contain_text("reviewer")
-    expect(items_of(page, folder)).to_contain_text("reviewer · report")  # the request is the title
+    expect(page.get_by_test_id("session-caption")).to_contain_text(
+        "report"
+    )  # the request is the title
+
+
+def test_many_agents_stay_on_one_line(page: Page, daemon: Daemon) -> None:
+    """A project's agent tabs never wrap: those that do not fit are under "+N more", picking one
+    brings it into the row, and its Edit is the pencil in its tab."""
+    names = [f"agent with a rather long name number {i}" for i in range(12)]
+    agents = [{"model": {"account": "fake"}, "name": n} for n in names]
+    project = create_project(daemon, daemon.make_scope(), name="crowded", agents=agents)
+    page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
+    tabs = page.get_by_test_id("agent-row")
+    expect(page.get_by_test_id("agents-more")).to_be_visible()
+    boxes = [t.bounding_box() for t in tabs.all()]
+    assert all(boxes), "a tab is not shown"
+    tops = {round(b["y"]) for b in boxes if b}
+    assert len(tops) == 1, tops
+    shown = tabs.count()
+    assert 0 < shown < len(names)
+    expect(page.get_by_test_id("agents-more")).to_contain_text(f"+{len(names) - shown} more")
+    page.get_by_test_id("agents-more").click()
+    page.get_by_test_id("agents-more-find").fill("number 11")
+    page.get_by_test_id("agents-more-item").click()
+    chosen = tabs.filter(has_text="number 11")
+    expect(chosen).to_have_attribute("aria-selected", "true")
+    expect(chosen).to_have_attribute("title", names[11])
+    page.get_by_test_id("agent-edit").click()
+    expect(page.get_by_test_id("agent-name-input")).to_have_value(names[11])
 
 
 def test_sessions_started_elsewhere_are_listed(page: Page, daemon: Daemon) -> None:
-    """A session started by `handler run` (an ad-hoc agent) shows in the sidebar without being
-    attached; opening it attaches, and its conversation is there."""
+    """A session started by `handler run` (an ad-hoc agent) is listed with its agent's sessions
+    without being attached; opening it attaches, and its conversation is there."""
     folder = daemon.make_scope()
     ad_hoc = daemon.create_ad_hoc("fake", folder)
     with daemon.http() as c:
         r = c.post("/v1/sessions", json={"agentId": ad_hoc["id"], "prompt": "report"})
         sid = r.json()["id"]
-    adhoc = items_of(page, folder)  # with every open session
-    expect(adhoc).to_contain_text("report", timeout=15_000)  # polled
+    page.goto(f"{daemon.base_url}/#/agents?agent={ad_hoc['id']}")  # outside projects, its agent
+    adhoc = page.get_by_test_id("agent-session").filter(has_text="report")
+    expect(adhoc).to_be_visible(timeout=15_000)
     with daemon.http() as c:
         assert c.get(f"/v1/sessions/{sid}").json()["attached"] == 0
-    adhoc.click()
+    adhoc.get_by_test_id("open-session").click()
     expect(page.get_by_test_id("agent-message").last).to_contain_text('"mode": "yolo"')
     with daemon.http() as c:
         assert c.get(f"/v1/sessions/{sid}").json()["attached"] == 1
 
 
+@pytest.mark.rule("project.its-first-agent-is-its-default")
+def test_a_new_project_starts_with_no_agent(page: Page, daemon: Daemon) -> None:
+    """New project makes the project alone: its page offers an agent, added in one click as
+    Assistant on what the last project used; its last agent removed, the offer is back."""
+    create_project(daemon, daemon.make_scope())  # used last: dev, on fake
+    folder = daemon.make_scope()
+    new_project_page(page, daemon, folder)
+    expect(
+        page.get_by_test_id("project-folder-recent").filter(has_text=str(folder))
+    ).to_be_visible()
+    page.get_by_test_id("caches-global").click()
+    page.get_by_test_id("project-save").click()
+    offer = page.get_by_test_id("no-agent-suggestion")
+    expect(offer).to_contain_text("An agent to work with you here")
+    expect(page.get_by_test_id("no-agent-set-up")).to_be_visible()
+    page.get_by_test_id("no-agent-add").click()
+    expect(page.get_by_test_id("project-agents")).to_contain_text("Assistant")
+    with daemon.http() as c:
+        made = next(p for p in c.get("/v1/projects").json() if p["folder"] == str(folder))
+    assert made["caches"] == "global" and made["defaultAgent"] == made["agents"][0]["id"]
+    assistant = made["agents"][0]
+    assert (assistant["name"], assistant["network"], assistant["permissions"]) == (
+        "Assistant",
+        "filtered",
+        "bypass",
+    )
+    page.get_by_test_id("agent-edit").click()
+    page.once("dialog", lambda d: d.accept())
+    page.get_by_test_id("agent-delete").click()
+    expect(page.get_by_test_id("no-agent")).to_be_visible()
+
+
 def test_new_project_folder(page: Page, daemon: Daemon) -> None:
     project = daemon.make_scope()
-    new_project(page, daemon, "fake", project)
+    new_project_page(page, daemon, project)
     page.get_by_role("button", name="Browse").click()
     page.get_by_test_id("new-folder").click()
     page.get_by_label("new folder name").fill("fresh")
@@ -489,17 +715,16 @@ def test_agent_network_settings_apply_live(page: Page, daemon: Daemon) -> None:
             assert time.monotonic() < deadline, "the connection never started"
             time.sleep(0.2)
         page.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/{agent['id']}")
-        guarded = page.get_by_test_id("agent-preset-guarded")
-        expect(guarded).to_have_attribute("aria-checked", "true")
-        hosts = page.get_by_test_id("agent-hosts")  # shown with the preset
-        expect(hosts).to_contain_text("project.example:443")  # its own
-        page.get_by_test_id("agent-customize").click()
-        network = page.get_by_test_id("agent-network")
+        network = page.get_by_test_id("agent-network")  # Can do, nothing folded
         expect(network.get_by_test_id("network-filtered")).to_have_attribute("aria-checked", "true")
-        network.get_by_label("Log only").click()
-        expect(page.get_by_test_id("agent-preset-summary")).to_contain_text("log only")  # its own
-        hosts.get_by_label("host to allow").fill("https://PyPI.org:443/simple")
-        hosts.get_by_role("button", name="Allow").click()
+        hosts = network.get_by_test_id("agent-hosts")
+        expect(hosts).to_contain_text("project.example:443")  # its own
+        learn = network.get_by_test_id("agent-log-only")
+        learn.click()
+        expect(learn).to_have_attribute("aria-checked", "true")
+        network.get_by_test_id("agent-add-site").click()
+        network.get_by_test_id("agent-site-input").fill("https://PyPI.org:443/simple")
+        network.get_by_test_id("agent-site-allow").click()
         expect(hosts.get_by_test_id("allow-entry")).to_have_text(
             ["project.example:443", "pypi.org:443"]
         )
@@ -531,13 +756,14 @@ def test_a_terminal_is_shown_with_its_network(page: Page, daemon: Daemon) -> Non
         term.until("args:")
         page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
         panel = page.get_by_test_id("agent-panel")  # dev, the default agent
-        expect(panel.get_by_role("heading", name="dev")).to_be_visible()
+        chosen = page.get_by_test_id("agent-row").filter(has_text="dev")
+        expect(chosen).to_have_attribute("aria-selected", "true")
         row = panel.get_by_test_id("live-terminal")
         expect(row).to_contain_text("account fake")
         row.get_by_role("link", name="Open").click()
         expect(page.get_by_test_id("terminal-info")).to_contain_text("account fake")
         page.get_by_test_id("egress-toggle").click()  # learn hosts
-        expect(page.get_by_test_id("network-panel")).to_contain_text("Learning hosts")
+        expect(page.get_by_test_id("network-panel")).to_contain_text("Learning the sites")
         with daemon.http() as c:
             assert c.get(f"/v1/agents/{agent['id']}").json()["egress"] == "log-only"
         term.type("quit")
@@ -568,18 +794,18 @@ def test_a_terminal_outside_the_project_in_its_folder(page: Page, daemon: Daemon
         page.goto(f"{daemon.base_url}/#/agents?agent={agent['id']}")  # in what it did
         terminal = page.get_by_test_id("agent-panel").get_by_test_id("live-terminal")
         terminal.get_by_role("link", name="Open").click()
-        expect(page.get_by_test_id("terminal-info")).to_contain_text("anyway")
+        expect(page.get_by_test_id("page-header")).to_contain_text("anyway")  # its title
     finally:
         term.type("quit")
         term.exit_code()
 
 
+@pytest.mark.rule("save.widening-is-confirmed")
 def test_widening_an_agent_outside_projects_is_confirmed(page: Page, daemon: Daemon) -> None:
     """D.8 outside projects too: an open network and a privileged sandbox are saved only once
     confirmed."""
     agent = daemon.create_ad_hoc("fake", daemon.make_scope(), name="loose")
     page.goto(f"{daemon.base_url}/#/agents/{agent['id']}/edit")
-    page.get_by_test_id("agent-customize").click()
     page.get_by_test_id("network-open").click()
     page.get_by_test_id("confinement-privileged").click()
     page.get_by_test_id("agent-save").click()
@@ -593,25 +819,42 @@ def test_widening_an_agent_outside_projects_is_confirmed(page: Page, daemon: Dae
     assert (saved["network"], saved["confinement"]) == ("open", "privileged")
 
 
+def pick_program(page: Page, product: str) -> None:
+    """The box's program chip: its menu, then a program by its product name."""
+    page.get_by_test_id("model-choice-harness").click()
+    page.get_by_test_id("model-choice-program").filter(has_text=product).click()
+
+
+def local_provider(daemon: Daemon, *models: str) -> None:
+    """A provider `llamacpp` from its template (which has no model: picked from what the server
+    serves), serving `models`."""
+    template = (TEMPLATES / "providers" / "llamacpp.toml").read_text()
+    served = "".join(f'\n[[models]]\nid = "{m}"\n' for m in models)
+    (daemon.providers_dir / "llamacpp.toml").write_text(template + served)
+
+
 def test_an_agent_on_the_model_alone(page: Page, daemon: Daemon) -> None:
     """D.18 in the UI: who works is the model alone, on a provider; what only a sandbox has is
     not offered, and its page says it does nothing outside its call."""
-    template = TEMPLATES / "providers" / "llamacpp.toml"
-    (daemon.providers_dir / "llamacpp.toml").write_text(template.read_text())
+    local_provider(daemon, "qwen3.8-27B")
     project = create_project(daemon, daemon.make_scope())
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/new")
-    page.get_by_test_id("agent-program-model").click()
-    picker = page.get_by_test_id("model-access")
-    expect(picker.get_by_test_id("access-account")).to_have_count(0)  # providers only
-    picker.get_by_test_id("access-provider").filter(has_text="llamacpp").click()
-    expect(picker.get_by_test_id("access-harness")).to_have_count(0)
+    who = page.get_by_test_id("agent-model")
+    who.get_by_test_id("model-choice-harness").click()
+    page.get_by_test_id("model-choice-program-alone").click()
+    expect(who.get_by_test_id("model-choice-harness")).to_have_text("The model alone")
+    who.get_by_test_id("model-choice-access").click()
+    rows = page.get_by_test_id("model-choice-access-row")
+    expect(rows).to_have_count(1)  # providers only
+    rows.filter(has_text="llamacpp").click()
     expect(page.get_by_test_id("agent-alone-safe")).to_be_visible()
-    expect(page.get_by_test_id("agent-preset")).to_have_count(0)
+    expect(page.get_by_test_id("agent-network")).to_have_count(0)
     page.get_by_test_id("agent-name-input").fill("ask")
     page.get_by_test_id("agent-save").click()
-    expect(page.get_by_test_id("agent-receipt-may")).to_contain_text("Nothing outside this call")
-    expect(page.get_by_test_id("agent-receipt-who")).to_contain_text("The model alone")
-    expect(page.get_by_test_id("model-choice")).to_contain_text("the model alone")
+    choice = page.get_by_test_id("model-choice")
+    expect(choice.get_by_test_id("model-choice-access")).to_contain_text("llamacpp")
+    expect(choice.get_by_test_id("model-choice-harness")).to_have_count(0)  # one chip: no program
+    expect(page.get_by_test_id("chip-network")).to_have_count(0)  # no sandbox
     with daemon.http() as c:
         agents = c.get(f"/v1/projects/{project['id']}").json()["agents"]
     alone = next(a for a in agents if a["name"] == "ask")
@@ -621,18 +864,18 @@ def test_an_agent_on_the_model_alone(page: Page, daemon: Daemon) -> None:
 def test_an_agent_on_a_provider_from_the_picker(page: Page, daemon: Daemon) -> None:
     """E in the UI: an agent runs on a provider, with a harness that speaks it and one of its
     models; the agent can be duplicated."""
-    template = TEMPLATES / "providers" / "llamacpp.toml"
-    (daemon.providers_dir / "llamacpp.toml").write_text(template.read_text())
+    local_provider(daemon, "qwen3.8-27B")
     project = create_project(daemon, daemon.make_scope())
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/new")
-    picker = page.get_by_test_id("model-access")
-    picker.get_by_test_id("access-provider").filter(has_text="llamacpp").click()
-    picker.get_by_test_id("access-harness").select_option("pi")
+    who = page.get_by_test_id("agent-model")
+    who.get_by_test_id("model-choice-harness").click()
+    page.get_by_test_id("model-choice-program").filter(has_text="pi").click()
+    expect(who.get_by_test_id("model-choice-access")).to_contain_text("llamacpp")
     page.get_by_test_id("agent-name-input").fill("local")
     page.get_by_test_id("agent-save").click()
-    who = page.get_by_test_id("agent-receipt-who")  # chosen
-    expect(who).to_contain_text("pi")
-    expect(who).to_contain_text("llamacpp")
+    choice = page.get_by_test_id("model-choice")  # chosen
+    expect(choice.get_by_test_id("model-choice-harness")).to_contain_text("pi")
+    expect(choice.get_by_test_id("model-choice-access")).to_contain_text("llamacpp")
     with daemon.http() as c:
         agents = c.get(f"/v1/projects/{project['id']}").json()["agents"]
     local = next(a for a in agents if a["name"] == "local")
@@ -645,18 +888,20 @@ def test_an_agent_on_a_provider_from_the_picker(page: Page, daemon: Daemon) -> N
     expect(page.get_by_test_id("project-agents")).to_contain_text("local-copy")
 
 
+@pytest.mark.rule("session.runs-with-the-model-asked-for")
 def test_another_model_for_one_session(page: Page, daemon: Daemon) -> None:
     """D.1 in the UI: a session can run on another program and provider than the agent's, picked
-    as "in [program] on [account or provider] with [model]"; picking the agent's again starts
-    with its own (no model sent)."""
-    template = TEMPLATES / "providers" / "llamacpp.toml"
-    (daemon.providers_dir / "llamacpp.toml").write_text(template.read_text())
+    with the two chips ([program] then [account or key · model]), marked as for this session
+    only; picking the agent's again starts with its own (no model sent)."""
+    local_provider(daemon, "qwen3.8-27B")
     project = create_project(daemon, daemon.make_scope())
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
     choice = page.get_by_test_id("agent-panel").get_by_test_id("model-choice")
-    choice.get_by_test_id("model-choice-harness").select_option("pi")
-    expect(choice).to_contain_text("llamacpp")  # the one provider pi speaks to here
-    expect(choice).to_contain_text("qwen3.8-27B")  # its model
+    pick_program(page, "pi")
+    access = choice.get_by_test_id("model-choice-access")
+    expect(access).to_contain_text("llamacpp")  # the one provider pi speaks to here
+    expect(access).to_contain_text("qwen3.8-27B")  # its model
+    expect(choice.get_by_test_id("model-choice-changed")).to_have_count(1)
     sent: list[Any] = []  # what it asks for; nothing started
 
     def refuse(route: Route) -> None:
@@ -670,32 +915,31 @@ def test_another_model_for_one_session(page: Page, daemon: Daemon) -> None:
     expect(page.get_by_test_id("project-error")).to_be_visible()
     model = sent[0]["model"]
     assert (model["harness"], model["provider"], model.get("account")) == ("pi", "llamacpp", None)
-    choice.get_by_test_id("model-choice-harness").select_option("fake")  # back to the agent's
+    pick_program(page, "Fake")  # back to the agent's
+    expect(choice.get_by_test_id("model-choice-changed")).to_have_count(0)
     with page.expect_request(lambda r: r.method == "POST" and "/v1/sessions" in r.url) as again:
         page.get_by_test_id("project-start-button").click()
     assert (again.value.post_data_json or {}).get("model") is None
 
 
 def test_the_agents_model_comes_first_in_the_model_list(page: Page, daemon: Daemon) -> None:
-    """D.1 in the UI: the provider is named once; its models list the agent's first, under its
-    name, then the provider's others; another one picked is sent for that session."""
-    template = (TEMPLATES / "providers" / "llamacpp.toml").read_text()
-    two = template + '\n[[models]]\nid = "qwen-long"\n[[models]]\nid = "qwen-small"\n'
-    (daemon.providers_dir / "llamacpp.toml").write_text(two)
+    """D.1 in the UI: the "runs on" menu names the provider once, its models under it, the
+    agent's first (with its name), then the provider's others; another one picked is sent for
+    that session, said to be for this session only, and can be made the agent's own."""
+    local_provider(daemon, "qwen3.8-27B", "qwen-long", "qwen-small")
     long = {"harness": "pi", "provider": "llamacpp", "model": "qwen-long"}
     local = {"name": "local", "model": long}
     project = create_project(daemon, daemon.make_scope(), agents=[local])
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
     choice = page.get_by_test_id("agent-panel").get_by_test_id("model-choice")
-    expect(choice).to_contain_text("on llamacpp with")  # named once, not with its model
-    model = choice.get_by_test_id("model-choice-model")
-    expect(model).to_have_value("qwen-long")
-    groups = model.locator("optgroup")
-    expect(groups.nth(0)).to_have_attribute("label", "local's model")
-    expect(groups.nth(0).locator("option")).to_have_text(["qwen-long"])
-    expect(groups.nth(1)).to_have_attribute("label", "other llamacpp models")
-    expect(groups.nth(1).locator("option")).to_have_text(["qwen3.8-27B", "qwen-small"])
-    expect(choice).not_to_contain_text("for this session")
+    expect(choice.get_by_test_id("model-choice-access")).to_contain_text("llamacpp · qwen-long")
+    choice.get_by_test_id("model-choice-access").click()
+    menu = page.get_by_test_id("model-choice-runs-on")
+    expect(menu.get_by_test_id("model-choice-access-row")).to_have_count(1)  # named once
+    model = menu.get_by_test_id("model-choice-model")
+    expect(model).to_have_text(["qwen-longlocal's", "qwen3.8-27B", "qwen-small"])
+    expect(model.first).to_have_attribute("aria-pressed", "true")
+    expect(menu.get_by_test_id("model-choice-session-only")).to_have_count(0)
     sent: list[Any] = []
 
     def refuse(route: Route) -> None:
@@ -705,10 +949,19 @@ def test_the_agents_model_comes_first_in_the_model_list(page: Page, daemon: Daem
         route.fulfill(status=503, json={"title": "not in this test"})
 
     page.route("**/v1/sessions", refuse)
-    model.select_option("qwen-small")
+    model.filter(has_text="qwen-small").click()
+    footer = menu.get_by_test_id("model-choice-session-only")
+    expect(footer).to_contain_text("qwen-small for this session only. local stays on qwen-long.")
+    page.keyboard.press("Escape")
     page.get_by_test_id("project-start-button").click()
     expect(page.get_by_test_id("project-error")).to_be_visible()
     assert sent[0]["model"]["model"] == "qwen-small"
+    choice.get_by_test_id("model-choice-access").click()
+    footer.get_by_test_id("model-choice-make-default").click()  # the agent's own now
+    expect(footer).to_have_count(0)
+    with daemon.http() as c:
+        agent = c.get(f"/v1/projects/{project['id']}").json()["agents"][0]
+    assert agent["model"]["model"] == "qwen-small"
 
 
 def test_only_the_accounts_made_for_the_area_are_offered(page: Page, daemon: Daemon) -> None:
@@ -732,8 +985,11 @@ def test_only_the_accounts_made_for_the_area_are_offered(page: Page, daemon: Dae
     try:
         page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
         choice = page.get_by_test_id("agent-panel").get_by_test_id("model-choice")
-        expect(choice.get_by_test_id("model-choice-hidden")).to_contain_text("fake")
         expect(choice).to_contain_text("echo-box")
+        choice.get_by_test_id("model-choice-access").click()
+        menu = page.get_by_test_id("model-choice-runs-on")
+        expect(menu.get_by_test_id("model-choice-hidden")).to_contain_text("fake")
+        page.keyboard.press("Escape")
         sent: list[Any] = []  # what it asks for; nothing started
 
         def refuse(route: Route) -> None:
@@ -757,39 +1013,60 @@ def test_only_the_accounts_made_for_the_area_are_offered(page: Page, daemon: Dae
 
 
 def test_caches_listed_measured_emptied_and_added(page: Page, daemon: Daemon) -> None:
-    """D.8 in the UI: what is kept, grouped (toolchains, general folders); where, the shared
-    folder opened to show each cache's size, emptied after a confirmation; one added is saved at
-    once (in the test daemon's own folders)."""
+    """D.8 in the UI: the total and each cache's, by one name; a folder opened by a click anywhere
+    on its row, a cache emptied after an in-app confirmation; what a removed cache left freed
+    apart; a project's choice changed from its chip; one added is saved at once (in the test
+    daemon's own folders)."""
     toolbox = daemon.config_dir / "toolbox" / "toolbox.toml"
     before = toolbox.read_text()
-    npm = daemon.cache_dir / "npm"
-    npm.mkdir(parents=True, exist_ok=True)
-    (npm / "pkg.tgz").write_bytes(b"x" * 2_000_000)
+    npm, left = daemon.cache_dir / "npm", daemon.cache_dir / "old-cache"
+    for folder in (npm, left):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "pkg.tgz").write_bytes(b"x" * 2_000_000)
+    project = create_project(daemon, daemon.make_scope(), name="cached", caches="off")
     try:
         page.goto(f"{daemon.base_url}/#/settings/caches")
         section = page.get_by_test_id("caches")
-        expect(section.get_by_test_id("caches-tools")).to_contain_text("~/.npm")
-        expect(section.get_by_test_id("caches-general")).to_contain_text("~/.cache")
+        expect(section.get_by_test_id("caches-total")).to_be_visible()
+        expect(section.get_by_test_id("caches-legend")).to_contain_text("npm packages")
+        npm_row = section.get_by_test_id("cache").filter(has_text="~/.npm")
+        expect(npm_row.get_by_test_id("cache-declared-by")).to_have_text("Handler")
+        # what a removed cache left: freed alone
+        leftover = section.get_by_test_id("caches-leftover").filter(has_text="old-cache")
+        leftover.get_by_test_id("caches-free").click()
+        page.get_by_test_id("cache-confirm-button").click()
+        expect(leftover).to_have_count(0)
+        assert not left.exists() and npm.is_dir()
+        # the global folder opened from its size, not only its name
         shared = section.get_by_test_id("cache-folders").filter(has_text="Global")
-        expect(shared).to_contain_text(str(daemon.cache_dir))
-        shared.get_by_test_id("cache-folders-toggle").click()
+        shared.get_by_test_id("cache-folders-size").click()
+        expect(shared.get_by_test_id("cache-folders-path")).to_have_text(str(daemon.cache_dir))
         row = shared.get_by_test_id("cache-folder").filter(has_text="~/.npm")
         expect(row.get_by_test_id("cache-size")).to_have_text("2.0 MB")
-        page.once("dialog", lambda d: d.accept())
         row.get_by_test_id("cache-empty").click()
+        page.get_by_test_id("cache-confirm-button").click()
         expect(row.get_by_test_id("cache-size")).to_have_text("empty")
         assert list(npm.iterdir()) == []
+        # a project without caches moved to the global ones from its chip
+        section.get_by_test_id("caches-off").filter(has_text="cached").get_by_test_id(
+            "cache-mode"
+        ).click()
+        page.get_by_test_id("cache-mode-global").click()
+        expect(shared.get_by_test_id("cache-mode").filter(has_text="cached")).to_be_visible()
+        with daemon.http() as c:
+            assert c.get(f"/v1/projects/{project['id']}").json()["caches"] == "global"
         section.get_by_test_id("cache-new").click()
-        section.get_by_test_id("cache-name-input").fill("gradle")
-        section.get_by_test_id("cache-target-input").fill("~/.gradle")
         section.get_by_test_id("cache-about-input").fill("Gradle's packages")
+        section.get_by_test_id("cache-target-input").fill("~/.gradle")
         section.get_by_test_id("cache-add").click()
         expect(
-            section.get_by_test_id("caches-tools").get_by_test_id("cache-name").last
-        ).to_have_text("gradle")
-        assert '[caches.gradle]\ntarget = "~/.gradle"' in toolbox.read_text()
+            section.get_by_test_id("caches-kept").get_by_test_id("cache-name").last
+        ).to_have_text("Gradle's packages")
+        assert '[[caches]]\ntarget = "~/.gradle"' in toolbox.read_text()
     finally:
         toolbox.write_text(before)
+        with daemon.http() as c:
+            c.delete(f"/v1/projects/{project['id']}")
 
 
 def test_work_folders_edited(page: Page, daemon: Daemon) -> None:
@@ -827,65 +1104,119 @@ def test_work_folders_edited(page: Page, daemon: Daemon) -> None:
 
 
 def test_binding_created_edited_and_deleted(page: Page, daemon: Daemon) -> None:
-    """G.2, D.15 in the UI: a binding of an addon from its slots; its secret goes to the store."""
-    page.goto(f"{daemon.base_url}/#/addons")
-    addon = page.get_by_test_id("addon-card").filter(has_text="fake-shop")
-    addon.get_by_test_id("new-binding").click()
+    """G.2, D.15 in the UI: a connection of a tool from its slots, on the tool's page; its secret
+    goes to the store and is shown sealed."""
+    page.goto(f"{daemon.base_url}/#/library/tools")
+    tool = page.get_by_test_id("addon-card").filter(has_text="fake-shop")
+    expect(tool.get_by_test_id("addon-state")).to_have_text("Not set up")
+    tool.get_by_test_id("tool-set-up").click()
+    page.get_by_test_id("new-binding").click()
     form = page.get_by_test_id("binding-form")
     expect(form.get_by_test_id("binding-name")).to_have_value("fake-shop")
     expect(form.get_by_test_id("binding-save")).to_be_disabled()  # its store is required
     form.get_by_test_id("binding-setting-store").fill("dev.shop.example.com")
     form.get_by_test_id("binding-secret-theme_token").fill("shptka_not_real")
     form.get_by_test_id("binding-save").click()
-    row = addon.get_by_test_id("binding-row").filter(has_text="fake-shop")
+    row = page.get_by_test_id("binding-row").filter(has_text="fake-shop")
     expect(row).to_contain_text("store=dev.shop.example.com")
-    path = daemon.config_dir / "bindings" / "fake-shop.toml"
+    expect(row).to_contain_text("sealed")
+    path = daemon.config_dir / "connections" / "fake-shop.toml"
     text = path.read_text()
-    assert "shptka_not_real" not in text and "bindings/fake-shop/theme_token" in text
+    assert "shptka_not_real" not in text and "connections/fake-shop/theme_token" in text
+
+    # D.14: Settings → Secrets lists it by its connection, sealed, and links to its tool's page
+    page.goto(f"{daemon.base_url}/#/settings/secrets")
+    used = page.get_by_test_id("secrets-used")
+    secret = used.get_by_test_id("secret").filter(has_text="fake-shop")
+    expect(secret.get_by_test_id("secret-hidden")).to_be_visible()
+    secret.get_by_test_id("secret-open").click()
+    secret.get_by_test_id("secret-change").click()
+    expect(page).to_have_url(re.compile(r"#/library/tools/fake-shop$"))
 
     row.get_by_test_id("binding-edit").click()
     form = page.get_by_test_id("binding-form")
     form.get_by_test_id("binding-name").fill("dev-shop")
     form.get_by_test_id("binding-save").click()
-    row = addon.get_by_test_id("binding-row").filter(has_text="dev-shop")
-    expect(row).to_contain_text("theme_token=•••")
+    row = page.get_by_test_id("binding-row").filter(has_text="dev-shop")
+    expect(row).to_contain_text("not used yet")
     row.get_by_test_id("binding-edit").click()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_test_id("binding-delete").click()
     expect(row).to_have_count(0)
-    assert not (daemon.config_dir / "bindings" / "dev-shop.toml").exists()
+    assert not (daemon.config_dir / "connections" / "dev-shop.toml").exists()
 
 
 def test_addon_installed_then_its_first_tool(page: Page, daemon: Daemon, tmp_path: Path) -> None:
-    """G.5 in the UI: from a folder, its preview first; once installed, the page goes on to its
-    first configuration (G.2), in a dialog."""
+    """G.5 in the UI: from a folder (Library → Tools → Get more), its preview first; once
+    installed, its page opens on its first connection's form (G.2): it has a setting."""
     folder = tmp_path / "notes"
     folder.mkdir()
-    (folder / "addon.toml").write_text(
-        'apiVersion = "handler.addon/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
+    (folder / "tool.toml").write_text(
+        'apiVersion = "handler.tool/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
+        '[settings.book]\nenv = "NOTES_BOOK"\n'
     )
-    page.goto(f"{daemon.base_url}/#/addons")
+    page.goto(f"{daemon.base_url}/#/library/tools/more")
     page.get_by_test_id("addon-elsewhere").click()
     page.get_by_test_id("addon-source").fill(str(folder))
     page.get_by_test_id("addon-source-look").click()
     preview = page.get_by_test_id("addon-preview")
     expect(preview).to_contain_text("notes.example.com:443")
     preview.get_by_test_id("addon-install").click()
-    expect(page.get_by_test_id("addon-notice")).to_contain_text("notes installed")
-    card = page.get_by_test_id("addon-card").filter(has_text="notes")
+    expect(page.get_by_test_id("tool-page")).to_contain_text("reaches 1 site")
     form = page.get_by_test_id("binding-form")
     expect(form.get_by_test_id("binding-name")).to_have_value("notes")
     form.get_by_test_id("binding-save").click()
-    row = card.get_by_test_id("binding-row").filter(has_text="notes")
+    row = page.get_by_test_id("binding-row").filter(has_text="notes")
     expect(row.get_by_test_id("binding-use")).to_contain_text("not used yet")
     row.get_by_test_id("binding-edit").click()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_test_id("binding-delete").click()
     expect(row).to_have_count(0)
-    card.get_by_test_id("addon-details").click()
+    page.get_by_test_id("tool-more").click()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_test_id("addon-remove").click()
-    expect(card).to_have_count(0)
+    expect(page.get_by_test_id("addons-page")).to_be_visible()
+    expect(page.get_by_test_id("addon-card").filter(has_text="notes")).to_have_count(0)
+
+
+def test_addon_updated_keeps_its_configurations(page: Page, daemon: Daemon, tmp_path: Path) -> None:
+    """G.5 in the UI: an update installs over the tool without opening a new connection; one it
+    made invalid (a setting gone, a required one added) says Broken, and is fixed in its Edit
+    (G.2)."""
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    manifest = (
+        'apiVersion = "handler.tool/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
+    )
+    (folder / "tool.toml").write_text(manifest + '[settings.book]\nenv = "NOTES_BOOK"\n')
+    page.goto(f"{daemon.base_url}/#/library/tools/more")
+    page.get_by_test_id("addon-elsewhere").click()
+    page.get_by_test_id("addon-source").fill(str(folder))
+    page.get_by_test_id("addon-source-look").click()
+    page.get_by_test_id("addon-preview").get_by_test_id("addon-install").click()
+    form = page.get_by_test_id("binding-form")
+    form.get_by_test_id("binding-setting-book").fill("work")
+    form.get_by_test_id("binding-save").click()
+    row = page.get_by_test_id("binding-row").filter(has_text="notes")
+    expect(row).to_contain_text("book=work")
+
+    shelf = '[settings.shelf]\nenv = "NOTES_SHELF"\nrequired = true\n'  # book gone, shelf required
+    (folder / "tool.toml").write_text(manifest + shelf)
+    page.get_by_test_id("tool-more").click()
+    page.get_by_test_id("addon-update").click()
+    preview = page.get_by_test_id("addon-preview")
+    expect(preview).to_contain_text("an update")
+    preview.get_by_test_id("addon-install").click()
+    expect(preview).to_have_count(0)
+    expect(form).to_have_count(0)
+    expect(row).to_contain_text("Broken")
+    expect(page.get_by_test_id("tool-state")).to_have_text("Broken")
+
+    row.get_by_test_id("binding-edit").click()
+    expect(form.get_by_test_id("binding-invalid")).to_be_visible()
+    form.get_by_test_id("binding-setting-shelf").fill("top")
+    form.get_by_test_id("binding-save").click()
+    expect(form).to_have_count(0)
 
 
 def test_skill_written_on_its_page(page: Page, daemon: Daemon) -> None:
@@ -975,7 +1306,7 @@ def test_skills_given_in_the_project_settings(page: Page, daemon: Daemon) -> Non
         script = {"text": "#!/bin/sh\necho hi\n", "executable": True}
         assert c.put("/v1/skills/ps-scripted/files/run.sh", json=script).status_code == 200
     project = create_project(daemon, daemon.make_scope(), name="ps-project", skills=["ps-plain"])
-    page.goto(f"{daemon.base_url}/#/projects/{project['id']}/edit")
+    page.goto(f"{daemon.base_url}/#/projects/{project['id']}/settings")
     row = page.get_by_test_id("project-skills")
     expect(row.get_by_test_id("project-skill")).to_have_text(["ps-plain"])
     row.get_by_test_id("project-skill-add").click()
@@ -988,9 +1319,29 @@ def test_skills_given_in_the_project_settings(page: Page, daemon: Daemon) -> Non
     ).click()
     expect(page.get_by_test_id("project-savebar")).to_contain_text("1 change")
     page.get_by_test_id("project-save").click()
-    expect(page.get_by_test_id("project-start-button")).to_be_visible()
+    expect(page.get_by_test_id("project-savebar")).to_have_count(0)  # saved, on its tab
     with daemon.http() as c:
         assert c.get(f"/v1/projects/{project['id']}").json()["skills"] == ["ps-scripted"]
+
+
+def test_addons_given_in_the_project_settings(page: Page, daemon: Daemon) -> None:
+    """G.3 from the project's side: its settings give an addon to all its agents, picked in a
+    dialog (one without settings by its name), saved with the rest; its agents then have it."""
+    project = create_project(daemon, daemon.make_scope(), name="pa-project")
+    page.goto(f"{daemon.base_url}/#/projects/{project['id']}/settings")
+    row = page.get_by_test_id("project-addons")
+    expect(row.get_by_test_id("project-addon")).to_have_count(0)
+    row.get_by_test_id("project-addon-add").click()
+    dialog = page.get_by_test_id("project-addon-dialog")
+    dialog.locator("label").filter(has_text="app-builder").click()
+    page.get_by_test_id("project-addon-done").click()
+    expect(row.get_by_test_id("project-addon")).to_have_text(["app-builder"])
+    page.get_by_test_id("project-save").click()
+    expect(page.get_by_test_id("project-savebar")).to_have_count(0)  # saved, on its tab
+    with daemon.http() as c:
+        assert c.get(f"/v1/projects/{project['id']}").json()["addons"] == [{"addon": "app-builder"}]
+        agent = c.get(f"/v1/agents/{project['agents'][0]['id']}").json()
+        assert agent["projectAddons"] == [{"addon": "app-builder"}]
 
 
 def test_skill_given_by_projects_and_saved_as_a_new_one(page: Page, daemon: Daemon) -> None:
@@ -1027,25 +1378,24 @@ def test_skill_given_by_projects_and_saved_as_a_new_one(page: Page, daemon: Daem
 
 
 def test_account_created_and_logged_in_in_a_terminal_window(page: Page, daemon: Daemon) -> None:
-    """D.9 in the UI: started from Model access's subscriptions, named by the person; a file
-    login: handlerd opens a terminal window for it (here a stand-in that types the code; on the
-    host, as the harness has a login there), and the card follows the account until it is logged
-    in."""
+    """D.9 in the UI: started from Model access's subscriptions, its name suggested, the
+    person's to change; a file login: handlerd opens a terminal window for it (here a stand-in
+    that types the code; on the host, as the harness has a login there), and the card follows the
+    account until it is logged in."""
     page.goto(f"{daemon.base_url}/#/settings/models")
     page.get_by_test_id("add-account").click()
     page.get_by_test_id("connect-subscription").filter(has_text="Login box").click()
     form = page.get_by_test_id("account-form")
-    expect(form.get_by_test_id("account-harness")).to_have_value("login-box")
-    expect(form.get_by_test_id("account-name")).to_have_value("")  # the person names it
+    expect(form.get_by_test_id("account-name")).to_have_value("login")  # suggested
     form.get_by_test_id("account-name").fill("box2")
-    form.get_by_role("button", name="Create").click()
+    form.get_by_test_id("account-create").click()
     card = page.get_by_test_id("account-card").filter(has_text="box2")
     expect(page.get_by_test_id("account-login-window")).to_contain_text("fake-terminal")
-    expect(card.get_by_test_id("account-status")).to_have_text("● logged in", timeout=180_000)
+    expect(card.get_by_test_id("account-status")).to_have_text("● Logged in", timeout=180_000)
     expect(page.get_by_test_id("account-login")).to_have_count(
         0
     )  # its dialog closed once it changed
-    kept = daemon.data_dir / "accounts" / "box2" / "credential"
+    kept = daemon.data_dir / "accounts" / "box2" / "login" / "credential"
     assert kept.read_text().strip() == "typed-in-the-window"
     card.get_by_test_id("account-edit").click()
     page.once("dialog", lambda dialog: dialog.accept())
@@ -1055,26 +1405,32 @@ def test_account_created_and_logged_in_in_a_terminal_window(page: Page, daemon: 
 
 def test_account_with_a_token_the_person_gives(page: Page, daemon: Daemon) -> None:
     """D.9 in the UI: a token login is the person's to run (handler shows its command, opens no
-    terminal); its token is pasted, or where they keep it."""
+    terminal); its token is given in the dialog that makes the account, pasted, or, behind "Keep
+    it elsewhere", where they keep it; a logged-in account logs in again from its Edit."""
     page.goto(f"{daemon.base_url}/#/settings/models")
     page.get_by_test_id("add-account").click()
     page.get_by_test_id("connect-subscription").filter(has_text="Echo").click()
     form = page.get_by_test_id("account-form")
+    expect(form.get_by_test_id("account-token-steps")).to_contain_text("echo-box setup-token")
     form.get_by_test_id("account-name").fill("echo-perso")
-    form.get_by_role("button", name="Create").click()
+    expect(form.get_by_test_id("account-create")).to_be_disabled()  # its token first
+    form.get_by_test_id("secret-source-text").fill("tok-pasted")
+    form.get_by_test_id("account-create").click()
     card = page.get_by_test_id("account-card").filter(has_text="echo-perso")
-    token = page.get_by_test_id("account-token-form")
-    expect(token).to_contain_text("echo-box setup-token")
+    expect(card.get_by_test_id("account-status")).to_have_text(
+        "● Logged in · token kept by Handler"
+    )
     expect(page.get_by_test_id("account-login-window")).to_have_count(0)
-    token.get_by_test_id("secret-source-text").fill("tok-pasted")
-    token.get_by_test_id("account-token-save").click()
-    expect(card.get_by_test_id("account-status")).to_have_text("● token in Handler")
-    card.get_by_test_id("account-log-in").click()  # New token: from a command this time
+    expect(card.get_by_test_id("account-log-in")).to_have_count(0)  # nothing to do on its line
+    card.get_by_test_id("account-edit").click()
+    page.get_by_test_id("account-log-in-again").click()  # New token: from a command this time
     token = page.get_by_test_id("account-token-form")
+    expect(token.get_by_test_id("secret-source-kind")).to_have_count(0)  # folded
+    token.get_by_test_id("secret-source-elsewhere").click()
     token.get_by_test_id("secret-source-kind").select_option("command")
     token.get_by_test_id("secret-source-text").fill("pass show echo")
     token.get_by_test_id("account-token-save").click()
-    expect(card.get_by_test_id("account-status")).to_have_text("● token from a command")
+    expect(card.get_by_test_id("account-status")).to_have_text("● Logged in · token from a command")
     assert (
         'command = ["pass", "show", "echo"]'
         in (daemon.accounts_dir / "echo-perso.toml").read_text()
@@ -1096,7 +1452,7 @@ def test_provider_from_a_template_edited_and_deleted(page: Page, daemon: Daemon)
     form.get_by_test_id("provider-key").fill("sk-or-not-real")
     form.get_by_test_id("provider-save").click()
     card = page.get_by_test_id("provider-card").filter(has_text="openrouter")
-    expect(card.get_by_test_id("provider-status")).to_have_text("● ready")
+    expect(card.get_by_test_id("provider-status")).to_have_text("● Ready")
     text = (daemon.providers_dir / "openrouter.toml").read_text()
     assert "sk-or-not-real" not in text and 'secret = "providers/openrouter/apiKey"' in text
 
@@ -1110,34 +1466,95 @@ def test_provider_from_a_template_edited_and_deleted(page: Page, daemon: Daemon)
     models.last.get_by_placeholder("id").fill("extra/model")
     form.get_by_test_id("provider-save").click()
     card = page.get_by_test_id("provider-card").filter(has_text="router")
-    expect(card.get_by_test_id("provider-status")).to_have_text("● ready")  # its key followed
-    expect(card).to_contain_text("extra/model")
+    expect(card.get_by_test_id("provider-status")).to_have_text("● Ready")  # its key followed
+    renamed = page.get_by_test_id("provider-card").filter(
+        has=page.get_by_text("router", exact=True)
+    )
+    expect(renamed).to_have_count(1)
+    assert "extra/model" in (daemon.providers_dir / "router.toml").read_text()
     card.get_by_test_id("provider-edit").click()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_test_id("provider-delete").click()
     expect(card).to_have_count(0)
 
 
+@pytest.mark.rule("provider.a-test-asks-from-where-a-sandbox-is")
+def test_a_local_provider_is_tested_in_its_form(page: Page, daemon: Daemon) -> None:
+    """D.12 in the UI: llama.cpp's form says where its server must listen; Test says not reached
+    while it listens nowhere a sandbox reaches, then fills the model and its context from what it
+    serves; saved, it is ready (a server on this computer never tested is not)."""
+    loopback = ModelsServer([{"id": "qwen-coder"}], listen="127.0.0.1")
+    server = ModelsServer([{"id": "qwen-coder", "max_model_len": 32768}])
+    try:
+        page.goto(f"{daemon.base_url}/#/settings/models")
+        page.get_by_test_id("add-provider").click()
+        page.get_by_test_id("connect-api").filter(has_text="llama.cpp").click()
+        form = page.get_by_test_id("provider-form")
+        expect(form.get_by_test_id("provider-listen")).to_contain_text("--host 0.0.0.0 --jinja")
+        expect(form.get_by_test_id("provider-model")).to_have_count(0)
+        expect(form.get_by_test_id("provider-no-model")).to_be_visible()
+        expect(form.get_by_test_id("provider-save")).to_be_disabled()
+        reach = form.get_by_test_id("provider-reach")
+        expect(reach).to_have_attribute("data-state", "untested")
+
+        for protocol in ("openai-chat", "responses"):
+            form.get_by_test_id(f"provider-endpoint-{protocol}").fill(loopback.endpoint())
+        form.get_by_test_id("provider-test").click()
+        expect(reach).to_have_attribute("data-state", "not reached")
+        expect(reach).to_contain_text(
+            f"Not reached: nothing answered at host.containers.internal:{loopback.port}"
+        )
+
+        for protocol in ("openai-chat", "responses"):
+            form.get_by_test_id(f"provider-endpoint-{protocol}").fill(server.endpoint())
+        expect(reach).to_have_attribute("data-state", "untested")  # of other endpoints
+        form.get_by_test_id("provider-test").click()
+        expect(reach).to_have_attribute("data-state", "ready")
+        expect(reach).to_have_text(
+            f"Ready: host.containers.internal:{server.port} answered, 1 model"
+        )
+        model = form.get_by_test_id("provider-model")
+        expect(model).to_have_count(1)
+        expect(model.get_by_placeholder("id")).to_have_value("qwen-coder")
+        expect(model.get_by_placeholder("tokens")).to_have_value("32768")
+        form.get_by_test_id("provider-name").fill("tested-here")
+        form.get_by_test_id("provider-save").click()
+        card = page.get_by_test_id("provider-card").filter(has_text="tested-here")
+        expect(card.get_by_test_id("provider-status")).to_have_text("● Ready")
+    finally:
+        loopback.close()
+        server.close()
+    card.get_by_test_id("provider-card-test").click()  # its server stopped
+    expect(card.get_by_test_id("provider-status")).to_have_text("● Not reached")
+    expect(card.get_by_test_id("provider-not-reached")).to_contain_text("nothing answered")
+    with daemon.http() as c:
+        assert c.delete("/v1/providers/tested-here").status_code == 204
+
+
 def test_projects_filter_pin_open_start_and_edit(page: Page, daemon: Daemon) -> None:
-    """Home: every project by name; type to filter; a pin takes one off the menu (Undo puts it
-    back); open, start; rename the agent and the project (same ids)."""
+    """Projects: every project by name; type to filter; a pin puts one in the menu's Pinned and
+    takes it off (Undo puts it back); open, start; rename the agent and the project (same ids)."""
     alpha = create_project(daemon, daemon.make_scope(), name="lst-alpha")
     create_project(daemon, daemon.make_scope(), name="lst-beta")
+    page.goto(f"{daemon.base_url}/#/projects")
     page.reload()  # created after the page loaded
     menu = page.get_by_test_id("sidebar-project").filter(has_text="lst-alpha")
-    expect(menu).to_have_count(1)  # new projects are pinned
+    expect(menu).to_have_count(0)  # not the first project: not pinned by itself
     page.get_by_test_id("project-search").fill("lst-")
     names = page.get_by_test_id("project-row").get_by_test_id("project-name")
     expect(names).to_have_text(["lst-alpha", "lst-beta"])  # by name
     first = page.get_by_test_id("project-row").first
     first.get_by_test_id("project-pin").click()
-    expect(menu).to_have_count(0)
-    page.get_by_test_id("unpinned-undo").click()
     expect(menu).to_have_count(1)
     first.get_by_test_id("project-pin").click()
     expect(menu).to_have_count(0)
+    page.get_by_test_id("unpinned-undo").click()
+    expect(menu).to_have_count(1)
     with daemon.http() as c:
-        assert not c.get(f"/v1/projects/{alpha['id']}").json()["pinned"]
+        pinned = c.get("/v1/pins").json()["items"]
+        assert {"kind": "project", "id": alpha["id"]} in pinned
+    first.get_by_test_id("project-pin").click()
+    expect(menu).to_have_count(0)
     page.get_by_test_id("project-search").fill("lst-alpha")
     expect(page.get_by_test_id("project-row")).to_have_count(1)
     first.get_by_test_id("project-name").click()
@@ -1161,6 +1578,14 @@ def test_projects_filter_pin_open_start_and_edit(page: Page, daemon: Daemon) -> 
     assert (saved["name"], saved["agents"][0]["name"]) == ("alpha-renamed", "coder")
 
 
+def under_the_hood(page: Page) -> None:
+    """Settings → Sandboxes: Under the hood unfolded (open by itself when an image is not built)."""
+    hood = page.get_by_test_id("under-the-hood")
+    expect(hood.get_by_test_id("toolbox")).to_have_count(1, timeout=30_000)  # listing images: slow
+    if hood.get_attribute("open") is None:
+        hood.locator("> summary").click()
+
+
 def test_harness_images_and_a_failed_rebuild(page: Page, daemon: Daemon) -> None:
     """D.4 in the UI: installed versions are listed; a failed rebuild shows its error and log, and
     the page follows it again after a reload. The fake harness has no Containerfile, so its
@@ -1168,7 +1593,8 @@ def test_harness_images_and_a_failed_rebuild(page: Page, daemon: Daemon) -> None
     missing = daemon.config_dir.parent / "fake-ran" / "harness-image-missing"
     missing.touch()  # the fake harness's image, not built
     try:
-        page.goto(f"{daemon.base_url}/#/settings/images")
+        page.goto(f"{daemon.base_url}/#/settings/sandboxes")
+        under_the_hood(page)
         rows = page.get_by_test_id("harness-image-row")
         if runtime.exists(images.ref("localhost/handler-ai-vibe", images.LATEST)):
             vibe = rows.filter(has_text="localhost/handler-ai-vibe")
@@ -1185,39 +1611,94 @@ def test_harness_images_and_a_failed_rebuild(page: Page, daemon: Daemon) -> None
     expect(page.get_by_test_id("build-error")).to_be_visible()
 
 
+def test_the_toolbox_made_of_system_packages_and_your_lines(page: Page, daemon: Daemon) -> None:
+    """B.7 in the UI: the system packages, each saying what it gives and who needs it, turned on
+    (after saying it runs as root for every agent) and off; your lines saved; the generated
+    Containerfile shown folded. Nothing is built: the test daemon has no toolbox."""
+    folder = daemon.config_dir / "toolbox"
+    before = (folder / "toolbox.toml").read_text()
+    try:
+        page.goto(f"{daemon.base_url}/#/settings/sandboxes")
+        under_the_hood(page)
+        section = page.get_by_test_id("toolbox")
+        rows = section.get_by_test_id("system-package")
+        expect(rows.get_by_test_id("system-package-name")).to_have_text(
+            ["chromium", "docker", "gcc", "podman", "wl-clipboard"]
+        )
+        daemons = rows.filter(has_text="docker").get_by_test_id("system-package-daemon")
+        expect(daemons).to_have_text(
+            "starts handler-dockerd in the sandboxes of agents that run containers or are "
+            "privileged"
+        )
+        gcc = rows.filter(has_text="gcc")
+        expect(gcc).to_contain_text("gives cc, gcc")
+        page.once("dialog", lambda d: d.accept())
+        gcc.get_by_test_id("system-package-toggle").click()
+        expect(gcc).to_contain_text("nothing needs it now")
+        assert "[systemPackages.gcc]" in (folder / "toolbox.toml").read_text()
+        gcc.get_by_test_id("system-package-toggle").click()
+        expect(gcc).not_to_contain_text("nothing needs it now")
+        assert "gcc" not in (folder / "toolbox.toml").read_text()
+        section.get_by_test_id("toolbox-needs").locator("summary").click()
+        expect(section.get_by_test_id("toolbox-needs")).to_contain_text("Handler's base")
+        section.get_by_test_id("toolbox-edit").click()
+        section.get_by_test_id("toolbox-content").fill("RUN dnf -y install htop\n")
+        section.get_by_test_id("toolbox-save").click()
+        section.get_by_test_id("toolbox-containerfile").locator("summary").click()
+        expect(section.get_by_test_id("toolbox-containerfile")).to_contain_text(
+            "# your lines (custom.containerfile)"
+        )
+        assert (folder / "custom.containerfile").read_text() == "RUN dnf -y install htop\n"
+    finally:
+        (folder / "toolbox.toml").write_text(before)
+        (folder / "custom.containerfile").unlink(missing_ok=True)
+
+
 def test_bindings_listed_and_selected_for_a_project(page: Page, daemon: Daemon) -> None:
     """G in the UI: bindings are listed (invalid ones with their error); an agent's picker offers
-    every valid one, saying which other projects use it; the official source's fake-shop addon backs
-    the valid one."""
-    root = daemon.config_dir / "bindings"
+    the addons without settings by their name and every valid binding of the others, saying which
+    other projects use it; the official source's fake-shop addon backs the valid one."""
+    root = daemon.config_dir / "connections"
     root.mkdir(exist_ok=True)
     (root / "shop.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "fake-shop"\n'
+        'apiVersion = "handler.connection/v1"\ntool = "fake-shop"\n'
         'settings = { store = "dev.shop.example.com" }\n'
     )
-    (root / "broken.toml").write_text('apiVersion = "handler.binding/v1"\naddon = "nope"\n')
-    page.goto(f"{daemon.base_url}/#/addons")
-    rows = page.get_by_test_id("binding-row")
-    expect(rows.filter(has_text="shop").first).to_contain_text("store=dev.shop.example.com")
-    expect(rows.filter(has_text="broken")).to_contain_text("unknown addon 'nope'")
-    page.goto(f"{daemon.base_url}/#/settings/images")
+    (root / "broken.toml").write_text('apiVersion = "handler.connection/v1"\ntool = "nope"\n')
+    page.goto(f"{daemon.base_url}/#/tools")
+    tool = page.get_by_test_id("addon-card").filter(has_text="fake-shop")
+    expect(tool.get_by_test_id("addon-contents")).to_contain_text("fake-shop: shop")
+    broken = page.get_by_test_id("binding-row").filter(has_text="broken")
+    expect(broken).to_contain_text("Broken")  # one word on the shelf, its message in Fix
+    broken.get_by_test_id("tool-fix").click()
+    expect(page.get_by_test_id("tool-fix-message")).to_contain_text("unknown tool 'nope'")
+    page.keyboard.press("Escape")
+    page.goto(f"{daemon.base_url}/#/settings/sandboxes")
+    under_the_hood(page)
     expect(page.get_by_test_id("addon-image-row").filter(has_text="fake-shop")).to_be_visible()
 
-    dev = {"model": {"account": "fake"}, "name": "dev", "bindings": ["shop"]}
+    shop = {"addon": "fake-shop", "binding": "shop"}
+    dev = {"model": {"account": "fake"}, "name": "dev", "addons": [shop]}
     create_project(
         daemon, daemon.make_scope(), name="storefront", agents=[dev | {"confirmRisks": True}]
     )
     other = create_project(daemon, daemon.make_scope())
     page.goto(f"{daemon.base_url}/#/projects/{other['id']}/agents/{other['agents'][0]['id']}")
-    picker = page.get_by_test_id("binding-picker")
-    expect(picker).to_contain_text("invalid configuration")  # listed by now
+    page.get_by_test_id("addon-picker-add").click()  # the Tools row's + Add
+    picker = page.get_by_test_id("addon-picker-list")
+    expect(page.get_by_test_id("agent-editor")).to_contain_text(
+        "broken tool(s) or connection(s)"
+    )  # listed by now
+    expect(picker.locator("label").filter(has_text="app-builder")).to_be_visible()  # no setting
     row = picker.locator("label").filter(has_text="fake-shop: shop")
     expect(row.get_by_test_id("pick-note")).to_have_text("used in storefront")
     row.click()
+    page.keyboard.press("Escape")
+    expect(page.get_by_test_id("addon-picker-chip")).to_contain_text("fake-shop")
     page.get_by_test_id("agent-save").click()
     expect(page.get_by_test_id("agent-editor")).to_have_count(0)
     with daemon.http() as c:
-        assert c.get(f"/v1/agents/{other['agents'][0]['id']}").json()["bindings"] == ["shop"]
+        assert c.get(f"/v1/agents/{other['agents'][0]['id']}").json()["addons"] == [shop]
 
 
 def test_knowledge_selected_for_an_agent(page: Page, daemon: Daemon, tmp_path: Path) -> None:
@@ -1229,20 +1710,23 @@ def test_knowledge_selected_for_an_agent(page: Page, daemon: Daemon, tmp_path: P
     project = create_project(daemon, daemon.make_scope())
     agent = project["agents"][0]
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/{agent['id']}")
-    picker = page.get_by_test_id("knowledge-picker")
+    page.get_by_test_id("knowledge-picker-add").click()  # the Notes row's + Add
+    picker = page.get_by_test_id("knowledge-picker-list")
     expect(picker.get_by_test_id("knowledge-option")).to_have_count(3)  # me, projects, blog
     picker.get_by_label("projects", exact=True).click()
     expect(picker.get_by_label("blog with its parent", exact=True)).to_be_disabled()
     picker.get_by_label("me", exact=True).click()
+    page.keyboard.press("Escape")
     page.get_by_test_id("agent-save").click()
     expect(page.get_by_test_id("agent-editor")).to_have_count(0)
     with daemon.http() as c:
         assert c.get(f"/v1/agents/{agent['id']}").json()["knowledge"] == ["me", "projects"]
 
 
-def test_knowledge_page_configure_browse_use(page: Page, daemon: Daemon, tmp_path: Path) -> None:
-    """D.5 in the UI: set the root, create a folder, read a folder's summary and a note (links
-    between notes stay in the page), then open a new project with the folder selected."""
+def test_knowledge_page_change_browse(page: Page, daemon: Daemon, tmp_path: Path) -> None:
+    """D.5 in the UI: the notes folder is there from the start (nothing to set up); change it
+    (the button says what it does), create a folder, read a folder's summary and a note (links
+    between notes stay in the page)."""
     vault = tmp_path / "vault"
     (vault / "me").mkdir(parents=True)
     (vault / "me" / "_index.md").write_text(
@@ -1251,11 +1735,20 @@ def test_knowledge_page_configure_browse_use(page: Page, daemon: Daemon, tmp_pat
     )
     (vault / "me" / "tools.md").write_text("# Tools\n\nZed, mostly.\n")
 
-    page.goto(f"{daemon.base_url}/#/")
-    page.get_by_test_id("knowledge-link").click()
+    page.goto(f"{daemon.base_url}/#/library")
+    page.get_by_test_id("shelf-notes").click()
+    expect(page.get_by_test_id("knowledge-root")).to_be_visible()  # the default, made by handlerd
     page.get_by_test_id("change-root").click()
-    page.get_by_role("textbox", name="Knowledge root").fill(str(vault))
-    page.get_by_role("button", name="Save", exact=True).click()
+    field = page.get_by_role("textbox", name="Folder")
+    save = page.get_by_test_id("knowledge-save-root")
+    field.fill("vault")
+    expect(page.get_by_test_id("knowledge-error")).to_contain_text("full path")
+    expect(save).to_be_disabled()
+    field.fill(str(tmp_path / "fresh"))
+    expect(save).to_have_text("Create this folder")
+    field.fill(str(vault))
+    expect(save).to_have_text("Use this folder")
+    save.click()
     expect(page.get_by_test_id("knowledge-root")).to_have_text(str(vault))
 
     page.get_by_test_id("knowledge-new-folder").click()
@@ -1272,16 +1765,6 @@ def test_knowledge_page_configure_browse_use(page: Page, daemon: Daemon, tmp_pat
     content.get_by_role("link", name="tools.md").click()
     expect(content).to_contain_text("Zed, mostly.")
     assert "note=me%2Ftools.md" in page.url
-
-    page.get_by_test_id("use-knowledge").click()  # a new project, its first agent given "me"
-    pick_account(page, "echo-box")
-    folder = daemon.make_scope()
-    page.get_by_label("folder path").fill(str(folder))
-    page.get_by_test_id("project-save").click()
-    expect(page.get_by_test_id("project-defaults")).to_be_visible()
-    with daemon.http() as c:
-        made = next(p for p in c.get("/v1/projects").json() if p["folder"] == str(folder))
-    assert made["agents"][0]["knowledge"] == ["me"]
 
 
 # ── agent interfaces, built-in agents, skills reviewed and written with an agent (D.18) ──
@@ -1360,44 +1843,52 @@ def test_a_run_is_started_from_a_form_and_its_result_shown(page: Page, daemon: D
 
 
 def test_a_builtin_agent_set_up_and_the_skill_page(page: Page, daemon: Daemon) -> None:
-    """Skills → Agents for skills: the Skill reviewer set up from its need's definition (D.18), its
-    model chosen on the set-up page; then a skill's page offers to review with it, and shows what
-    handler found in its files. Set up, it is the one chosen, no longer offered to set up."""
+    """The Skill reviewer turned on by its card (D.18; here on its page in Settings → Helpers, the
+    card a skill's page shows when nothing reviews skills yet): what it can do said, its model
+    chosen, Turn on. A skill's page then offers to review with it, and shows what handler found in
+    its files; Skills names it."""
     library_skill(daemon, "ui-reviewed")
     page.goto(f"{daemon.base_url}/#/skills")
-    row = page.get_by_test_id("skill-agent-skill-review")
-    expect(row).to_contain_text("Set up the Skill reviewer")
-    row.get_by_test_id("skill-agent-skill-review-setup").click()
-    expect(page.get_by_test_id("setup-may")).to_contain_text("never asks before acting")
-    expect(page.get_by_test_id("setup-go")).to_be_disabled()  # its model first
-    pick_account(page, "fake")
-    page.get_by_test_id("setup-go").click()
-    expect(page.get_by_test_id("run-form")).to_be_visible()
+    expect(page.get_by_test_id("skill-helpers")).to_contain_text(
+        "Reviewed by the skill reviewer, set up the first time you use it"
+    )
+    page.goto(f"{daemon.base_url}/#/settings/helpers/skill-review")
+    card = page.get_by_test_id("helper-card")
+    expect(card).to_contain_text("Review skills")
+    expect(card.get_by_test_id("helper-can-do")).to_contain_text("reads the skill, read-only")
+    choose_helper_account(page, "fake", card)
+    card.get_by_test_id("helper-turn-on").click()
+    expect(page.get_by_test_id("helper-who-works")).to_be_visible()  # its page now
     page.goto(f"{daemon.base_url}/#/skills/ui-reviewed")
     expect(page.get_by_test_id("skill-scan")).to_contain_text("scripts/run.sh")
     expect(page.get_by_test_id("skill-review").get_by_test_id("run-form")).to_be_visible()
     expect(page.get_by_test_id("run-field-skill")).to_have_value("ui-reviewed")  # this skill
     page.goto(f"{daemon.base_url}/#/skills")
-    expect(row.get_by_test_id("skill-agent-skill-review-setup")).to_have_count(0)
-    expect(row.get_by_test_id("skill-agent-skill-review-choice")).to_be_visible()
+    expect(page.get_by_test_id("skill-helpers")).to_contain_text("Reviewed by the skill reviewer ·")
 
 
 def test_a_project_s_agents_exported_then_added_to_another(page: Page, daemon: Daemon) -> None:
     """D.23: Export agents on a project's page (what of yours each agent leaves out, from the
-    dry run) downloads one file; on another project, Add agents from a file reads it and opens
-    the set-up page there (Not from Handler said): each agent asks for its model; it ends on the
-    project, its agents remembering the file, the file forgotten."""
+    dry run) downloads one file; on another project, Get agents… opens Library → Agents → Get
+    more for it, where From a file reads it and opens the set-up page there: each agent asks
+    for its model; it ends on the project, its agents remembering the file,
+    the file forgotten, and Library → Agents lists them as from it."""
     agents = [
-        {"model": {"account": "fake"}, "name": "Dev", "bindings": ["browser"]},
+        {
+            "model": {"account": "fake"},
+            "name": "Dev",
+            "addons": [{"addon": "fake-browser", "binding": "browser"}],
+        },
         {"model": {"account": "fake"}, "name": "Review", "network": "none"},
     ]
     project = create_project(daemon, daemon.make_scope(), name="Kit src", agents=agents)
     other = create_project(daemon, daemon.make_scope(), name="Shop", agents=[agents[1]])
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
+    page.get_by_test_id("project-more").click()  # the page's ⋯
     page.get_by_test_id("project-export-agents").click()
     dialog = page.get_by_test_id("export-agents")
     expect(dialog.get_by_test_id("export-agents-agent")).to_have_count(2)  # all ticked
-    expect(dialog).to_contain_text("addon configuration browser")
+    expect(dialog).to_contain_text("connection browser")
     expect(dialog).to_contain_text("its model, chosen at set-up")
     with page.expect_download() as downloaded:
         dialog.get_by_test_id("export-agents-go").click()
@@ -1406,9 +1897,12 @@ def test_a_project_s_agents_exported_then_added_to_another(page: Page, daemon: D
     downloaded.value.save_as(file)  # the browser may run elsewhere (a browser server)
 
     page.goto(f"{daemon.base_url}/#/projects/{other['id']}")
-    page.get_by_test_id("add-agent-file-input").set_input_files(str(file))
+    page.get_by_test_id("project-more").click()
+    page.get_by_test_id("get-agents").click()
+    expect(page).to_have_url(re.compile(r"#/library/agents/more\?project="))
+    expect(page.get_by_test_id("agents-into")).to_contain_text("Shop")
+    page.get_by_test_id("agents-file-input").set_input_files(str(file))
     expect(page).to_have_url(re.compile(r"#/setup/kit-src\?project="))
-    expect(page.get_by_test_id("setup-not-handler")).to_be_visible()
     expect(page.get_by_test_id("setup-project")).to_have_value(other["id"])
     for block in page.get_by_test_id("setup-agent").all():
         fake = page.get_by_text("fake", exact=True)
@@ -1422,6 +1916,77 @@ def test_a_project_s_agents_exported_then_added_to_another(page: Page, daemon: D
         assert origins == ["", "dev", "review"]
         assert {(a.get("origin") or {}).get("name") for a in made} == {None, "kit-src"}
         assert c.get("/v1/agents-files/kit-src").status_code == 404  # forgotten once set up
+    page.goto(f"{daemon.base_url}/#/library/agents")
+    shop = page.get_by_test_id("agents-group").filter(
+        has=page.locator(f'a[href="#/projects/{other["id"]}"]')
+    )
+    expect(shop.get_by_test_id("agent-from")).to_have_text(
+        ["from kit-src", "made here", "from kit-src"]
+    )  # Dev, Review, Review 2
+    page.get_by_test_id("agents-filter-here").click()
+    expect(shop.get_by_test_id("library-agent")).to_have_count(1)
+
+
+def test_a_tool_a_source_offers_is_installed_with_its_agent(page: Page, daemon: Daemon) -> None:
+    """D.23, G.5: an agents file's agent needs a tool not installed, that the official source
+    offers: the set-up page shows it in the agent's card and under Comes with it (with what it
+    adds to the toolbox), asks nothing for it, and its button installs it, then sets the agent
+    up using it. A tool no source has blocks the set-up, said in the agent's card."""
+    folder = daemon.config_dir / "toolbox"
+    before = (folder / "toolbox.toml").read_text()
+
+    def agents_file(name: str, tool: str) -> dict[str, Any]:
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as z:
+            z.writestr(f"{name}/agents.toml", f'name = "{name}"\nversion = 1\nplace = "outside"\n')
+            agent = f'[agent]\nname = "Builder"\naddons = ["{tool}"]\n'
+            z.writestr(f"{name}/agents/builder/agent.toml", agent)
+        with daemon.http() as c:
+            c.get("/v1/sources")  # read once
+            r = c.post(
+                "/v1/agents-files/import",
+                content=data.getvalue(),
+                headers={"Content-Type": "application/zip"},
+            )
+            assert r.status_code in (200, 201), r.text
+            return r.json()
+
+    try:
+        agents_file("no-such-kit", "no-such-tool")
+        page.goto(f"{daemon.base_url}/#/setup/no-such-kit")
+        missing = page.get_by_test_id("setup-tool-missing")
+        expect(missing).to_contain_text("none of your sources has")
+        expect(page.get_by_test_id("setup-blocked")).to_contain_text("no-such-tool")
+        expect(page.get_by_test_id("setup-go")).to_be_disabled()
+        page.get_by_test_id("setup-cancel").click()
+        # Cancel forgets the file, then goes back: gone before the next page, or it leaves that
+        expect(page).not_to_have_url(re.compile(r"#/setup/no-such-kit$"))
+
+        agents_file("builder-kit", "fake-toolchain")
+        page.goto(f"{daemon.base_url}/#/setup/builder-kit")
+        expect(page.get_by_role("heading", name="Set up Builder")).to_be_visible()
+        expect(page.get_by_test_id("setup-tool-comes")).to_contain_text("fake-toolchain")
+        expect(page.get_by_test_id("setup-comes")).to_contain_text("fake-cc in the toolbox")
+        expect(page.get_by_test_id("setup-tool-missing")).to_have_count(0)
+        page.get_by_test_id("access-account").filter(
+            has=page.get_by_text("fake", exact=True)
+        ).click()
+        go = page.get_by_test_id("setup-go")
+        expect(go).to_have_text("Install fake-toolchain and set it up")
+        go.click()
+        expect(page).to_have_url(re.compile(r"#/agents"))
+        with daemon.http() as c:
+            installed = {a["name"] for a in c.get("/v1/addons").json()}
+            assert "fake-toolchain" in installed
+            made = [a for a in c.get("/v1/agents").json() if a.get("name") == "Builder"]
+            assert [a["addons"] for a in made] == [[{"addon": "fake-toolchain"}]]
+            for a in made:
+                c.delete(f"/v1/agents/{a['id']}")
+            c.delete("/v1/addons/fake-toolchain")
+    finally:
+        (folder / "toolbox.toml").write_text(before)
+        shutil.rmtree(daemon.config_dir / "system-packages", ignore_errors=True)
+        (daemon.config_dir / "system-packages.lock.toml").unlink(missing_ok=True)
 
 
 def test_a_skill_written_with_an_agent_is_saved_to_the_library(page: Page, daemon: Daemon) -> None:
@@ -1455,11 +2020,19 @@ def test_a_skill_written_with_an_agent_is_saved_to_the_library(page: Page, daemo
         assert c.get("/v1/skills/ui-written").status_code == 200
 
 
+@pytest.mark.rule(
+    "automation.a-folder-of-yours",
+    "automation.off-until-you-turn-it-on",
+    "automation.with-problems-never-runs",
+    "automation.says-what-it-does",
+)
 def test_an_automation_made_from_an_example_then_turned_on(page: Page, daemon: Daemon) -> None:
     """I: copied from an example, off; its problems shown until its files are fixed; turning it
-    on confirms what it does. The inbox is one click away."""
-    page.get_by_test_id("automations-link").click()
-    page.get_by_test_id("automation-from-example").click()
+    on confirms what it does. The inbox is reached from the bell."""
+    page.goto(f"{daemon.base_url}/#/library/automations/more")  # Get more: Handler's examples
+    page.get_by_test_id("automation-example").filter(has_text="env-issues").get_by_test_id(
+        "automation-from-example"
+    ).click()
     page.get_by_test_id("automation-name").fill("web-env")
     page.get_by_test_id("automation-create").click()
     problems = page.get_by_test_id("automation-problems")
@@ -1479,10 +2052,42 @@ def test_an_automation_made_from_an_example_then_turned_on(page: Page, daemon: D
     expect(page.get_by_test_id("automation-confirm-on")).to_contain_text("Turn web-env on?")
     page.get_by_test_id("automation-confirm-on-button").click()
     expect(page.get_by_test_id("automation-off")).to_be_visible()
-    page.get_by_test_id("automations-link").click()
-    expect(page.get_by_test_id("automation-card").filter(has_text="web-env")).to_contain_text("on")
-    page.get_by_test_id("inbox-link").click()
+    page.get_by_test_id("library-link").click()
+    page.get_by_test_id("shelf-automations").click()
+    row = page.get_by_test_id("automation-card").filter(has_text="web-env")
+    expect(row.get_by_test_id("automation-runs")).to_have_text("your script")
+    expect(row.get_by_test_id("automation-switch")).to_have_attribute("aria-checked", "true")
+    page.get_by_test_id("automations-only-agent").click()  # what runs an agent only
+    expect(row).to_have_count(0)
+    page.get_by_test_id("automations-only-all").click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_test_id("automations-pause-all").click()
+    expect(row.get_by_test_id("automation-switch")).to_have_attribute("aria-checked", "false")
+    page.get_by_test_id("bell").click()
+    page.get_by_test_id("bell-inbox").click()
     expect(page.get_by_test_id("inbox")).to_be_visible()
+
+
+def test_a_job_is_made_from_an_agent_for_an_automation(page: Page, daemon: Daemon) -> None:
+    """I in the UI: New automation from a project whose agent is no job offers "Make a job from"
+    it (no dead end): the agent form starts on its copy as a job, and once saved, New automation
+    runs it."""
+    project = create_project(
+        daemon, daemon.make_scope(), agents=[{"model": {"account": "fake"}, "name": "talker"}]
+    )
+    page.goto(f"{daemon.base_url}/#/projects/{project['id']}/automations")
+    page.get_by_test_id("new-automation").click()
+    offer = page.get_by_test_id("no-unattended-agent")
+    expect(offer.get_by_test_id("make-job").first).to_have_text("Make a job from talker")  # first
+    offer.get_by_test_id("make-job").first.click()
+    expect(page.get_by_test_id("page-header")).to_contain_text("A job from talker")
+    expect(page.get_by_test_id("agent-name-input")).to_have_value("talker-job")
+    page.get_by_test_id("agent-save").click()
+    expect(page).to_have_url(re.compile(r"#/automations/new\?agent="))
+    with daemon.http() as c:
+        made = next(a for a in c.get("/v1/agents").json() if a.get("name") == "talker-job")
+    assert made["interface"]["result"] and made["projectId"] == project["id"]
+    expect(page.get_by_test_id("new-automation-agent")).to_have_value(made["id"])
 
 
 def test_an_agent_given_a_job_with_the_field_editor(page: Page, daemon: Daemon) -> None:
@@ -1490,7 +2095,7 @@ def test_an_agent_given_a_job_with_the_field_editor(page: Page, daemon: Daemon) 
     both shown as they will look; "Edit as JSON" shows the schemas; "Save and try" saves it
     and opens its page on the run form."""
     page.goto(f"{daemon.base_url}/#/agents/new")
-    pick_account(page, "fake")
+    choose_account(page, "fake")
     page.get_by_test_id("agent-name-input").fill("web-invoices")
     page.get_by_test_id("agent-use-job").click()
     expect(page.get_by_test_id("agent-confirm-bypass")).to_have_count(0)  # a new one never asks
@@ -1530,7 +2135,7 @@ def test_a_brief_made_in_the_editor_starts_a_chat(page: Page, daemon: Daemon) ->
     Chat says the brief goes."""
     project = create_project(daemon, daemon.make_scope(), name="brief-project")
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}/agents/new")
-    pick_account(page, "fake")
+    choose_account(page, "fake")
     page.get_by_test_id("agent-name-input").fill("Writer")
     page.get_by_test_id("agent-use-brief").click()
     expect(page.get_by_test_id("agent-confirm-bypass")).to_have_count(0)
@@ -1559,8 +2164,7 @@ def test_a_brief_made_in_the_editor_starts_a_chat(page: Page, daemon: Daemon) ->
 
     page.get_by_test_id("agent-row").filter(has_text="Writer").click()
     panel = page.get_by_test_id("agent-panel")
-    expect(panel.get_by_test_id("agent-use")).to_have_text("Brief")
-    brief = panel.get_by_test_id("project-brief")
+    brief = panel.get_by_test_id("project-brief")  # a brief: its form is the box
     brief.get_by_test_id("run-field-whatShouldItDo").fill("Draft the release notes\nfor 1.2")
     brief.get_by_test_id("run-field-readers").fill("users")
     brief.get_by_test_id("run-start").click()
@@ -1579,6 +2183,7 @@ def test_a_brief_made_in_the_editor_starts_a_chat(page: Page, daemon: Daemon) ->
     expect(page.get_by_test_id("agent-use-drops")).to_contain_text("Its brief goes")
 
 
+@pytest.mark.rule("automation.deleting-it-stops-and-removes-all")
 def test_an_agent_scheduled_from_its_settings(page: Page, daemon: Daemon) -> None:
     """I.1: in the agent's settings, "Job" (a form with one field) then "Save and run it on a
     schedule…" saves it and opens the form with the agent chosen; handlerd checks it as it is
@@ -1641,6 +2246,7 @@ def test_an_agent_scheduled_from_its_settings(page: Page, daemon: Daemon) -> Non
     assert not toml.parent.exists()
 
 
+@pytest.mark.rule("inbox.what-it-is-told")
 def test_an_agent_run_s_results_open_an_app(page: Page, daemon: Daemon) -> None:
     """I.1, I.9: an automation names the app its agent's results open; its form shows it; the
     run's message in the inbox has "Open <app>"."""
@@ -1698,10 +2304,12 @@ def test_an_agent_run_s_results_open_an_app(page: Page, daemon: Daemon) -> None:
     expect(message).to_be_visible(timeout=60_000)
     expect(message.get_by_test_id("inbox-open-app")).to_have_text("Open planner-e2e")
     expect(message.get_by_test_id("inbox-open")).to_contain_text("See the result")
-    # unread: counted on the menu's Inbox (other tests' messages too: the daemon is shared)
-    expect(page.get_by_test_id("inbox-unread")).to_have_text(re.compile(r"^[1-9]\d*$"))
+    # unread: counted at the foot of the bell's list (other tests' messages too: shared daemon)
+    page.get_by_test_id("bell").click()
+    expect(page.get_by_test_id("bell-inbox")).to_contain_text(re.compile(r"[1-9]\d* unread"))
 
 
+@pytest.mark.rule("app.uninstalled-leaves-nothing-of-it", "part.removed-with-its-app")
 def test_an_app_is_given_what_it_needs(page: Page, daemon: Daemon) -> None:
     """H.2: an app added opens its install page: the person gives it a folder (one of no
     project), sets its agent up from the app's definition there (the app's form and result,
@@ -1734,7 +2342,7 @@ def test_an_app_is_given_what_it_needs(page: Page, daemon: Daemon) -> None:
     tasks = daemon.make_scope() / "needs-e2e-tasks"
     tasks.mkdir()
 
-    page.goto(f"{daemon.base_url}/#/apps")
+    page.goto(f"{daemon.base_url}/#/library/apps/more")  # Install from a file
     file: FilePayload = {
         "name": "needs-e2e.zip",
         "mimeType": "application/zip",
@@ -1850,9 +2458,14 @@ def test_a_project_s_agent_with_an_interface_is_run_from_its_page(
     page.goto(f"{daemon.base_url}/#/projects/{project['id']}")
     page.get_by_test_id("agent-row").filter(has_text="reviewer").click()
     panel = page.get_by_test_id("agent-panel")
-    expect(panel.get_by_test_id("agent-use")).to_have_text("Job")
-    expect(panel.get_by_test_id("agent-schedule-badge")).to_contain_text("every 2h")
     expect(panel.get_by_test_id("run-form")).to_be_visible()  # its form, on the project page
+    page.get_by_test_id("project-tab-automations").click()  # what runs it, on its own tab
+    expect(page.get_by_test_id("project-tab-automations")).to_contain_text("1")
+    row = page.get_by_test_id("project-automation")
+    expect(row).to_contain_text("Every 2h")
+    expect(row.get_by_test_id("automation-runs")).to_have_text("reviewer")
+    page.get_by_test_id("project-tab-sessions").click()
+    page.get_by_test_id("agent-row").filter(has_text="reviewer").click()
     page.get_by_test_id("run-field-focus").fill("security")
     page.get_by_test_id("run-start").click()
     expect(page).to_have_url(re.compile(r"#/runs/"))
@@ -1886,22 +2499,22 @@ def test_areas_started_coloured_and_deleted(page: Page, daemon: Daemon) -> None:
     expect(rows).to_have_count(2)
 
 
+@pytest.mark.rule("uses.seen-from-both-ends")
 def test_uses_and_used_by_link_both_ways(page: Page, daemon: Daemon) -> None:
-    """D.22 in the UI: the agent's page says what it uses; the skill's page, who uses it."""
+    """D.22 in the UI: the skill's page says who uses it, linking to that agent; a project's
+    Sessions tab lists none of it (the box's chips say what the agent uses)."""
     skill = "---\nname: linked-skill\ndescription: Does linked things.\n---\n\nDo it.\n"
     with daemon.http() as c:
         c.post("/v1/skills", json={"content": skill}).raise_for_status()
     agents = [{"model": {"account": "fake"}, "name": "linker", "skills": ["linked-skill"]}]
-    project = create_project(daemon, daemon.make_scope(), name="linking", agents=agents)
-    [agent] = project["agents"]
-    page.goto(f"{daemon.base_url}/#/projects/{project['id']}?agent={agent['id']}")
-    expect(page.get_by_test_id("uses-list")).to_contain_text("linked-skill, picks it")
-    expect(page.get_by_test_id("uses-list")).to_contain_text("fake, runs on it")
-    page.get_by_test_id("uses-list").get_by_role("link", name="linked-skill").click()
+    create_project(daemon, daemon.make_scope(), name="linking", agents=agents)
+    page.goto(f"{daemon.base_url}/#/skills/linked-skill")
     used_by = page.get_by_test_id("used-by-list")
     expect(used_by).to_contain_text("linking · linker, picks it")
     used_by.get_by_role("link", name="linking · linker").click()
-    expect(page.get_by_test_id("agent-panel")).to_contain_text("linker")
+    chosen = page.get_by_test_id("agent-row").filter(has_text="linker")
+    expect(chosen).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_test_id("uses-panel")).to_have_count(0)
 
 
 def test_a_project_lists_the_apps_given_its_folder(
@@ -1936,12 +2549,15 @@ def test_a_project_lists_the_apps_given_its_folder(
 
 
 def test_one_of_handlers_apps_is_installed_from_the_apps_page(page: Page, daemon: Daemon) -> None:
-    """D.26: what Handler's source offers is on the Apps page; Install takes its code and opens
-    its install page; the app is then in the menu, its page says it is from Handler."""
+    """D.26: what Handler's source offers is on the Library's Apps shelf, Get more; Install takes
+    its code and opens its install page; the app is then in the menu once pinned, its page says
+    it is from Handler."""
     page.goto(f"{daemon.base_url}/#/apps")
-    page.get_by_test_id("source-app").filter(
+    page.get_by_test_id("apps-get").click()  # no app yet: Get an app
+    expect(page).to_have_url(re.compile(r"#/library/apps/more$"))
+    page.get_by_test_id("discover-item").filter(
         has_text="A journal kept in a folder of yours"
-    ).get_by_test_id("source-app-install").click()
+    ).get_by_test_id("discover-item-take").click()
     expect(page).to_have_url(re.compile(r"#/apps/journal/install$"))
     expect(page.get_by_test_id("install-where")).to_contain_text("Where the journal is kept")
     expect(page.get_by_test_id("install-actions")).to_contain_text("Write in my journal")
@@ -1949,22 +2565,49 @@ def test_one_of_handlers_apps_is_installed_from_the_apps_page(page: Page, daemon
     expect(page.get_by_test_id("app-page")).to_contain_text("from Handler")
     expect(page.get_by_test_id("app-improve")).to_be_visible()  # once used, a draft makes it yours
     in_menu = page.get_by_test_id("sidebar-app").filter(has_text=re.compile(r"^journal$"))
+    expect(in_menu).to_have_count(0)  # an app is pinned when you choose
+    page.get_by_test_id("app-pin").click()  # from its page
     expect(in_menu).to_be_visible()
     with daemon.http() as c:
         assert c.delete("/v1/apps/journal").status_code == 204
+        assert {"kind": "app", "id": "journal"} not in c.get("/v1/pins").json()["items"]
 
 
 def test_handlers_helpers_are_in_settings(page: Page, daemon: Daemon) -> None:
-    """D.18: Settings → Helpers lists the agents given for Handler's needs, each saying where it is
-    used; one not set up yet opens its set-up page."""
+    """D.18: Settings → Helpers lists the agents behind Handler's features, by the feature each
+    serves; one not set up yet is set up the first time it is used, or from its page (its card).
+    Set up, its page shows who works, what its feature fixes locked, and its instructions."""
     page.goto(f"{daemon.base_url}/#/settings/helpers")
-    router = page.get_by_test_id("helper").filter(has_text="Ask router")
-    expect(router).to_contain_text("used by Ask")
-    creator = page.get_by_test_id("helper").filter(has_text="App creator")
-    expect(creator).to_contain_text("used by Apps → Make your own")
-    expect(creator.get_by_test_id("helper-set-up")).to_be_visible()  # one, as any helper
-    router.get_by_test_id("helper-set-up").click()
-    expect(page).to_have_url(re.compile(r"#/helpers/ask-router/set-up$"))
+    plans = page.get_by_test_id("helper").filter(has_text="Plans")
+    expect(plans).to_contain_text("plan builder · in each project")
+    expect(plans.get_by_test_id("helper-not-set-up")).to_be_visible()
+    plans.click()
+    expect(page).to_have_url(re.compile(r"#/settings/helpers/plan-builder$"))
+    expect(page.get_by_test_id("page-header")).to_contain_text("Plan builder")
+    choose_helper_account(page, "fake")
+    page.get_by_test_id("helper-turn-on").click()
+    locked = page.get_by_test_id("helper-can-do").get_by_test_id("helper-locked")
+    expect(locked).to_have_count(4)  # set by Plans: Handler holds the plan builder to them
+    expect(locked.first).to_have_text("set by Plans")
+    instructions = page.get_by_test_id("helper-instructions")
+    expect(instructions).to_have_value(re.compile("You write a Handler plan"))
+    instructions.fill("Be brief.")
+    expect(page.get_by_test_id("helper-back-to-handlers")).to_be_visible()
+    page.get_by_test_id("helper-save").click()
+    expect(page.get_by_test_id("helper-save")).to_have_count(0)
+    page.get_by_test_id("helper-back-to-handlers").click()  # Handler's, to save again
+    page.get_by_test_id("helper-save").click()
+    expect(page.get_by_test_id("helper-back-to-handlers")).to_have_count(0)
+
+
+def test_a_helper_whose_tool_asks_nothing_is_turned_on(page: Page, daemon: Daemon) -> None:
+    """D.18, G.3: the App creator needs the app-builder tool, built in and without settings: its
+    card asks only who works, never a connection to the tool."""
+    page.goto(f"{daemon.base_url}/#/settings/helpers/app-creator")
+    turn_on = page.get_by_test_id("helper-turn-on")
+    expect(turn_on).to_be_disabled()  # who works: not chosen yet
+    choose_helper_account(page, "fake")
+    expect(turn_on).to_be_enabled()
 
 
 def test_an_app_is_written_and_changed_on_drafts(page: Page, daemon: Daemon) -> None:
@@ -1977,7 +2620,7 @@ def test_an_app_is_written_and_changed_on_drafts(page: Page, daemon: Daemon) -> 
         body = {"name": "App creator", "model": {"account": "fake"}, "origin": APP_CREATOR}
         creator = c.post("/v1/agents", json=body).json()
         assert c.put("/v1/handler-needs/app-creator", json={"agentId": creator["id"]}).is_success
-    page.goto(f"{daemon.base_url}/#/apps")
+    page.goto(f"{daemon.base_url}/#/library/apps/more")
     page.get_by_test_id("app-create").click()
     expect(page).to_have_url(re.compile(r"#/sessions/"))
     with daemon.http() as c:
@@ -2036,13 +2679,12 @@ def test_a_source_is_added_only_once_trusted(page: Page, daemon: Daemon) -> None
 
 
 def test_discover_shows_what_the_sources_offer_and_installs_it(page: Page, daemon: Daemon) -> None:
-    """D.26: Discover, first in the library, lists what the sources offer by kind; an item's page
-    says where it comes from and what it may do; its button goes to its kind's install page (an
-    app's install page; an addon's preview, opened by Library → Addons' `install`)."""
-    page.goto(f"{daemon.base_url}/#/apps")
-    page.get_by_test_id("discover-link").click()
-    apps = page.get_by_test_id("discover-app")
-    apps.get_by_test_id("discover-item").filter(has_text="journal").get_by_test_id(
+    """D.26: each Library shelf's Get more lists what the sources offer of its kind; an item's
+    page says where it comes from and what it may do; its button goes to its kind's install page
+    (an app's install page; a tool's preview, opened by Library → Tools → Get more's `install`)."""
+    page.goto(f"{daemon.base_url}/#/library/apps")
+    page.get_by_test_id("shelf-more").click()
+    page.get_by_test_id("discover-item").filter(has_text="journal").get_by_test_id(
         "discover-item-open"
     ).click()
     expect(page).to_have_url(re.compile(r"#/discover/official/apps/journal$"))
@@ -2053,13 +2695,12 @@ def test_discover_shows_what_the_sources_offer_and_installs_it(page: Page, daemo
     expect(page).to_have_url(re.compile(r"#/apps/journal/install$"))
     with daemon.http() as c:
         assert c.delete("/v1/apps/journal").status_code == 204
-    page.goto(f"{daemon.base_url}/#/discover")
-    page.get_by_test_id("discover-kind-addon").click()
-    expect(page.get_by_test_id("discover-app")).to_have_count(0)
-    tools = page.get_by_test_id("discover-addon").get_by_test_id("discover-item")
+    page.goto(f"{daemon.base_url}/#/library/tools/more")
+    tools = page.get_by_test_id("discover-item")
+    expect(tools.filter(has_text="journal")).to_have_count(0)  # an app: not a tool
     expect(  # the daemon's browser binding keeps it installed
         tools.filter(has_text="fake-browser").get_by_test_id("discover-item-installed")
     ).to_be_visible()
-    # an addon's button opens its preview on Library → Addons (here installed: a reinstall)
-    page.goto(f"{daemon.base_url}/#/addons?install=source:official/fake-shop")
+    # a tool's button opens its preview on Get more (here installed: a reinstall)
+    page.goto(f"{daemon.base_url}/#/library/tools/more?install=source:official/fake-shop")
     expect(page.get_by_test_id("addon-preview")).to_contain_text("source:official/fake-shop")

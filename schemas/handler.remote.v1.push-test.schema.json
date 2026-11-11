@@ -1,0 +1,28 @@
+{
+  "$id": "urn:handler.remote/v1/push-test",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/push_test` \u2192 this: one push sent now to the asking device (H.10), the\nsame as a message's; `problem` says why its push service did not take it.",
+  "properties": {
+    "sent": {
+      "title": "Sent",
+      "type": "boolean"
+    },
+    "problem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Problem"
+    }
+  },
+  "required": [
+    "sent"
+  ],
+  "title": "PushTest",
+  "type": "object"
+}

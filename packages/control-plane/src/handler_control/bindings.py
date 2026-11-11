@@ -1,10 +1,11 @@
-"""Bindings — contract G.2: `~/.config/handler-ai/bindings/<name>.toml`, one per file, name =
-file stem. Written through the Control API (D.15: its secret values go to the secret store,
-`bindings/<name>/<slot>`), or by hand (a hand-written `env`, `file` or `command` reference is kept
-by the API, never written by it).
+"""Connections (bindings in the code and the API) — contract G.2:
+`~/.config/handler-ai/connections/<name>.toml`, one per file, name = file stem. Written through
+the Control API (D.15: its secret values go to the secret store, `connections/<name>/<slot>`), or
+by hand (a hand-written `env`, `file` or `command` reference is kept by the API, never written by
+it).
 
-A binding is valid when its file parses (unknown keys are errors), its addon exists and is valid,
-and it fills exactly the slots that addon declares (G2).
+A connection is valid when its file parses (unknown keys are errors), its tool exists and is
+valid, and it fills exactly the slots that tool declares (G2).
 """
 
 from dataclasses import dataclass
@@ -49,7 +50,7 @@ def load(path: Path) -> LoadedBinding:
     except (OSError, ValueError) as e:  # unreadable file, TOML syntax error
         return LoadedBinding(name, path, None, None, str(e))
     try:
-        addon = addons.get(binding.addon)
+        addon = addons.get(binding.tool)
         check_binding(binding, addon.manifest)
     except (addons.UnknownAddonError, ValueError) as e:  # InvalidAddonError is a ValueError
         return LoadedBinding(name, path, binding, None, str(e))
@@ -60,7 +61,7 @@ def get(directory: Path, name: str) -> LoadedBinding:
     """A binding by name; unknown → LoadedBinding with an error (the caller decides)."""
     path = directory / f"{name}.toml"
     if "/" in name or name.startswith(".") or not path.is_file():
-        return LoadedBinding(name, path, None, None, f"unknown binding '{name}' (no {path})")
+        return LoadedBinding(name, path, None, None, f"unknown connection '{name}' (no {path})")
     return load(path)
 
 
@@ -71,7 +72,7 @@ def load_all(directory: Path) -> list[LoadedBinding]:
 
 
 def secret_path(name: str, slot: str) -> str:
-    return f"bindings/{name}/{slot}"
+    return f"connections/{name}/{slot}"
 
 
 def save(
@@ -87,13 +88,13 @@ def save(
     name = request.name
     target = directory / f"{name}.toml"
     if (old is None or old.name != name) and target.exists():
-        raise BindingError(f"binding '{name}' exists")
+        raise BindingError(f"connection '{name}' exists")
     try:
         addon = addons.get(request.addon)
     except (addons.UnknownAddonError, ValueError) as e:
         raise BindingError(str(e)) from None
-    if old is not None and old.binding is not None and old.binding.addon != request.addon:
-        raise BindingError(f"a binding's addon cannot change (it is '{old.binding.addon}')")
+    if old is not None and old.binding is not None and old.binding.tool != request.addon:
+        raise BindingError(f"a connection's tool cannot change (it is '{old.binding.tool}')")
     kept: dict[str, SecretRef] = dict(old.binding.secrets or {}) if old and old.binding else {}
     renamed = old if old is not None and old.name != name else None
     if renamed is not None:
@@ -104,7 +105,7 @@ def save(
         kept.pop(slot, None)
     binding = Binding(
         api_version=BINDING_API_VERSION,
-        addon=request.addon,
+        tool=request.addon,
         description=request.description,
         settings=request.settings or None,
         secrets={**kept, **{s: StoreSecret(secret=secret_path(name, s)) for s in request.secrets}}
@@ -115,11 +116,13 @@ def save(
     except ValueError as e:
         raise BindingError(str(e)) from None
     if renamed is not None:
-        store.rename(f"bindings/{renamed.name}", f"bindings/{name}")
+        store.rename(f"connections/{renamed.name}", f"connections/{name}")
     for slot in request.remove_secrets:
         store.delete(secret_path(name, slot))
     for slot, value in request.secrets.items():
-        store.put(secret_path(name, slot), value, f"{slot} of the binding {name} ({request.addon})")
+        store.put(
+            secret_path(name, slot), value, f"{slot} of the connection {name} ({request.addon})"
+        )
     write_private(target, _toml(binding))
     if renamed is not None:
         renamed.path.unlink(missing_ok=True)
@@ -128,13 +131,13 @@ def save(
 
 def delete(directory: Path, store: secrets.SecretStore, name: str) -> None:
     (directory / f"{name}.toml").unlink(missing_ok=True)
-    store.delete(f"bindings/{name}")
+    store.delete(f"connections/{name}")
 
 
 def _toml(binding: Binding) -> str:
     data = binding.model_dump(by_alias=True, exclude_none=True, mode="json")
     doc = tomlkit.document()
-    for field in ("apiVersion", "addon", "description"):
+    for field in ("apiVersion", "tool", "description"):
         if field in data:
             doc[field] = data[field]
     if "settings" in data:

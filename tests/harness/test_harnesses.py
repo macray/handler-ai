@@ -1,4 +1,4 @@
-"""Contract B conformance for every harness in harnesses/ (docs/dev/contracts.md §B)."""
+"""Contract B conformance for every harness in harnesses/ (contract B)."""
 
 import json
 import os
@@ -30,6 +30,7 @@ def _require_image(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", HARNESSES)
+@pytest.mark.rule("image.checked-against-its-descriptor")
 def test_image_answers_initialize(name: str, scope: Path) -> None:
     _require_image(name)
     client, _ = start_agent(make_agent(name, scope), scope)
@@ -61,17 +62,16 @@ def session_agent(
     mcp_servers: list[McpServer] | None = None,
     **network: Any,
 ) -> tuple[AcpClient, Any]:
-    """An agent that can start a session with no real credential: Claude Code on its account (the
-    token is checked at the first prompt), the others on a provider."""
-    if name == "claude-code":
-        agent = make_agent(name, scope)
-        return start_agent(agent, scope, account_token=key, mcp_servers=mcp_servers, **network)
+    """An agent that can start a session with no real credential: on a provider, whose key is
+    checked at the first prompt. (Claude Code on an account would wait ~20 s at session/new
+    first: it retries fetching its remote settings from api.anthropic.com, unreachable here.)"""
     on_provider = {"account": None, "provider": "probe", "providerSpec": PROVIDER}
     agent = make_agent(name, scope, **on_provider)
     return start_agent(agent, scope, provider_key=key, mcp_servers=mcp_servers, **network)
 
 
 @pytest.mark.parametrize("name", HARNESSES)
+@pytest.mark.rule("image.checked-against-its-descriptor")
 def test_descriptor_matches_real_session(name: str, scope: Path) -> None:
     """Every mapped ACP mode and the model option must exist in the harness's real session."""
     _require_image(name)
@@ -96,13 +96,16 @@ def test_descriptor_matches_real_session(name: str, scope: Path) -> None:
 @pytest.mark.parametrize(
     "name", [h.name for h in catalog.all_harnesses() if "stdio" in h.descriptor.mcp_transports]
 )
+@pytest.mark.rule("launch.stdio-mcp-servers-see-the-sandbox")
 def test_stdio_mcp_server_gets_the_sandbox_env(name: str, scope: Path) -> None:
     """B.1 mcpTransports / mcpEnv: the harness starts the stdio MCP servers of session/new, and
     they see the sandbox's environment (here the proxy of a filtered network), whatever the
     harness passes them, but not the harness's own secrets. No prompt, no credentials needed."""
     _require_image(name)
     dump = scope / "mcp-env"
-    server = StdioMcpServer(name="probe", command="sh", args=["-c", f"env > {dump}; exec cat"])
+    server = StdioMcpServer(
+        name="probe", command="sh", args=["-c", f"env > {dump}; exec cat > /dev/null"]
+    )
     client, launch = session_agent(
         name,
         scope,
@@ -235,6 +238,7 @@ def test_vibe_custom_config_toml(scope: Path) -> None:
 
 
 @pytest.mark.parametrize("name", HARNESSES)
+@pytest.mark.rule("provider.every-field-reaches-the-harness")
 def test_provider_config_is_accepted_by_the_harness(name: str, scope: Path) -> None:
     """The real harness accepts the provider as written: the session starts, and it offers the
     provider's model."""

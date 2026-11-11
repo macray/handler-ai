@@ -7,7 +7,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { api } from "../lib/api";
-  import { slug } from "../lib/setup";
+  import { partName } from "../lib/setup";
   import type { Agent, AgentsExport, ExportAgentsRequest } from "../lib/contracts.gen";
   import { useOfAgent } from "../lib/interface";
   import { agentLabel } from "../lib/projects.svelte";
@@ -36,7 +36,7 @@
     if (open) ticked = agents.map((a) => a.id);
   });
 
-  const body = $derived<ExportAgentsRequest>({ name: slug(place), projectId, agentIds: [...ticked] as ExportAgentsRequest["agentIds"] });
+  const body = $derived<ExportAgentsRequest>({ name: partName(place), projectId, agentIds: [...ticked] as ExportAgentsRequest["agentIds"] });
 
   // what it would hold: handlerd's dry run, again when the agents change
   $effect(() => {
@@ -66,7 +66,7 @@
   }
 
   function keptOf(a: Agent): string {
-    const part = draft?.file.agents.find((p) => p.part === slug(a.name ?? agentLabel(a)));
+    const part = draft?.file.agents.find((p) => p.part === partName(a.name ?? agentLabel(a)));
     const checks = part?.checks?.length ?? 0;
     return [
       a.instructions && "instructions",

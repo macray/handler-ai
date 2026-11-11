@@ -13,14 +13,18 @@ from pathlib import Path
 import httpx
 import pytest
 
-from ..sandbox.conftest import podman_usable
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
+from ..support.runtimes import default_runtime, real_sandbox_env
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 IDLE_TIMEOUT = 6
 
-requires_podman = pytest.mark.skipif(not podman_usable(), reason="podman not usable")
+# an app's backend, its tests, a draft: real sandboxes on the runtime handlerd uses by default
+# (Apple container on a Mac, Podman elsewhere), the fake handing their specs over to it
+requires_app_runtime = pytest.mark.skipif(
+    default_runtime() is None, reason="no runtime for apps here (Podman; Apple container on a Mac)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -34,7 +38,7 @@ def data_root() -> Iterator[Path]:
 @pytest.fixture(scope="module")
 def daemon(data_root: Path) -> Iterator[Daemon]:
     env = {"HANDLER_DATA_DIR": str(data_root), "HANDLER_APP_IDLE_TIMEOUT": str(IDLE_TIMEOUT)}
-    yield from start_daemon(extra_env=env)
+    yield from start_daemon(extra_env=env | real_sandbox_env())
 
 
 def copy_fixture(name: str, data_root: Path) -> Path:

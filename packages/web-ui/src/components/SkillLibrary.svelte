@@ -1,9 +1,9 @@
 <script lang="ts">
   // Skills (D.17): the library, in ~/.config/handler-ai/skills. A skill is a folder (its SKILL.md,
   // scripts, references, assets), offered to every agent; a project may give it to all its agents.
-  // This page lists them, each with who uses it and a link to its editor (SkillView), and makes
-  // new ones:
-  // written there, with an agent (a session of a folderless agent with the skill-creator skill,
+  // The Library's Skills shelf: yours listed, each with who uses it and a link to its editor
+  // (SkillView; a broken one says so in amber, its page has the fix), or Get more (`more`), the
+  // ways to make new ones: written there, with an agent (a session of a folderless agent with the skill-creator skill,
   // D.18: saved to the library from it), or imported from a zip archive (a `.skill` file) or a
   // URL (a repository's folder): an import writes the skill to the library, used by no agent yet,
   // then opens its page saying so, with what to do next (have it reviewed, choose who gets it).
@@ -12,7 +12,7 @@
   import ScrollText from "@lucide/svelte/icons/scroll-text";
   import Bot from "@lucide/svelte/icons/bot";
   import Link from "@lucide/svelte/icons/link";
-  import Plus from "@lucide/svelte/icons/plus";
+  import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import Upload from "@lucide/svelte/icons/upload";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
@@ -21,13 +21,14 @@
   import { agentLabel, projects } from "../lib/projects.svelte";
   import { who } from "../lib/skills";
   import { sessions } from "../lib/sessions.svelte";
+  import HelperCard from "./HelperCard.svelte";
   import { href, navigate } from "../lib/router.svelte";
-  import Dialog from "./Dialog.svelte";
   import LoadingCards from "./LoadingCards.svelte";
+
+  let { more = false }: { more?: boolean } = $props(); // Get more: the ways to make or import one
 
   let skills = $state<SkillInfo[]>([]);
   let loaded = $state(false);
-  let adding = $state(false); // the dialog of the ways to make a new skill open (an empty library shows them inline)
   let byUrl = $state(false); // the URL field shown, once "From a URL" is chosen
   let url = $state("");
   let busy = $state(false);
@@ -35,8 +36,8 @@
   let error = $state<string | null>(null);
   // the agent that writes skills with you: the skill creator Handler uses (D.18), once set up
   let creator = $state<Agent | null>(null);
+  let creatorCard = $state(false); // no skill creator yet: its set-up card
 
-  const STEPS = ["Write or import a skill", "Give it to a project's agents, or pick it in an agent's settings"];
   // The four ways, each a card: clickable, not a form to fill.
   const CHOICE =
     "flex w-full items-start gap-3 rounded-[10px] border bg-card p-3.5 text-left text-sm text-foreground no-underline transition-colors hover:border-primary/60 hover:bg-muted/30 disabled:opacity-50";
@@ -135,13 +136,13 @@
         </span>
       </button>
     {:else}
-      <a href={href({ view: "set-up-helper", need: "skill-creator" })} class={CHOICE} data-testid="skill-with-agent">
+      <button type="button" class={CHOICE} aria-expanded={creatorCard} onclick={() => (creatorCard = !creatorCard)} data-testid="skill-with-agent">
         <span class={TILE}><Bot class="size-4" /></span>
         <span class="space-y-0.5">
           <span class="block font-medium">With an agent</span>
-          <span class="block text-xs text-muted-foreground">First set up the Skill creator (choose its models), then write skills with it.</span>
+          <span class="block text-xs text-muted-foreground">Turn on the skill creator, then write skills with it.</span>
         </span>
-      </a>
+      </button>
     {/if}
     <button type="button" class={CHOICE} disabled={busy} onclick={() => archives?.click()} data-testid="import-skill">
       <span class={TILE}><Upload class="size-4" /></span>
@@ -164,6 +165,17 @@
       </span>
     </button>
   </div>
+  {#if creatorCard && !creator}
+    <HelperCard need="skill-creator" onready={(a) => ((creator = a), (creatorCard = false), void withAgent())}>
+      {#snippet preview()}
+        <pre class="font-mono text-xs leading-relaxed">---
+name: liquid-style
+when: editing .liquid files
+---
+Prefer {"{% render %}"} over {"{% include %}"}…</pre>
+      {/snippet}
+    </HelperCard>
+  {/if}
   {#if byUrl}
     <form class="flex gap-2" onsubmit={(e) => (e.preventDefault(), url.trim() && fromUrl())}>
       <!-- svelte-ignore a11y_autofocus -->
@@ -178,42 +190,25 @@
   {#if error}<p class="text-sm text-danger" data-testid="skill-error">{error}</p>{/if}
 {/snippet}
 
-<section class="space-y-8" data-testid="skills">
-  <div class="flex flex-wrap items-end justify-between gap-3">
-    <div class="space-y-3">
-      <p class="max-w-2xl text-sm text-muted-foreground">
-        Instructions, and the scripts that go with them, an agent reads when a task calls for them: how to review code, how this shop's theme is
-        deployed… Optional.
-      </p>
-      <ol class="flex flex-wrap gap-x-6 gap-y-1.5 text-sm" data-testid="skills-steps">
-        {#each STEPS as step, i (step)}
-          <li class="flex items-center gap-2">
-            <span class="fact flex size-5 shrink-0 items-center justify-center rounded-full bg-muted">{i + 1}</span>{step}
-          </li>
-        {/each}
-      </ol>
-    </div>
-    {#if loaded && skills.length}
-      <Button size="sm" onclick={() => ((adding = true), (byUrl = false), (error = null))} data-testid="new-skill"><Plus />New skill</Button>
-    {/if}
-  </div>
+<input
+  bind:this={archives}
+  type="file"
+  accept=".zip,.skill"
+  class="hidden"
+  onchange={(e) => {
+    const file = e.currentTarget.files?.[0];
+    if (file) void fromArchive(file);
+  }}
+  data-testid="import-skill-file"
+/>
 
-  <input
-    bind:this={archives}
-    type="file"
-    accept=".zip,.skill"
-    class="hidden"
-    onchange={(e) => {
-      const file = e.currentTarget.files?.[0];
-      if (file) void fromArchive(file);
-    }}
-    data-testid="import-skill-file"
-  />
-
-  {#if !loaded}
+<section class="space-y-5" data-testid="skills">
+  {#if more}
+    <div class="space-y-4" data-testid="skill-new">{@render ways()}</div>
+  {:else if !loaded}
     <div class="space-y-3"><LoadingCards count={3} height="h-16" /></div>
   {:else if skills.length}
-    {#if error && !adding}<p class="text-sm text-danger" data-testid="skill-error">{error}</p>{/if}
+    {#if error}<p class="text-sm text-danger" data-testid="skill-error">{error}</p>{/if}
     <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
       {#each skills as s (s.name)}
         <li class="enter">
@@ -222,34 +217,26 @@
             class="group flex items-center gap-4 px-4 py-3.5 text-foreground no-underline transition-colors hover:bg-muted/40"
             data-testid="skill-card"
           >
-            <span class="hidden size-9 shrink-0 items-center justify-center rounded-lg sm:flex {s.error ? 'bg-danger/10 text-danger' : 'bg-muted text-muted-foreground'}"
-              ><ScrollText class="size-4" /></span
-            >
+            <span class="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground sm:flex"><ScrollText class="size-4" /></span>
             <div class="min-w-0 flex-1 space-y-0.5">
-              <p class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span class="font-medium">{s.name}</span>
-                {#if s.error}<span class="rounded-md bg-danger/10 px-1.5 py-0.5 text-xs text-danger" title={s.error}>invalid</span>{/if}
-              </p>
+              <p class="font-medium">{s.name}</p>
               {#if s.description}<p class="line-clamp-2 text-muted-foreground">{s.description}</p>{/if}
-              {#if s.error}<p class="text-xs text-danger">{s.error}</p>{/if}
               <p class="fact truncate" title={use(s)} data-testid="skill-use">{[files(s), use(s)].filter(Boolean).join(" · ")}</p>
             </div>
-            <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            {#if s.error}
+              <span class="inline-flex items-center gap-1 text-xs text-warn" title={s.error} data-testid="skill-broken"><TriangleAlert class="size-3" />Broken</span>
+              <span class="rounded-md border px-2.5 py-1 text-xs font-medium">Fix</span>
+            {:else}
+              <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            {/if}
           </a>
         </li>
       {/each}
     </ul>
   {:else}
-    <div class="space-y-4 rounded-[10px] border border-dashed p-6" data-testid="skill-new">
-      <div class="space-y-1">
-        <p class="font-medium">No skill yet: choose how to start the first one</p>
-        <p class="text-sm text-muted-foreground">Your library is in <span class="font-mono">~/.config/handler-ai/skills</span>.</p>
-      </div>
-      {@render ways()}
+    <div class="rounded-[10px] border border-dashed px-6 py-8 text-center text-sm text-muted-foreground" data-testid="skills-none">
+      <p>No skill yet: instructions, and the scripts that go with them, an agent reads when a task calls for them.</p>
+      <Button size="sm" class="mt-3" href={href({ view: "library", shelf: "skills", more: true })} data-testid="new-skill">Get a skill</Button>
     </div>
   {/if}
 </section>
-
-<Dialog bind:open={adding} title="New skill" description="Choose how to start." wide testid="skill-new-dialog">
-  <div class="space-y-4">{@render ways()}</div>
-</Dialog>

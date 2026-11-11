@@ -1,4 +1,4 @@
-"""Service interfaces (docs/dev/design/services.md): what handlerd offers to whatever it runs,
+"""Service interfaces (services design): what handlerd offers to whatever it runs,
 as data in `data/interfaces/<name>/v<N>/` (`interface.toml`, `tools.json`: MCP tool
 definitions). Only what `llm/v1`, the first, needs: loaded, checked, and validators for its tools.
 
@@ -28,7 +28,7 @@ class ServiceError(Exception):
 
 
 class InterfaceDataError(ValueError):
-    """An interface's files break a rule of docs/dev/design/services.md §4.2."""
+    """An interface's files break a rule of services design §4.2."""
 
 
 @dataclass(frozen=True)

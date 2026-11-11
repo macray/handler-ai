@@ -1,4 +1,4 @@
-# The `transcribe/v1` service (docs/dev/design/services.md, contracts I.11): speech written down.
+# The `transcribe/v1` service (services design, contracts I.11): speech written down.
 # Its tool is in tools.json (input TranscribeRequest, output TranscribeResponse of
 # handler_contracts.automation: a unit test keeps them equal). Its connector
 # (handler_control/transcribe.py) is built in, its bindings are the providers' speech models (a

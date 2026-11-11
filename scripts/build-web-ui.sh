@@ -4,8 +4,8 @@
 #                                in the wheel, packaging/)
 #   packages/remote-client/dist  the remote client, served by the gateway (remote-gateway/)
 # Both use packages/acp-view (session rendering, compiled by each app).
-# Uses bun if installed on the host, otherwise the toolbox image (which ships bun): no Node/Bun
-# needed on the host.
+# Uses bun if installed on the host, otherwise Bun's image, at the version apps run on
+# (RUNTIME_VERSION, handler_contracts/app.py): no Node/Bun needed on the host.
 #
 #   scripts/build-web-ui.sh           install (frozen lockfile), generate types, check, test, build
 #   scripts/build-web-ui.sh --quick   install + build only
@@ -24,8 +24,8 @@ steps="$steps && (cd packages/web-ui && bun run build) && (cd packages/remote-cl
 if command -v bun >/dev/null; then
     bash -c "$steps"
 else
-    image="localhost/handler-ai-toolbox:latest"
-    podman image exists "$image" || { echo "build the toolbox first: handler image rebuild toolbox" >&2; exit 1; }
+    version="$(sed -n 's/^RUNTIME_VERSION = "\(.*\)"$/\1/p' packages/contracts/src/handler_contracts/app.py)"
+    image="docker.io/oven/bun:${version:?RUNTIME_VERSION not found}"
     podman run --rm --userns=keep-id --user "$(id -u):$(id -g)" -e HOME=/tmp \
         -v "$repo:$repo" -w "$repo" "$image" bash -c "$steps"
 fi

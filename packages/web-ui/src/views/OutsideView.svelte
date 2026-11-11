@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Other folders: the agents of no project that are not Chat's, laid out as a project's page
+  // Agents outside projects: the agents of no project that are not Chat's, laid out as a project's page
   // (its agents on the left, the chosen one's workspace beside them), without what only a project
   // has (its folder, caches, settings). Three groups: yours (each in its folder, or a brief or a
   // job with none); those Handler or your apps use (D.18, H.2), each saying for what; and those
@@ -87,15 +87,9 @@
   <AgentPick agent={a} chosen={a.id === agent?.id} dot={dotOf(a)} {about} onclick={() => choose(a)} />
 {/snippet}
 
-<PageHeader titled title="Other folders" />
+<PageHeader title="Agents outside projects" parent={{ label: "Projects", href: href({ view: "projects" }) }} />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-6xl space-y-5 px-8 py-8">
-    <div class="space-y-1">
-      <h1 class="text-2xl leading-tight font-semibold tracking-[-0.02em]">Other folders</h1>
-      <p class="text-sm text-muted-foreground">
-        Agents that are no project's: each works in its own folder, or in a new one each session. Who you talk to about anything is in <a class="text-link hover:underline" href={href({ view: "chat" })}>Chat</a>.
-      </p>
-    </div>
     {#if error}<p class="text-sm text-danger" data-testid="outside-error">{error}</p>{/if}
 
     <!-- what waits for you, whichever agent is chosen -->

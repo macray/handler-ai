@@ -1,10 +1,12 @@
-"""Knowledge folders (D.5): folders of the knowledge root given to an agent, per agent,
-read-only at /knowledge/<folder name>; and the root itself, set and browsed from the web UI.
+"""Notes folders (D.5; `knowledge` in the code and the API): folders of the notes root given to
+an agent, per agent, read-only at /notes/<folder name>; and the root itself, set and browsed from
+the web UI.
 
 handler knows nothing of what the folders hold (a skill may teach the agent to read them): to
 handler they are mounts, and files it shows as they are.
 """
 
+import contextlib
 import json
 import os
 import tomllib
@@ -12,18 +14,19 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
 from handler_contracts import (
+    HostFolder,
     KnowledgeFolderView,
     KnowledgeListing,
     KnowledgeNote,
-    Mount,
+    KnowledgeRootCheck,
     is_within,
 )
 
 from .settings import Settings
 
-MOUNT_ROOT = "/knowledge"
+MOUNT_ROOT = "/notes"
 LISTING_DEPTH = 3
-CONFIG_FILE = "knowledge.toml"  # in the config dir: `root = "…"`, written by set_root
+CONFIG_FILE = "notes.toml"  # in the config dir: `root = "…"`, written by set_root
 INDEX = "_index.md"
 MAX_NOTE_BYTES = 1024 * 1024
 
@@ -31,7 +34,7 @@ Source = Literal["env", "config", "default"]
 
 
 class KnowledgeError(ValueError):
-    """A knowledge folder or note cannot be used (outside the root, missing, hidden, …)."""
+    """A notes folder or note cannot be used (outside the root, missing, hidden, …)."""
 
 
 class KnowledgeConflictError(KnowledgeError):
@@ -42,8 +45,9 @@ class KnowledgeConflictError(KnowledgeError):
 
 
 def root(settings: Settings) -> tuple[Path, Source]:
-    """HANDLER_KNOWLEDGE_DIR, else the root set through the API, else ~/knowledge. Read on every
-    call: a change applies to the next check or agent start, no restart needed."""
+    """HANDLER_NOTES_DIR, else the root set through the API, else <data dir>/notes, made when
+    missing so there is nothing to set up. Read on every call: a change applies to the next check
+    or agent start, no restart needed."""
     if settings.knowledge_dir is not None:
         return settings.knowledge_dir, "env"
     config = settings.config_dir / CONFIG_FILE
@@ -53,21 +57,40 @@ def root(settings: Settings) -> tuple[Path, Source]:
         configured = None
     if isinstance(configured, str) and os.path.isabs(configured):
         return Path(configured), "config"
-    return Path.home() / "knowledge", "default"
+    default = default_root(settings)
+    with contextlib.suppress(OSError):  # listed as not existing; the next call tries again
+        default.mkdir(parents=True, exist_ok=True)
+    return default, "default"
+
+
+def default_root(settings: Settings) -> Path:
+    return settings.data_dir / "notes"
+
+
+def check_root(path: str) -> KnowledgeRootCheck:
+    """What `path` is, before it becomes the root: absolute or `~/…`, else KnowledgeError."""
+    target = Path(os.path.expanduser(path))
+    if not target.is_absolute():
+        raise KnowledgeError(f"the notes folder must be a full path, starting with / or ~/: {path}")
+    if target.is_dir():
+        state = "folder"
+    elif target.exists():
+        state = "not-a-folder"
+    else:
+        state = "missing"
+    return KnowledgeRootCheck(root=str(target), state=state)
 
 
 def set_root(settings: Settings, path: str | None, create: bool = False) -> None:
     """Save the root in the config dir (None: back to the default). Existing agents keep
     their folders as paths relative to the root, so they follow it."""
     if settings.knowledge_dir is not None:
-        raise KnowledgeConflictError("the knowledge root is set by HANDLER_KNOWLEDGE_DIR")
+        raise KnowledgeConflictError("the notes root is set by HANDLER_NOTES_DIR")
     config = settings.config_dir / CONFIG_FILE
     if path is None:
         config.unlink(missing_ok=True)
         return
-    target = Path(os.path.expanduser(path))
-    if not target.is_absolute():
-        raise KnowledgeError(f"the knowledge root must be an absolute path: {path}")
+    target = Path(check_root(path).root)
     if create:
         target.mkdir(parents=True, exist_ok=True)
     if not target.is_dir():
@@ -92,11 +115,11 @@ def check(root: Path, folders: list[str]) -> list[str]:
     for folder in selected:
         for other in selected:
             if other != folder and (folder == "." or other.startswith(folder + "/")):
-                raise KnowledgeError(f"knowledge folder {other} is inside {folder}: select one")
+                raise KnowledgeError(f"notes folder {other} is inside {folder}: select one")
         name = mount_name(base, folder)
         if name in names:
             raise KnowledgeError(
-                f"knowledge folders {names[name]} and {folder} would both be {MOUNT_ROOT}/{name}"
+                f"notes folders {names[name]} and {folder} would both be {MOUNT_ROOT}/{name}"
             )
         names[name] = folder
     return selected
@@ -106,17 +129,16 @@ def mount_name(root: str | Path, folder: str) -> str:
     return Path(root).name if folder == "." else PurePosixPath(folder).name
 
 
-def mounts(root: Path, folders: list[str]) -> list[Mount]:
-    """`folders` must already be checked."""
+def folders(root: Path, chosen: list[str]) -> list[HostFolder]:
+    """The `chosen` folders, read-only; they must already be checked."""
     base = os.path.realpath(root)
     return [
-        Mount(
+        HostFolder(
             source=os.path.join(base, folder) if folder != "." else base,
             target=f"{MOUNT_ROOT}/{mount_name(base, folder)}",
-            read_only=True,
-            kind="knowledge",
+            writable=False,
         )
-        for folder in folders
+        for folder in chosen
     ]
 
 
@@ -175,7 +197,7 @@ def read_note(root: Path, relative: str) -> KnowledgeNote:
     base = os.path.realpath(root)
     path, rel = _resolve(base, relative)
     if not path.endswith(".md") or not os.path.isfile(path):
-        raise KnowledgeError(f"{relative}: not a markdown file in the knowledge root")
+        raise KnowledgeError(f"{relative}: not a markdown file in the notes root")
     return KnowledgeNote(path=rel, text=_read(Path(path)))
 
 
@@ -183,7 +205,7 @@ def read_note(root: Path, relative: str) -> KnowledgeNote:
 
 
 class Note(NamedTuple):
-    path: str  # as an agent program sees it under /knowledge: `<folder name>/<path>`
+    path: str  # as an agent program sees it under /notes: `<folder name>/<path>`
     text: str
 
 
@@ -223,7 +245,7 @@ def check_note(root: Path, relative: str) -> str:
     if os.path.exists(path) and not os.path.isfile(path):
         raise KnowledgeError(f"{relative}: not a file")
     if not os.path.isdir(os.path.dirname(path)):
-        raise KnowledgeError(f"{relative}: its folder does not exist in the knowledge root")
+        raise KnowledgeError(f"{relative}: its folder does not exist in the notes root")
     return rel
 
 
@@ -243,7 +265,7 @@ def _resolve(base: str, relative: str) -> tuple[str, str]:
     anything outside `base` or with a hidden component."""
     path = os.path.realpath(os.path.join(base, relative))  # symlinks resolved: no way out
     if not is_within(path, base):
-        raise KnowledgeError(f"{relative}: outside the knowledge root {base}")
+        raise KnowledgeError(f"{relative}: outside the notes root {base}")
     rel = os.path.relpath(path, base)
     if any(part.startswith(".") and part != "." for part in PurePosixPath(rel).parts):
         raise KnowledgeError(f"{relative}: hidden folders and files cannot be used")
@@ -253,7 +275,7 @@ def _resolve(base: str, relative: str) -> tuple[str, str]:
 def _folder(base: str, relative: str) -> tuple[str, str]:
     path, rel = _resolve(base, relative)
     if not os.path.isdir(path):
-        raise KnowledgeError(f"knowledge folder {relative}: not a folder in {base}")
+        raise KnowledgeError(f"notes folder {relative}: not a folder in {base}")
     return path, rel
 
 

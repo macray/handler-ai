@@ -4,39 +4,42 @@ from pathlib import Path
 
 import pytest
 
-from handler_harness import addons, catalog
+from handler_harness import addons, catalog, toolbox
 
 
-def test_seeding_copies_the_default_toolbox_once(
+@pytest.mark.rule("toolbox.made-of-its-three-parts")
+def test_seeding_writes_the_default_toolbox_toml_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HANDLER_CONFIG_DIR", str(tmp_path))
     monkeypatch.delenv("HANDLER_TOOLBOX_DIR", raising=False)
     assert catalog.toolbox_dir() == tmp_path / "toolbox"
     assert catalog.seed_toolbox()
-    containerfile = tmp_path / "toolbox" / "Containerfile"
-    assert containerfile.read_text() == (catalog.DEFAULT_TOOLBOX / "Containerfile").read_text()
-    containerfile.write_text("FROM scratch\n")  # the user's now
+    written = tmp_path / "toolbox" / "toolbox.toml"
+    assert written.read_text() == (catalog.DEFAULT_TOOLBOX / "toolbox.toml").read_text()
+    assert [p.name for p in (tmp_path / "toolbox").iterdir()] == ["toolbox.toml"]
+    written.write_text('distro = "fedora"\n')  # the user's choice now
     assert not catalog.seed_toolbox()
-    assert containerfile.read_text() == "FROM scratch\n"
-    assert catalog.toolbox().caches  # its toolbox.toml
+    assert catalog.toolbox().system_packages == {}
 
 
-def test_the_default_toolbox_holds_nothing_of_handler() -> None:
-    """handler-sandbox-env comes with the launch, inner podman's configuration with the sandbox."""
-    text = (catalog.DEFAULT_TOOLBOX / "Containerfile").read_text()
-    assert "COPY" not in text and "/etc/containers" not in text
+@pytest.mark.rule("toolbox.nothing-of-handler-in-it")
+def test_the_default_toolbox_holds_nothing_of_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handler-sandbox-env comes with the launch: no file of Handler is copied into the toolbox."""
+    monkeypatch.setenv("HANDLER_TOOLBOX_DIR", str(catalog.DEFAULT_TOOLBOX))
+    text = toolbox.containerfile(catalog.toolbox(), "")
+    assert "COPY" not in text and "ADD" not in text
 
 
 def test_a_users_addon_replaces_a_builtin_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("HANDLER_ADDONS_DIR", str(tmp_path))
+    monkeypatch.setenv("HANDLER_TOOLS_DIR", str(tmp_path))
     builtin = addons.get("app-builder")
     assert builtin.builtin and builtin.directory == addons.BUILTIN_DIR / "app-builder"
     mine = tmp_path / "app-builder"
     mine.mkdir()
-    (mine / "addon.toml").write_text('apiVersion = "handler.addon/v1"\nname = "app-builder"\n')
+    (mine / "tool.toml").write_text('apiVersion = "handler.tool/v1"\nname = "app-builder"\n')
     replaced = addons.get("app-builder")
     assert replaced.directory == mine and replaced.overrides_builtin and not replaced.builtin
     assert addons.names().count("app-builder") == 1

@@ -28,6 +28,7 @@ class TerminalStarted(Document):
 
     sandbox: str
     attach: list[str]  # the sandbox's executable and its arguments
+    paste: AbsolutePath  # the folder on this machine the client puts a pasted image into
 
 
 def terminal_path(agent_id: str) -> str:

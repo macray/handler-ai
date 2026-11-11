@@ -8,7 +8,11 @@ const daemon = process.env.HANDLER_URL ?? "http://127.0.0.1:7430";
 
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
-  resolve: { alias: { $lib: fileURLToPath(new URL("./src/lib", import.meta.url)) } },
+  resolve: {
+    alias: { $lib: fileURLToPath(new URL("./src/lib", import.meta.url)) },
+    // Under vitest, Svelte's browser build: the tests mount components in happy-dom.
+    ...(process.env.VITEST ? { conditions: ["browser"] } : {}),
+  },
   // Served from localhost: one ~600 kB bundle (bits-ui, icons) is fine.
   // Built into the control plane's package: handlerd serves it from there, from a checkout and from the
   // installed wheel alike (packaging/).
@@ -17,6 +21,9 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     chunkSizeWarningLimit: 800,
+    // a font stays a file: the CSP (handlerd's webui.py) has no font-src, so a font inlined as a
+    // data: URL (vite does it below 4 KiB) is refused
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
   },
   server: {
     proxy: { "/v1": { target: daemon, ws: true } },

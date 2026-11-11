@@ -50,6 +50,7 @@ def g(tmp_path: Path) -> Setup:
     return Setup(tmp_path)
 
 
+@pytest.mark.rule("gateway.relays-in-order", "envelope.acknowledged-by-the-host")
 def test_round_trip_and_fetched_status(g: Setup) -> None:
     g.register()
     down = envelope()
@@ -76,6 +77,7 @@ def test_round_trip_and_fetched_status(g: Setup) -> None:
     assert again["envelopes"] == [] and again["fetched"] == []
 
 
+@pytest.mark.rule("gateway.each-caller-its-own-mailboxes")
 def test_authentication(g: Setup) -> None:
     assert g.client.get("/v1/host/poll").status_code == 401
     assert (
@@ -94,6 +96,7 @@ def test_authentication(g: Setup) -> None:
     assert g.host("GET", "/v1/device/poll").status_code == 401
 
 
+@pytest.mark.rule("gateway.each-caller-its-own-mailboxes")
 def test_devices_belong_to_their_host(g: Setup) -> None:
     g.register()
     other = g.registry.add_host("other")
@@ -110,6 +113,7 @@ def test_devices_belong_to_their_host(g: Setup) -> None:
     assert g.device("GET", "/v1/device/poll").status_code == 401
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_invalid_input(g: Setup) -> None:
     g.register()
     for bad in [{"id": "short", "nonce": "x" * 16, "ct": "AA"}, envelope(ct="not base64!"), [1]]:
@@ -120,6 +124,7 @@ def test_invalid_input(g: Setup) -> None:
     assert r.status_code == 400
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_full_down_mailbox_refuses_but_up_drops_oldest(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(down_count=2, up_count=2, rate=1000))
     g.register()
@@ -132,6 +137,7 @@ def test_full_down_mailbox_refuses_but_up_drops_oldest(tmp_path: Path) -> None:
     assert [e["id"] for e in got] == [ups[1]["id"], ups[2]["id"]]
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_envelopes_expire(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(ttl=0.2, rate=1000))
     g.register()
@@ -140,6 +146,7 @@ def test_envelopes_expire(tmp_path: Path) -> None:
     assert g.host("GET", "/v1/host/poll", params={"wait": 0}).json()["envelopes"] == []
 
 
+@pytest.mark.rule("gateway.relays-in-order")
 def test_cursor_of_another_epoch_starts_over(g: Setup) -> None:
     g.register()
     first = envelope()
@@ -149,6 +156,7 @@ def test_cursor_of_another_epoch_starts_over(g: Setup) -> None:
     assert [e["id"] for e in got["envelopes"]] == [first["id"]]
 
 
+@pytest.mark.rule("gateway.relays-in-order")
 def test_long_poll_wakes_on_put(g: Setup) -> None:
     g.register()
     down = envelope()
@@ -160,12 +168,14 @@ def test_long_poll_wakes_on_put(g: Setup) -> None:
     assert time.monotonic() - started < 5
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_rate_limit(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(rate=2))
     codes = [g.host("GET", "/v1/host/devices").status_code for _ in range(10)]
     assert 429 in codes
 
 
+@pytest.mark.rule("gateway.its-registry-keeps-every-change")
 def test_registry_is_private_and_reloaded(tmp_path: Path) -> None:
     g = Setup(tmp_path)
     assert (tmp_path / "state.json").stat().st_mode & 0o777 == 0o600
@@ -175,6 +185,7 @@ def test_registry_is_private_and_reloaded(tmp_path: Path) -> None:
     assert r.status_code == 200
 
 
+@pytest.mark.rule("gateway.its-registry-keeps-every-change")
 def test_the_server_never_undoes_what_the_cli_did(tmp_path: Path) -> None:
     """The server read the registry, the CLI adds a host, then the server registers a device
     (without a host request in between): the new host stays."""
@@ -185,6 +196,7 @@ def test_the_server_never_undoes_what_the_cli_did(tmp_path: Path) -> None:
     assert token.split(".")[0] in Registry(tmp_path / "state.json").hosts
 
 
+@pytest.mark.rule("gateway.each-caller-its-own-mailboxes")
 def test_a_host_removed_by_the_cli_takes_its_devices_at_once(tmp_path: Path) -> None:
     """No host request needs to come first (the removed host's handlerd may be off)."""
     g = Setup(tmp_path)
@@ -194,6 +206,7 @@ def test_a_host_removed_by_the_cli_takes_its_devices_at_once(tmp_path: Path) -> 
     assert g.device("GET", "/v1/device/poll", params={"wait": 0}).status_code == 401
 
 
+@pytest.mark.rule("gateway.its-registry-keeps-every-change")
 def test_changes_from_two_processes_are_all_kept(tmp_path: Path) -> None:
     """Two writers at once (the CLI and the server): each change kept, the file always whole."""
     path = tmp_path / "state.json"
@@ -213,6 +226,7 @@ def test_changes_from_two_processes_are_all_kept(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".state.json-*"))
 
 
+@pytest.mark.rule("phone-app.its-page-reaches-nothing")
 def test_app_frame_reaches_nothing(tmp_path: Path) -> None:
     client_dir = tmp_path / "client"
     client_dir.mkdir()
@@ -229,6 +243,7 @@ def test_app_frame_reaches_nothing(tmp_path: Path) -> None:
     assert "frame-src 'self'" in client  # an app's frame is not navigated out of the gateway
 
 
+@pytest.mark.rule("phone-app.its-page-reaches-nothing")
 def test_serves_the_client_with_a_strict_policy(tmp_path: Path) -> None:
     client_dir = tmp_path / "client"
     client_dir.mkdir()
@@ -240,6 +255,7 @@ def test_serves_the_client_with_a_strict_policy(tmp_path: Path) -> None:
     assert g.client.get("/v1/health").json() == {"ok": True}
 
 
+@pytest.mark.rule("gateway.keeps-queued-calls-until-taken")
 def test_queue_survives_a_restart_until_the_host_takes_it(tmp_path: Path) -> None:
     g = Setup(tmp_path)
     g.state.queue = Queue(tmp_path / "state.queue")
@@ -263,6 +279,7 @@ def test_queue_survives_a_restart_until_the_host_takes_it(tmp_path: Path) -> Non
     assert g.device("GET", "/v1/device/poll", params={"wait": 0}).json()["queued"] == []
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_queueing_writes_that_envelope_only(tmp_path: Path) -> None:
     """A put costs its own envelope, not every queue again (a device could otherwise make the
     gateway rewrite megabytes on each call); a removal never names a file from the host's word."""
@@ -277,6 +294,7 @@ def test_queueing_writes_that_envelope_only(tmp_path: Path) -> None:
     assert (tmp_path / "outside.json").exists()
 
 
+@pytest.mark.rule("gateway.bounded")
 def test_queue_is_bounded_and_expires(tmp_path: Path) -> None:
     q = Queue(None, max_count=2, ttl=0.2)
     q.put("h", "d", "a" * 16, "n" * 16, "AAAA")
@@ -288,6 +306,7 @@ def test_queue_is_bounded_and_expires(tmp_path: Path) -> None:
     q.put("h", "d", "c" * 16, "n" * 16, "AAAA")
 
 
+@pytest.mark.rule("gateway.each-caller-its-own-mailboxes")
 def test_queue_needs_a_device_and_belongs_to_its_host(g: Setup) -> None:
     assert g.device("POST", "/v1/device/queue", json=envelope()).status_code == 401
     token = g.registry.add_host("other")
@@ -298,6 +317,7 @@ def test_queue_needs_a_device_and_belongs_to_its_host(g: Setup) -> None:
     assert r.json()["envelopes"] == []
 
 
+@pytest.mark.rule("gateway.keeps-queued-calls-until-taken")
 def test_queueing_wakes_the_host(g: Setup) -> None:
     g.register()
     result: dict[str, object] = {}

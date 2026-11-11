@@ -1,5 +1,6 @@
-// handler remote: the service worker, for notifications only (docs/dev/design/apps.md §7).
-// Pushes carry nothing: the text is fetched through the encrypted channel when the client opens.
+// handler remote: the service worker, for notifications only (apps design §7).
+// Pushes carry nothing (an empty, encrypted payload): the text is fetched through the encrypted
+// channel when the client opens.
 self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification("Handler", {

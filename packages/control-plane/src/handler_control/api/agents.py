@@ -19,6 +19,7 @@ from .. import (
 )
 from ..agents import switch_egress
 from .common import Context, ProblemError, check_problems, dump, parse_body
+from .toolbox import apply_confirmed
 
 
 def add_agent_routes(app: FastAPI, ctx: Context) -> None:
@@ -30,6 +31,7 @@ def add_agent_routes(app: FastAPI, ctx: Context) -> None:
         with check_problems():
             settings, origin = ctx.agents.checked(body)
             record = ctx.agents.create(body, settings, origin)
+        apply_confirmed(ctx, body.toolbox_adds, (u.addon for u in record.addon_uses))
         return dump(ctx.to_agent(record), status=201)
 
     @app.put("/v1/agents/{agent_id}", dependencies=authed)
@@ -38,7 +40,9 @@ def add_agent_routes(app: FastAPI, ctx: Context) -> None:
         body = parse_body(AgentRequest, await request.body())
         with check_problems():
             settings, _ = ctx.agents.checked(body, record)
-        if failures := await ctx.agents.update(record, body, settings):
+        failures = await ctx.agents.update(record, body, settings)
+        apply_confirmed(ctx, body.toolbox_adds, (u.addon for u in record.addon_uses))
+        if failures:
             raise ProblemError(
                 502, "saved, but not applied to every live connection", "; ".join(failures)
             )
@@ -77,8 +81,7 @@ def add_egress_routes(app: FastAPI, ctx: Context) -> None:
     async def patch_agent(agent_id: str, request: Request) -> Response:
         record = ctx.get_agent(agent_id)
         body = parse_body(PatchAgentRequest, await request.body())
-        current = ctx.to_agent(record)
-        if current.network != "filtered":
+        if record.network != "filtered":
             raise ProblemError(409, "egress can only be switched on filtered agents")
         ctx.registry.set_egress(record, body.egress)  # future connections
         failures = await switch_egress(record, body.egress)  # running ones (A.4)

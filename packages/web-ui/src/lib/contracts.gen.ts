@@ -86,12 +86,16 @@ url: string
 
 export interface AddonInfo {
 name: string
+state?: ("installed" | "preparing" | "ready" | "failed")
+stateDetail?: (string | null)
 description?: (string | null)
 image?: (string | null)
 imagePresent?: boolean
 version?: (string | null)
 builtAt?: (string | null)
 commands?: string[]
+needs?: string[]
+caches?: CacheDeclaration[]
 skills?: string[]
 settings?: AddonSlotInfo[]
 secretSlots?: AddonSlotInfo[]
@@ -102,6 +106,20 @@ builtin?: boolean
 overridesBuiltin?: boolean
 source?: (string | null)
 updateAvailable?: boolean
+}
+/**
+ * A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
+ * what it holds, in people's words (shown first): a short name, then after ": " more if
+ * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
+ * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
+ * PATH after the image's (`bin` for `~/.cargo/bin`).
+ */
+
+export interface CacheDeclaration {
+target: string
+about: string
+general?: boolean
+bin?: (string | null)
 }
 /**
  * A setting or secret slot of an addon (G.1), for the binding form.
@@ -116,6 +134,7 @@ description?: (string | null)
 export interface AddonInstallRequest {
 source: string
 digest: string
+toolboxAdds?: string[]
 }
 
 export interface AddonInstalled {
@@ -136,7 +155,8 @@ steps?: (number | null)
 versions?: {
 [k: string]: string
 }
-warnings?: string[]
+addons?: string[]
+harnesses?: string[]
 error?: (string | null)
 startedAt: string
 endedAt?: (string | null)
@@ -153,6 +173,8 @@ name: string
 description?: (string | null)
 image?: (string | null)
 commands?: string[]
+needs?: string[]
+caches?: CacheDeclaration[]
 env?: string[]
 settings?: AddonSlotInfo[]
 secretSlots?: AddonSlotInfo[]
@@ -160,10 +182,32 @@ egress?: string[]
 mcp?: (string[] | null)
 skills?: string[]
 replaces?: (("builtin" | "installed" | "own") | null)
+toolbox?: AddonToolbox
 }
 /**
- * A setting or secret slot of an addon (G.1), for the binding form.
+ * A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
+ * what it holds, in people's words (shown first): a short name, then after ": " more if
+ * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
+ * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
+ * PATH after the image's (`bin` for `~/.cargo/bin`).
  */
+
+export interface AddonToolbox {
+has?: string[]
+adds?: ToolboxAdd[]
+lacking?: string[]
+}
+/**
+ * A system package (B.7) a save or an install adds to the toolbox, for what it needs.
+ */
+
+export interface ToolboxAdd {
+name: string
+description?: (string | null)
+provides?: string[]
+source?: (string | null)
+script?: (string | null)
+}
 
 export interface AgentChecks {
 checks: Check[]
@@ -223,9 +267,10 @@ model: ModelAccess
 network?: ("none" | "filtered" | "open")
 egress?: ("enforce" | "log-only")
 allow?: string[]
+blocked?: string[]
 confinement?: ("strict" | "nested" | "privileged")
 permissions?: ("ask" | "accept-edits" | "bypass")
-bindings?: string[]
+addons?: AddonUse[]
 knowledge?: string[]
 display?: boolean
 interface?: (AgentInterface | null)
@@ -242,6 +287,7 @@ origin?: (AgentOrigin | null)
 default?: boolean
 remoteStart?: boolean
 confirmRisks?: boolean
+toolboxAdds?: string[]
 }
 /**
  * What an agent runs as (E): a harness and the account or the provider its model calls use
@@ -255,6 +301,15 @@ harness?: (string | null)
 account?: (string | null)
 provider?: (string | null)
 model?: (string | null)
+}
+/**
+ * An addon an agent or a project uses (G.3): by its name, with the binding filling its
+ * slots when it has some (G.2); one without slots has no binding.
+ */
+
+export interface AddonUse {
+addon: string
+binding?: (string | null)
 }
 /**
  * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
@@ -290,9 +345,10 @@ model: AgentModel
 network: ("none" | "filtered" | "open")
 egress?: (("enforce" | "log-only") | null)
 allow?: string[]
+blocked?: string[]
 confinement: ("strict" | "nested" | "privileged")
 permissions: ("ask" | "accept-edits" | "bypass")
-bindings?: string[]
+addons?: AddonUse[]
 knowledge?: string[]
 display?: boolean
 interface?: (AgentInterface | null)
@@ -309,6 +365,7 @@ origin?: (AgentOrigin | null)
 remoteStart?: boolean
 skills?: string[]
 projectSkills?: string[]
+projectAddons?: AddonUse[]
 area?: (string | null)
 acpUrl: string
 connections: Connection[]
@@ -336,10 +393,8 @@ host: string
 by: string
 }
 /**
- * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
- * skill of the library to work on, its subject), and maybe the result its final message holds.
- * With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
- * to answer its requests). Without, a brief: the form starts a session you then work in.
+ * An addon an agent or a project uses (G.3): by its name, with the binding filling its
+ * slots when it has some (G.2); one without slots has no binding.
  */
 
 export interface Connection {
@@ -361,8 +416,8 @@ replaced?: string[]
 }
 /**
  * Agents written so they can be set up again in another project (D.23): their definitions
- * without what is yours (the models they run as, their folder, the addon configurations and
- * knowledge folders they were given), with what they need instead.
+ * without what is yours (the models they run as, their folder, the connections and notes
+ * folders they were given), with what they need instead.
  */
 
 export interface AgentsFile {
@@ -539,7 +594,7 @@ name: string
 set: boolean
 }
 /**
- * A folder an app needs (current or source version, H.2), and the one given for it.
+ * A folder (or a file) an app needs (current or source version, H.2), and the one given.
  */
 
 export interface AppFileNeed {
@@ -547,6 +602,7 @@ name: string
 description?: (string | null)
 mode: ("ro" | "rw")
 path?: (string | null)
+file?: boolean
 }
 /**
  * An agent an app needs (current or source version, H.2), the one given for it, and the
@@ -605,6 +661,15 @@ fields?: {
 /**
  * One of an app's actions (H.12), as its page and Ask's router see it.
  */
+
+export interface ApprovePlanRequest {
+agentId?: (string | null)
+sessionId?: (string | null)
+path?: (string | null)
+draftId?: (string | null)
+runnerId?: (string | null)
+digest: string
+}
 
 export interface AreaInfo {
 name: string
@@ -746,6 +811,8 @@ ms?: (number | null)
 llm?: AutomationLlmUsage
 appended?: AutomationAppended[]
 error?: (string | null)
+refused?: RefusedHost[]
+said?: (string | null)
 createdAt: string
 endedAt?: (string | null)
 }
@@ -760,6 +827,17 @@ export interface AutomationAppended {
 to: string
 bytes: number
 text?: (string | null)
+}
+/**
+ * A host the network filter refused to a run, or to a session while nobody could answer, and
+ * the agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your
+ * answer (as the agent's lists say now).
+ */
+
+export interface RefusedHost {
+host: string
+count: number
+decision?: (("allowed" | "kept blocked") | null)
 }
 
 export interface AutomationView {
@@ -838,14 +916,16 @@ own?: ProjectCachesInfo[]
 off?: string[]
 }
 /**
- * A cache the toolbox declares (B.6), as Settings → Caches shows it (D.8).
+ * A cache (B.6), as Settings → Caches shows it (D.8).
  */
 
 export interface CacheInfo {
 name: string
 target: string
-about?: string
+about: string
 general?: boolean
+bin?: (string | null)
+declaredBy: string[]
 }
 /**
  * The global caches: the projects that chose them and agents outside projects use them.
@@ -878,23 +958,15 @@ name: string
 }
 
 export interface CachesRequest {
-caches: {
-[k: string]: CacheDeclaration
-}
+caches: CacheDeclaration[]
 }
 /**
- * A cache of the toolbox (B.6): the home path it is mounted at, what it holds, and whether
- * it is a general folder any tool writes to (`~/.cache`) rather than one tool's (`~/.cargo`).
- * 
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z0-9][a-z0-9_-]*$".
+ * A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
+ * what it holds, in people's words (shown first): a short name, then after ": " more if
+ * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
+ * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
+ * PATH after the image's (`bin` for `~/.cargo/bin`).
  */
-
-export interface CacheDeclaration {
-target: string
-about?: string
-general?: boolean
-}
 
 export interface CheckUpdateRequest {
 name: string
@@ -902,6 +974,10 @@ name: string
  * @minItems 1
  */
 compare: [string, ...(string)[]]
+}
+
+export interface ChooseRuntimeRequest {
+name: string
 }
 
 export interface CreateAutomationRequest {
@@ -924,6 +1000,11 @@ export interface CreateKnowledgeFolderRequest {
 path: string
 }
 
+export interface CreatePlanDraftRequest {
+projectId?: (string | null)
+fromPlan?: (string | null)
+}
+
 export interface CreateProjectRequest {
 name?: (string | null)
 description?: (string | null)
@@ -932,27 +1013,24 @@ defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
 area?: (string | null)
 skills?: string[]
-/**
- * @minItems 1
- */
-agents: [AgentRequest, ...(AgentRequest)[]]
+addons?: AddonUse[]
+toolboxAdds?: string[]
+agents?: AgentRequest[]
 }
 /**
- * An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a
- * project (`projectId`: it works in the project's folder), an app (`app`: one of its parts,
- * H.14), Chat (`chat`: someone you talk to, with no folder), or none (outside projects, in its
- * own folder or a folder per session). The home is given at creation and never changes.
+ * An addon an agent or a project uses (G.3): by its name, with the binding filling its
+ * slots when it has some (G.2); one without slots has no binding.
  */
 
 export interface CreateSessionRequest {
 agentId: string
-acpSessionId?: (string | null)
 prompt?: (string | null)
 input?: (SessionInput | null)
 fromSkill?: (string | null)
 appDraft?: (SessionAppDraft | null)
+planDraft?: (string | null)
 model?: (ModelAccess | null)
-origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask")
+origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask" | "plan")
 }
 /**
  * What a session of an agent with an interface is started with (D.18): a job's run, a
@@ -995,6 +1073,8 @@ entries: DirectoryEntry[]
 export interface DirectoryEntry {
 name: string
 path: string
+branch?: (string | null)
+changedAt?: (string | null)
 }
 
 export interface DraftPreview {
@@ -1016,9 +1096,11 @@ size?: (number | null)
 export interface EgressEvent {
 t: string
 connection: string
-decision: ("allowed" | "denied" | "unlisted" | "injected" | "leak")
+decision: ("allowed" | "denied" | "unlisted" | "held" | "injected" | "leak" | "reached" | "unreached")
 host: string
 secret?: (string | null)
+wait?: (number | null)
+error?: (string | null)
 }
 
 export interface ExportAgentsRequest {
@@ -1150,11 +1232,25 @@ passed?: number
  * One check in a check run (D.20).
  */
 
+export interface InboxAnswerRequest {
+decision: ("allowed" | "kept blocked")
+/**
+ * @minItems 1
+ */
+hosts: [string, ...(string)[]]
+again?: boolean
+}
+
 export interface InboxMessage {
 id: string
-source: ("app" | "automation")
+source: ("app" | "automation" | "plan" | "session")
 name: string
 agent?: (string | null)
+agentId?: (string | null)
+planId?: (string | null)
+step?: (number | null)
+refused?: RefusedHost[]
+said?: (string | null)
 person: string
 title: string
 status?: (("ok" | "attention" | "failed") | null)
@@ -1168,6 +1264,11 @@ app?: (string | null)
 at: string
 read?: boolean
 }
+/**
+ * A host the network filter refused to a run, or to a session while nobody could answer, and
+ * the agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your
+ * answer (as the agent's lists say now).
+ */
 
 export interface KeepAttemptRequest {
 attempt: number
@@ -1198,6 +1299,11 @@ path: string
 text: string
 }
 
+export interface KnowledgeRootCheck {
+root: string
+state: ("folder" | "missing" | "not-a-folder")
+}
+
 export interface LoginWindow {
 terminal: string
 command: string
@@ -1219,12 +1325,116 @@ export interface PatchAgentRequest {
 egress: ("enforce" | "log-only")
 }
 
+export interface Pins {
+items: Pin[]
+}
+/**
+ * A project or an app in the web UI's menu (D.28); Chat is no pin, it has its own entry.
+ */
+
+export interface Pin {
+kind: ("project" | "app")
+id: string
+}
+
+export interface PlanDraft {
+id: string
+projectId: string
+folder: string
+title?: (string | null)
+digest: string
+createdAt: string
+changedAt: string
+sessionId?: (string | null)
+fromPlan?: (string | null)
+}
+
+export interface PlanRead {
+path: string
+digest: string
+title?: (string | null)
+agent?: (string | null)
+agentId?: (string | null)
+runners?: PlanRunner[]
+projectId?: (string | null)
+context?: (string | null)
+stepTimeoutSec: number
+steps?: PlanStep[]
+problems?: string[]
+recommendation?: (string | null)
+text: string
+}
+/**
+ * An agent working in a plan's folder that may run its steps (D.27): offered on review.
+ */
+
+export interface PlanRunner {
+id: string
+name: string
+bypass: boolean
+}
+/**
+ * One step of a plan (D.27): a goal, and how the step itself knows it is done.
+ */
+
+export interface PlanStep {
+n: number
+title: string
+goal: string
+doneWhen: string
+}
+
+export interface PlanStepResult {
+status: ("done" | "failed")
+summary: string
+notes?: (string | null)
+}
+
+export interface PlanView {
+id: string
+title: string
+source?: (string | null)
+draftId?: (string | null)
+folder: string
+digest: string
+agentId: string
+agent?: (string | null)
+context?: (string | null)
+stepTimeoutSec: number
+approvedAt: string
+state: ("running" | "done" | "stopped")
+stoppedBecause?: (string | null)
+steps: PlanStepView[]
+}
+
+export interface PlanStepView {
+n: number
+title: string
+goal: string
+doneWhen: string
+state: ("waiting" | "running" | "done" | "failed" | "cancelled")
+sessionId?: (string | null)
+summary?: (string | null)
+notes?: (string | null)
+error?: (string | null)
+startedAt?: (string | null)
+endedAt?: (string | null)
+refused?: RefusedHost[]
+said?: (string | null)
+}
+/**
+ * A host the network filter refused to a run, or to a session while nobody could answer, and
+ * the agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your
+ * answer (as the agent's lists say now).
+ */
+
 export interface Problem {
 type?: string
 title: string
 status: number
 detail?: (string | null)
 instance?: (string | null)
+toolboxAdds?: (string[] | null)
 }
 
 export interface ProjectSettingsRequest {
@@ -1235,29 +1445,33 @@ defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
 area?: (string | null)
 skills?: string[]
+addons?: AddonUse[]
+toolboxAdds?: string[]
 }
+/**
+ * An addon an agent or a project uses (G.3): by its name, with the binding filling its
+ * slots when it has some (G.2); one without slots has no binding.
+ */
 
 export interface Project {
 id: string
 name: string
 description?: (string | null)
 folder: string
+branch?: (string | null)
 defaultAgent?: (string | null)
 caches?: ("global" | "project" | "off")
 area?: (string | null)
 skills?: string[]
+addons?: AddonUse[]
 apps?: string[]
-pinned: boolean
 agents: Agent[]
 createdAt: string
 lastUsedAt?: (string | null)
 }
 /**
- * What sessions are opened on: a harness on an account or a provider (what, its model)
- * working in a folder (where), with its settings. Its home: a project (`projectId`: its
- * settings all its own; its folder, caches and skills its project's), an app (`app`: one of its
- * parts), Chat (`chat`: someone you talk to), or none (outside projects: made on the Other
- * folders page, or by `handler run`, `handler acp` and `handler terminal`).
+ * An addon an agent or a project uses (G.3): by its name, with the binding filling its
+ * slots when it has some (G.2); one without slots has no binding.
  */
 
 export interface ProviderInfo {
@@ -1276,6 +1490,8 @@ harnesses?: string[]
 modelAlone?: boolean
 files?: string[]
 areas?: string[]
+local?: boolean
+reached?: (ProviderReach | null)
 }
 
 export interface ProviderModel {
@@ -1292,6 +1508,18 @@ native?: ({
 [k: string]: unknown
 }
 } | null)
+}
+/**
+ * What a provider's server answered (D.12): `ok` once every endpoint gave its model list.
+ */
+
+export interface ProviderReach {
+ok: boolean
+at: string
+urls: string[]
+models?: ProviderModel[]
+error?: (string | null)
+hint?: (string | null)
 }
 
 export interface ProviderRequest {
@@ -1324,7 +1552,7 @@ description?: (string | null)
 endpoints: {
 [k: string]: string
 }
-models: ProviderModel[]
+models?: ProviderModel[]
 needsKey?: boolean
 files?: ({
 [k: string]: {
@@ -1333,9 +1561,25 @@ files?: ({
 } | null)
 }
 
+export interface ProviderTestRequest {
+endpoints?: ({
+[k: string]: string
+} | null)
+key?: (string | null)
+provider?: (string | null)
+}
+
 export interface PutSecretRequest {
 value: string
 description?: (string | null)
+}
+
+export interface ReadPlanRequest {
+agentId?: (string | null)
+sessionId?: (string | null)
+path?: (string | null)
+draftId?: (string | null)
+runnerId?: (string | null)
 }
 
 export interface RemotePairing {
@@ -1374,10 +1618,16 @@ path?: string
 mount?: (string | null)
 }
 
+export interface RunPlanRequest {
+from: number
+allow?: string[]
+}
+
 export interface RuntimeCheck {
 runtime: string
 ok: boolean
 items: RuntimeCheckItem[]
+supports?: (RuntimeSupports | null)
 }
 /**
  * One thing the runtime needs from the host (A.8), and what was found.
@@ -1388,6 +1638,30 @@ name: string
 ok: boolean
 required: boolean
 detail: string
+}
+/**
+ * What a runtime gives on this host (A.8): a spec needing an ability it lacks is refused
+ * (A1), and an agent needing one is refused when it is saved (D.2).
+ */
+
+export interface RuntimeSupports {
+isolation: string
+abilities: ("nested" | "privileged" | "display")[]
+limits: boolean
+}
+
+export interface SandboxRuntime {
+name: string
+current: boolean
+check?: (RuntimeCheck | null)
+}
+/**
+ * What `handler-sandbox-<impl> check` prints (A.8): can this host run sandboxes.
+ */
+
+export interface SavePlanDraftRequest {
+text: string
+digest: string
 }
 
 export interface SecretInfo {
@@ -1462,7 +1736,7 @@ mounts: SessionMount[]
 
 export interface SessionMount {
 target: string
-kind: (("scope" | "state" | "cache" | "config" | "knowledge" | "app" | "subject") | "tools")
+kind: (("scope" | "state" | "cache" | "config" | "knowledge" | "app" | "subject" | "paste") | "tools")
 readOnly: boolean
 source: string
 browsable: boolean
@@ -1487,8 +1761,9 @@ remote?: boolean
 canResume?: boolean
 error?: (string | null)
 missingImage?: (string | null)
+request?: (string | null)
 harnessVersion?: (string | null)
-origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask")
+origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask" | "plan")
 app?: (string | null)
 waitingFor?: (string | null)
 lastStopReason?: (string | null)
@@ -1498,6 +1773,8 @@ unattended?: boolean
 subject?: (SessionSubject | null)
 output?: (SessionOutput | null)
 appDraft?: (SessionAppDraft | null)
+plan?: (SessionPlan | null)
+planDraft?: (SessionPlanDraft | null)
 createdAt: string
 lastActivityAt: string
 acpUrl: string
@@ -1528,6 +1805,21 @@ error?: (string | null)
  * /v1/apps/from-draft/{session}`), its code becomes the app's next version, or a new app.
  */
 
+export interface SessionPlan {
+id: string
+step: number
+}
+/**
+ * The plan draft a plan builder's session writes (D.27): its folder is the draft, its
+ * project's folder seen read-only, at its own path.
+ */
+
+export interface SessionPlanDraft {
+id: string
+projectId: string
+folder: string
+}
+
 export interface SetAppAgentRequest {
 agentId: string
 }
@@ -1555,10 +1847,6 @@ agentId: string
 export interface SetKnowledgeRootRequest {
 root: (string | null)
 create?: boolean
-}
-
-export interface SetProjectPinnedRequest {
-pinned: boolean
 }
 
 export interface SetRemoteGatewayRequest {
@@ -1651,11 +1939,11 @@ items?: SourceItem[]
 }
 /**
  * Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an
- * agents file's content) or an addon (`addons/<name>/`).
+ * agents file's content) or a tool (`tools/<name>/`).
  */
 
 export interface SourceItem {
-kind: ("app" | "agents" | "addon")
+kind: ("app" | "agents" | "addon" | "system-package")
 name: string
 description?: (string | null)
 version?: (string | null)
@@ -1729,8 +2017,8 @@ cpus?: (string | null)
 }
 /**
  * Agents written so they can be set up again in another project (D.23): their definitions
- * without what is yours (the models they run as, their folder, the addon configurations and
- * knowledge folders they were given), with what they need instead.
+ * without what is yours (the models they run as, their folder, the connections and notes
+ * folders they were given), with what they need instead.
  */
 
 export interface SpeechRequest {
@@ -1745,13 +2033,48 @@ maxAttempts?: number
 maxMinutes?: number
 }
 
-export interface ToolboxContainerfileUpdate {
-content: string
+export interface SystemPackageInfo {
+name: string
+version?: (number | null)
+description?: (string | null)
+provides?: string[]
+caches?: CacheDeclaration[]
+daemons?: SystemPackageDaemon[]
+distros?: string[]
+builtin: boolean
+overridesBuiltin?: boolean
+directory: string
+error?: (string | null)
+}
+/**
+ * A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
+ * what it holds, in people's words (shown first): a short name, then after ": " more if
+ * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
+ * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
+ * PATH after the image's (`bin` for `~/.cargo/bin`).
+ */
+
+export interface SystemPackageDaemon {
+command: string
+/**
+ * @minItems 1
+ */
+abilities: [("nested" | "privileged" | "display"), ...(("nested" | "privileged" | "display"))[]]
+env?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[A-Za-z_][A-Za-z0-9_]*$".
+ */
+[k: string]: string
+}
+}
+
+export interface SystemPackagesRequest {
+systemPackages: string[]
 }
 
 export interface ToolboxContainerfile {
 content: string
-defaultContent: string
 }
 
 export interface ToolboxInfo {
@@ -1759,6 +2082,41 @@ image: string
 imagePresent: boolean
 builtAt?: (string | null)
 directory: string
+distro?: (string | null)
+systemPackages?: ToolboxSystemPackage[]
+commands?: {
+[k: string]: string
+}
+needs?: ToolboxNeed[]
+problem?: (string | null)
+}
+/**
+ * A system package turned on in the toolbox (B.7).
+ */
+
+export interface ToolboxSystemPackage {
+name: string
+version?: (number | null)
+builtVersion?: (number | null)
+neededBy?: string[]
+}
+/**
+ * A command what is in use needs from the toolbox (B.6): one of `commands`, who needs it,
+ * and what gives it.
+ */
+
+export interface ToolboxNeed {
+commands: string[]
+neededBy: string[]
+providedBy?: (string | null)
+}
+
+export interface ToolboxLines {
+content: string
+}
+
+export interface ToolboxRebuildRequest {
+update?: boolean
 }
 
 export interface Transcription {
@@ -1767,6 +2125,15 @@ text: string
 
 export interface TryAutomationRequest {
 sessionId?: (string | null)
+allow?: string[]
+}
+
+export interface UiLink {
+url: string
+}
+
+export interface UiOpenRequest {
+then?: (string | null)
 }
 
 export interface Uses {

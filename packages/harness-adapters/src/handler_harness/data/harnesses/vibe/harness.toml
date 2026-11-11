@@ -3,6 +3,7 @@ apiVersion = "handler.harness/v1"
 name = "vibe"
 product = "Mistral Vibe"
 image = "localhost/handler-ai-vibe"  # no tag: launches use :latest (contract B.6)
+needs = ["uv"]  # what its recipe installs with, from the toolbox (B.6)
 acpCommand = ["vibe-acp"]
 home = "/home/agent"
 
@@ -20,10 +21,6 @@ skillsDir = "~/.vibe/skills"
 # get the sandbox's environment). It advertises no mcpCapabilities: no http or sse.
 mcpTransports = ["stdio"]
 mcpEnv = "sandbox"
-
-# Vibe writes its own state under ~/.vibe (trusted_folders.toml, logs…): it must be writable by
-# the agent, including when files are mounted inside it (config.toml, skills).
-writablePaths = ["~/.vibe"]
 
 [env]
 VIBE_CONFIG_DIR = "/home/agent/.vibe"

@@ -1,15 +1,17 @@
 """End to end, no credentials needed: handlerd → policy → handler-sandbox-podman → real harness
-image.
+image (the tests' fake sandbox hands real images to Podman, on a Mac too).
 
 Checks that P7 sets each harness's real bypass mode through the whole stack, and that the
 agent runs in a container. Prompt turns with credentials: tests/harness (opt-in).
 """
 
+import subprocess
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
-from handler_control import runtime
 from handler_harness import catalog, images
 
 from ..support.daemon import Daemon, start_daemon
@@ -31,14 +33,17 @@ def daemon() -> Iterator[Daemon]:
         yield d
 
 
+@pytest.mark.rule("policy.starts-in-its-own-mode")
 @pytest.mark.parametrize(
     ("account", "harness"), [("claude-code", "claude-code"), ("e2e-vibe", "vibe")]
 )
 def test_bypass_mode_applied_through_the_stack(daemon: Daemon, account: str, harness: str) -> None:
     descriptor = catalog.get(harness).descriptor
     latest = images.ref(descriptor.image, images.LATEST)
-    if not runtime.exists(latest):
-        pytest.skip(f"{latest} not built")
+    podman = Path(sys.executable).parent / "handler-sandbox-podman"  # where the fake hands it
+    inspect = [podman, "image", "inspect", latest]
+    if subprocess.run(inspect, capture_output=True, check=False).returncode:
+        pytest.skip(f"{latest} not built in Podman")
     scope = daemon.make_scope()
     ad_hoc = daemon.create_ad_hoc(account, scope, network="none")
     client = daemon.connect(ad_hoc["acpUrl"])

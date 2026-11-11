@@ -1,0 +1,22 @@
+{
+  "$id": "urn:handler.control/v1/ui-open-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`handler ui`: a one-time link opening the web UI, on a page of it or its first.",
+  "properties": {
+    "then": {
+      "anyOf": [
+        {
+          "pattern": "^/([^/#?\\s][^#?\\s]*)?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Then"
+    }
+  },
+  "title": "UiOpenRequest",
+  "type": "object"
+}

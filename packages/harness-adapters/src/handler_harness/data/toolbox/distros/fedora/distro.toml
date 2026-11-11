@@ -1,0 +1,22 @@
+# Handler's base of a Fedora toolbox (contract B.7): its recipe is base.containerfile.
+name = "fedora"
+# the commands it gives (`command -v` finds each in a toolbox built on it)
+provides = [
+    "sh", "bash", "sed", "cat", "ls", "env", "python3", "python", "pip", "uv", "node", "npm",
+    "git", "ssh", "curl", "wget", "jq", "rg", "fd", "tar", "zip", "unzip", "less", "which",
+    "diff", "find", "ps", "file", "patch",
+]
+
+[[caches]]
+target = "~/.npm"
+about = "npm packages"
+
+[[caches]]
+target = "~/.cache"
+about = "Tool caches: uv and pip packages, Playwright's browsers…"
+general = true
+
+[[caches]]
+target = "~/.local"
+about = "User installs: uv's tools and Pythons, pip --user, pipx"
+general = true

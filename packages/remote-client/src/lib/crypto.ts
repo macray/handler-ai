@@ -1,4 +1,4 @@
-// Envelopes (docs/dev/design/remote.md §4) in WebCrypto — the device side of
+// Envelopes (remote design §4) in WebCrypto — the device side of
 // packages/control-plane/src/handler_control/remote_crypto.py, checked against the same test vectors.
 //
 //   keys  HKDF-SHA256(K, salt "handler-remote/v1", info "down" | "up" | "gateway-auth")

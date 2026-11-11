@@ -40,7 +40,7 @@ import time
 from typing import Any
 
 from . import terminal
-from .agent_commands import program
+from .agent_commands import addon_label, program
 from .client import ClientError, Daemon
 from .output import table
 from .session_bridge import run_session_bridge
@@ -109,6 +109,10 @@ def project_agent(
     if args.anyway:
         acknowledge_outside(d, project, name, args)
         return None
+    if not project["agents"]:
+        raise ClientError(
+            f"the project {project['name']} has no agent yet: add one on its page in the web UI"
+        )
     agents = sorted(project["agents"], key=lambda a: a["id"] != project.get("defaultAgent"))
     if args.name:
         raise ClientError(
@@ -116,7 +120,7 @@ def project_agent(
         )
     if (agent := agent_named(project, name)) is not None:
         return settle_flags(d, agent, args, project), None
-    harness, model = getattr(args, "harness", None), getattr(args, "model", None)
+    harness, model = args.harness, args.model
     for agent in agents:
         m = agent["model"]
         chosen = harness in (None, m.get("harness")) and model in (None, m.get("model"))
@@ -172,9 +176,11 @@ def described(name: str | None, harness: str | None, model: str | None) -> str:
 
 def flag_changes(agent: dict[str, Any], args: Any) -> tuple[dict[str, Any], list[str]]:
     """What the agent flags typed (cli.add_agent_options) change in the agent's settings: those
-    settings, and each change in words. A flag not typed changes nothing; --allow, --binding and
-    --knowledge add to its lists. (--name says which agent; the account or provider, --harness
-    and --model, the model this time only, D.19.)"""
+    settings, and each change in words. A flag not typed changes nothing; --allow,
+    --keep-blocked, --tool and --notes add to its lists (--allow and --keep-blocked each take
+    their hosts off the other's, A.3; --tool with another connection replaces that tool's). (--name
+    says which agent; the account or provider, --harness and --model, the model this time only,
+    D.19.)"""
     changed: dict[str, Any] = {}
     said: list[str] = []
     wanted = {
@@ -189,12 +195,30 @@ def flag_changes(agent: dict[str, Any], args: Any) -> tuple[dict[str, Any], list
         if value is not None and now != value:
             changed[key] = value
             said.append(f"{key} {shown(now)} → {shown(value)}")
-    lists = {"allow": args.allow, "bindings": args.binding, "knowledge": args.knowledge}
+    lists = {"allow": args.allow, "blocked": args.keep_blocked, "knowledge": args.notes}
     for key, given in lists.items():
         if added := sorted(set(given or []) - set(agent.get(key, []))):
             changed[key] = sorted({*agent.get(key, []), *added})
-            said.append(f"{key} + {', '.join(added)}")
+            said.append(f"{LIST_WORDS.get(key, key)} + {', '.join(added)}")
+    for key, other in (("allow", "blocked"), ("blocked", "allow")):  # never both (A.3)
+        if taken := set(changed.get(key, [])) & set(agent.get(other, [])):
+            changed[other] = sorted(set(agent.get(other, [])) - taken)
+    uses = {u["addon"]: u for u in agent.get("addons", [])}
+    added = [u for u in map(addon_use, args.tool or []) if uses.get(u["addon"]) != u]
+    if added:
+        uses |= {u["addon"]: u for u in added}
+        changed["addons"] = [uses[a] for a in sorted(uses)]
+        said.append(f"tools + {', '.join(map(addon_label, added))}")
     return changed, said
+
+
+LIST_WORDS = {"blocked": "kept blocked", "knowledge": "notes"}
+
+
+def addon_use(flag: str) -> dict[str, str]:
+    """`--tool NAME[=CONNECTION]` → an AddonUse (G.3)."""
+    addon, _, binding = flag.partition("=")
+    return {"addon": addon} | ({"binding": binding} if binding else {})
 
 
 def shown(value: Any) -> str:
@@ -221,18 +245,39 @@ def settle_flags(
         if input("Save this to the agent? [y/N] ").strip().lower() not in ("y", "yes"):
             raise ClientError("not started (--name NAME makes another agent)")
     body = request_of(agent, project) | changed
-    path = f"/v1/agents/{agent['id']}"
-    try:
-        return d.call("PUT", path, body)
-    except ClientError as e:
-        if (e.status, e.title) != (409, "risks not confirmed"):
-            raise
-        print(f"handler: this agent gets {e.detail}", file=sys.stderr)  # saying yes confirmed it
-        return d.call("PUT", path, body | {"confirmRisks": True})
+    return save_agent(d, "PUT", f"/v1/agents/{agent['id']}", body)  # saying yes confirmed it
 
 
-SETTINGS = ("network", "egress", "allow", "confinement", "permissions", "bindings", "knowledge")
-SETTINGS += ("display", "interface")
+def save_agent(d: Daemon, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Saved with what the typed flags widen confirmed (D.8: they are the confirmation, said on
+    stderr), and what it adds to the toolbox asked (B.6: a system package for every agent)."""
+    while True:
+        try:
+            return d.call(method, path, body)
+        except ClientError as e:
+            if (e.status, e.title) == (409, "risks not confirmed") and "confirmRisks" not in body:
+                print(f"handler: this agent gets {e.detail}", file=sys.stderr)
+                body = body | {"confirmRisks": True}
+            elif (e.status, e.title) == (409, "toolbox changes not confirmed") and (
+                "toolboxAdds" not in body
+            ):
+                body = body | {"toolboxAdds": confirm_toolbox(e)}
+            else:
+                raise
+
+
+def confirm_toolbox(e: ClientError) -> list[str]:
+    """What a save adds to the toolbox, asked; ClientError when not agreed."""
+    print(f"handler: {e.detail}", file=sys.stderr)
+    if not sys.stdin.isatty():
+        raise ClientError(f"not saved: {e.detail}. Run it in a terminal to agree")
+    if input("Add it to the toolbox and rebuild it? [y/N] ").strip().lower() not in ("y", "yes"):
+        raise ClientError("not saved: the toolbox lacks what it needs")
+    return e.toolbox_adds or []
+
+
+SETTINGS = ("network", "egress", "allow", "blocked", "confinement", "permissions", "addons")
+SETTINGS += ("knowledge", "display", "interface")
 
 
 def request_of(agent: dict[str, Any], project: dict[str, Any] | None) -> dict[str, Any]:
@@ -273,15 +318,7 @@ def open_ad_hoc(d: Daemon, args: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     if args.name:
         body["name"] = args.name
     changed, _ = flag_changes({}, args)  # every flag typed
-    try:
-        agent = d.call("POST", "/v1/agents", body | changed)
-    except ClientError as e:
-        if (e.status, e.title) != (409, "risks not confirmed"):
-            raise
-        # the flags that widen it were typed: they are the confirmation (D.8), said on stderr
-        print(f"handler: this agent gets {e.detail}", file=sys.stderr)
-        agent = d.call("POST", "/v1/agents", body | changed | {"confirmRisks": True})
-    return agent, access
+    return save_agent(d, "POST", "/v1/agents", body | changed), access
 
 
 def agent_named(project: dict[str, Any], name: str | None) -> dict[str, Any] | None:

@@ -1,24 +1,31 @@
-"""`render` — contract B.3: (descriptor, agent, scope, secrets) → HarnessLaunch.
+"""`render` — contract B.3: (descriptor, agent, secrets) → HarnessLaunch.
 
 Pure function (B1): no container, network or filesystem access. It only translates the
 harness-neutral agent (its account or provider, model) into what this harness needs, expressed
-as intent (mounts, env, egress, session defaults), never as sandbox implementation details (B2).
+as intent (the files group's needs, env, egress, session defaults), never as sandbox
+implementation details (B2).
 
 Read top-down: `render` calls one small function per concern.
 """
 
 import json
+from dataclasses import dataclass, field
 
 from handler_contracts import (
     HARNESS_LAUNCH_API_VERSION,
     AgentSpec,
-    GeneratedFile,
+    CacheDeclaration,
+    CacheFolder,
+    File,
+    HandlerTool,
     HarnessDescriptor,
     HarnessLaunch,
+    HostFolder,
     HttpMcpServer,
+    KeptFile,
     LoginRecipe,
     McpServer,
-    Mount,
+    NetworkMode,
     NeutralConfig,
     PermissionMode,
     SessionDefaults,
@@ -38,6 +45,26 @@ SANDBOX_ENV = "/opt/handler/bin/handler-sandbox-env"
 SANDBOX_ENV_SCRIPT = (DATA / "handler-sandbox-env").read_text()
 
 
+# What an agent whose network is filtered is told before its first turn (A.3): the filter's
+# refusal says it too (its 403), but an agent told before does not guess a proxy problem.
+FILTERED_NETWORK = (
+    "Your network goes through Handler's network filter: only allowed hosts answer. When a host "
+    "is refused: if your task cannot be done well without it, ask the user to allow it, naming "
+    "the host and port, and end your turn; if you can do the task well without it, go on, and "
+    "say at the end which host was refused and what you did instead. Never try to get around "
+    "the filter (other proxies, mirrors of the same service, other ports)."
+)
+
+
+def starting_instructions(instructions: str | None, network: NetworkMode) -> str | None:
+    """The instructions the agent starts with: its own, then, when its network is filtered,
+    what that means for it (a blank line between them). None when there are none."""
+    told = [instructions] if instructions else []
+    if network == "filtered":
+        told.append(FILTERED_NETWORK)
+    return "\n\n".join(told) or None
+
+
 class RenderError(ValueError):
     """The agent cannot be expressed for this harness (E1, B5)."""
 
@@ -45,7 +72,6 @@ class RenderError(ValueError):
 def render(
     descriptor: HarnessDescriptor,
     agent: AgentSpec,
-    scope: str,
     files: dict[str, str] | None = None,
     *,
     permission_mode: PermissionMode,
@@ -53,32 +79,36 @@ def render(
     state_root: str | None = None,
     provider_key: str | None = None,
     account_token: str | None = None,
+    login_file: str | None = None,
     skills: list[str] | None = None,
     mcp_servers: list[McpServer] | None = None,
     terminal: list[str] | None = None,
     instructions: str | None = None,
-    caches: dict[str, str] | None = None,
+    network: NetworkMode = "none",
+    caches: list[tuple[CacheDeclaration, str]] | None = None,
 ) -> HarnessLaunch:
     """Return the launch intent.
 
     `account_token` (a token login's), `provider_key` and `files` arrive resolved (values,
-    contents) from the control plane; an account's login file is `agent.account_login`.
+    contents) from the control plane; an account's login file is `agent.account_login`, and
+    `login_file` its content when the harness only reads it (a read-only slot: given as a file).
     `session_state`: a Session's own folder, bound to the harness's per-session slot (F.2).
     `state_root`: the folder handler keeps for the agent's own state (history, settings): each of
     those slots is bound to a folder of that name in it. None: not bound.
     `skills` (skill folders) and `mcp_servers`: the agent's and its addons' (G4, D.17).
     `terminal`: run the harness's own terminal program instead of its ACP adapter (D.16), with
     these arguments after the ones its settings give it. `instructions`: the agent's, for that
-    terminal program (an ACP session gets them with its first prompt instead, C.4 P9 and F.3).
+    terminal program (an ACP session gets them with its first prompt instead, C.4 P9 and F.3),
+    with what a `filtered` `network` means for it (`starting_instructions`), when the terminal
+    program can take instructions.
     `permission_mode`: the agent's starting mode (D.8), one the descriptor maps.
-    `caches`: home path → host folder, the toolbox's caches as the agent's project shares them.
+    `caches`: each cache the agent gets (the toolbox's, its addons') with its host folder, as the
+    agent's project shares them.
     """
     if agent.harness != descriptor.name:
         raise RenderError(f"agent is for harness '{agent.harness}', not '{descriptor.name}'")
 
-    mounts = state_mounts(descriptor, agent, session_state, state_root)
-    mounts += cache_mounts(descriptor, caches or {})
-    mounts += skill_mounts(descriptor, skills or [])
+    state = state_needs(descriptor, agent, session_state, state_root, login_file)
     provided = express_provider(descriptor, agent, provider_key)
     login = descriptor.login if agent.account else None
     token_env = {login.token: account_token} if login and login.token and account_token else {}
@@ -105,7 +135,7 @@ def render(
     argv, extra_files = list(descriptor.acp_command), mcp_config_file(descriptor, session)
     if terminal is not None:
         argv, extra_files, terminal_env = terminal_command(
-            descriptor, permission_mode, session, terminal, instructions
+            descriptor, permission_mode, session, terminal, instructions, network=network
         )
         env |= terminal_env
         session = SessionDefaults()  # nothing goes over ACP
@@ -116,11 +146,14 @@ def render(
         argv=argv,
         home=descriptor.home,
         env=env,
+        folders=state.folders,
+        skills=skill_folders(descriptor, skills or []),
+        caches=cache_folders(descriptor, caches or []),
+        kept_files=state.kept_files,
         files=config_files(descriptor, agent, files or {}, provided.files)
         + extra_files
-        + sandbox_env_file(descriptor),
-        mounts=mounts,
-        writable_paths=[expand_home(p, descriptor.home) for p in descriptor.writable_paths or []],
+        + state.files,
+        tools=sandbox_env_tool(descriptor),
         egress=egress,
         session_defaults=session if session.model_dump(exclude_none=True) else None,
     )
@@ -157,27 +190,44 @@ def harness_hosts(
     return list(found.items())
 
 
-def state_mounts(
+@dataclass
+class StateNeeds:
+    folders: list[HostFolder] = field(default_factory=list)
+    kept_files: list[KeptFile] = field(default_factory=list)
+    files: list[File] = field(default_factory=list)
+
+
+def state_needs(
     descriptor: HarnessDescriptor,
     agent: AgentSpec,
     session_state: str | None = None,
     state_root: str | None = None,
-) -> list[Mount]:
+    login_file: str | None = None,
+) -> StateNeeds:
     """Required slots must be bound. Three kinds of slot: the account's login file
     (`agent.account_login`, kept by handler), the session history (the daemon's, F.2) and the rest,
-    the agent's own state: its folder in `state_root`."""
-    slots = descriptor.state_slots
-    mounts = []
-    for name, slot in slots.items():
+    the agent's own state: its folder in `state_root`. A folder slot is a folder; a file slot a
+    kept file, or, when the harness only reads it (an account's login), a file of its content
+    (`login_file`)."""
+    found = StateNeeds()
+    for name, slot in descriptor.state_slots.items():
         source = _state_source(
             descriptor, name, slot, agent, session_state=session_state, state_root=state_root
         )
-        if source is not None:
-            target = expand_home(slot.target, descriptor.home)
-            mounts.append(
-                Mount(source=source, target=target, read_only=slot.read_only, kind="state")
+        if source is None:
+            continue
+        target = expand_home(slot.target, descriptor.home)
+        if slot.kind == "dir":
+            found.folders.append(
+                HostFolder(source=source, target=target, writable=not slot.read_only)
             )
-    return mounts
+        elif not slot.read_only:
+            found.kept_files.append(KeptFile(source=source, target=target))
+        elif login_file is None:
+            raise RenderError(f"state slot '{name}': the login's content is not given")
+        else:
+            found.files.append(File(target=target, content=login_file, mode="0400"))
+    return found
 
 
 def _state_source(
@@ -195,8 +245,8 @@ def _state_source(
     if slot.credential:  # the account's login
         login = descriptor.login
         return agent.account_login if login and login.file == name and agent.account else None
-    if state_root is not None:
-        return f"{state_root}/{name}"
+    if state_root is not None:  # a file in a folder of its own (A.1: a writable file mount)
+        return f"{state_root}/{name}/{name}" if slot.kind == "file" else f"{state_root}/{name}"
     if slot.required:
         raise RenderError(f"required state slot '{name}' is not bound")
     return None
@@ -232,10 +282,10 @@ def config_files(
     agent: AgentSpec,
     contents: dict[str, str],
     provided: dict[str, str] | None = None,
-) -> list[GeneratedFile]:
-    """Config file slots (E1 + required) → read-only files at the harness's expected paths. A slot
-    is filled by the provider's `files` for this harness or written from the provider,
-    not both."""
+) -> list[File]:
+    """Config file slots (E1 + required) → files at the harness's expected paths, read-only, or
+    writable when the harness rewrites it (`seed`). A slot is filled by the provider's `files`
+    for this harness or written from the provider, not both."""
     provided = provided or {}
     filled = (agent.files or {}).keys() | provided.keys()
     for unknown in filled - descriptor.config_files.keys():
@@ -252,27 +302,26 @@ def config_files(
             target = expand_home(slot.target, descriptor.home)
             mode = "0600" if slot.seed else "0444"
             generated.append(
-                GeneratedFile(target=target, content=contents[name], mode=mode, seed=slot.seed)
+                File(target=target, content=contents[name], mode=mode, writable=slot.seed)
             )
         elif slot.required:
             raise RenderError(f"required config file '{name}' is not filled (provider [files])")
     return generated
 
 
-def cache_mounts(descriptor: HarnessDescriptor, caches: dict[str, str]) -> list[Mount]:
+def cache_folders(
+    descriptor: HarnessDescriptor, caches: list[tuple[CacheDeclaration, str]]
+) -> list[CacheFolder]:
     """Caches are harness-independent; only their target is placed under this harness's home."""
-    return [
-        Mount(
-            source=source,
-            target=expand_home(target, descriptor.home),
-            read_only=False,
-            kind="cache",
-        )
-        for target, source in caches.items()
-    ]
+    found = []
+    for cache, source in caches:
+        target = expand_home(cache.target, descriptor.home)
+        path = f"{target}/{cache.bin}" if cache.bin else None
+        found.append(CacheFolder(source=source, target=target, path=path))
+    return found
 
 
-def skill_mounts(descriptor: HarnessDescriptor, skills: list[str]) -> list[Mount]:
+def skill_folders(descriptor: HarnessDescriptor, skills: list[str]) -> list[HostFolder]:
     """Each skill folder, read-only, in the harness's skills folder, under its own name (so
     skills from different places combine)."""
     if not skills:
@@ -287,7 +336,7 @@ def skill_mounts(descriptor: HarnessDescriptor, skills: list[str]) -> list[Mount
             raise RenderError(f"two skills are named '{name}': {by_name[name]} and {source}")
         by_name[name] = source
     return [
-        Mount(source=source, target=f"{root}/{name}", read_only=True, kind="config")
+        HostFolder(source=source, target=f"{root}/{name}", writable=False)
         for name, source in by_name.items()
     ]
 
@@ -328,7 +377,7 @@ def mcp_servers(
     transport the harness does not accept is an error.
 
     A harness with `mcpEnv = "sandbox"` (it starts stdio servers with a reduced environment, or
-    with its own secrets) gets them wrapped with handler-sandbox-env (`sandbox_env_file`):
+    with its own secrets) gets them wrapped with handler-sandbox-env (`sandbox_env_tool`):
     every server then sees the sandbox's environment (proxy, display, its addon's settings and
     secrets) whatever the harness, without the harness's own secrets (`secret_env`: the account's
     token and the provider's key)."""
@@ -353,14 +402,14 @@ def mcp_servers(
     return servers
 
 
-def sandbox_env_file(descriptor: HarnessDescriptor) -> list[GeneratedFile]:
+def sandbox_env_tool(descriptor: HarnessDescriptor) -> list[HandlerTool]:
     """`handler-sandbox-env`, for a harness whose MCP servers `mcp_servers` wraps with it."""
     if descriptor.mcp_env != "sandbox":
         return []
-    return [GeneratedFile(target=SANDBOX_ENV, content=SANDBOX_ENV_SCRIPT, mode="0755")]
+    return [HandlerTool(target=SANDBOX_ENV, content=SANDBOX_ENV_SCRIPT)]
 
 
-def mcp_config_file(descriptor: HarnessDescriptor, session: SessionDefaults) -> list[GeneratedFile]:
+def mcp_config_file(descriptor: HarnessDescriptor, session: SessionDefaults) -> list[File]:
     """For a harness that does not take MCP servers from session/new (`mcpConfigFile`): the same
     servers, in the common mcp.json format, where it reads them. Their tools are registered as
     tools of their own (`directTools`, pi-mcp-adapter), as the other harnesses do; the adapter's
@@ -383,7 +432,7 @@ def mcp_config_file(descriptor: HarnessDescriptor, session: SessionDefaults) -> 
     settings = {"allowInstall": False, "scriptMode": False}
     content = json.dumps({"settings": settings, "mcpServers": entries}, indent=2) + "\n"
     target = expand_home(descriptor.mcp_config_file, descriptor.home)
-    return [GeneratedFile(target=target, content=content, mode="0444")]
+    return [File(target=target, content=content, mode="0444")]
 
 
 TERMINAL_MCP_CONFIG = "~/.handler/terminal-mcp.json"
@@ -395,10 +444,13 @@ def terminal_command(
     session: SessionDefaults,
     args: list[str],
     instructions: str | None = None,
-) -> tuple[list[str], list[GeneratedFile], dict[str, str]]:
+    *,
+    network: NetworkMode = "none",
+) -> tuple[list[str], list[File], dict[str, str]]:
     """D.16: the harness's terminal program, given as flags or env vars what an ACP session gets
     as session defaults (permission mode, model, MCP servers) and the agent's instructions, then
-    `args`; the file of MCP servers (a generated file) and the env vars."""
+    `args`; the file of MCP servers (a generated file) and the env vars. A terminal program
+    that cannot take instructions fails with the agent's, and goes without the network's."""
     term = descriptor.terminal
     if term is None:
         raise RenderError(f"harness '{descriptor.name}' has no terminal program")
@@ -416,19 +468,20 @@ def terminal_command(
             target = expand_home(TERMINAL_MCP_CONFIG, descriptor.home)
             entries = _mcp_entries(session.mcp_servers)
             content = json.dumps({"mcpServers": entries}, indent=2) + "\n"
-            files.append(GeneratedFile(target=target, content=content, mode="0444"))
+            files.append(File(target=target, content=content, mode="0444"))
             argv += [term.mcp_config_flag, target]
         elif term.mcp_servers_env is not None:
             env[term.mcp_servers_env] = json.dumps(_vibe_mcp_servers(session.mcp_servers))
         else:
             raise RenderError(f"the terminal of harness '{descriptor.name}' cannot get MCP servers")
-    if instructions:
-        if term.instructions_flag is None:
-            raise RenderError(
-                f"the terminal of harness '{descriptor.name}' cannot take the agent's "
-                "instructions: use `handler run`, or remove the instructions from the agent"
-            )
-        argv += [term.instructions_flag, instructions]
+    if instructions and term.instructions_flag is None:
+        raise RenderError(
+            f"the terminal of harness '{descriptor.name}' cannot take the agent's "
+            "instructions: use `handler run`, or remove the instructions from the agent"
+        )
+    told = starting_instructions(instructions, network)
+    if told and term.instructions_flag is not None:
+        argv += [term.instructions_flag, told]
     return [*argv, *args], files, env
 
 

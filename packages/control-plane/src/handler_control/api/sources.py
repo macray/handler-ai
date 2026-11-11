@@ -2,7 +2,8 @@
 each offers, read with that kind's own rules, with a few words on what each does (its notes) and
 its page (its README and manifest); an app taken from one, an agents file's agents read from one
 for their set-up page. An addon from one goes through its preview (G.5:
-`source:<source>/<name>`)."""
+`source:<source>/<name>`), with the system packages of that source it needs (B.7): listed, never
+installed alone."""
 
 import asyncio
 from pathlib import Path
@@ -21,6 +22,7 @@ from handler_contracts import (
     SourceNote,
 )
 from handler_harness import addons as addon_catalog
+from handler_harness import toolbox as toolbox_parts
 
 from .. import addon_install, agents_files, sources
 from ..apps import AppError, read_manifest
@@ -133,7 +135,7 @@ def detail(ctx: Context, source_id: str, kind: sources.SourceKind, name: str) ->
     if kind == "app":
         extra["app"] = read_manifest(folder)
     elif kind == "agents":
-        extra["agents"] = agents_files.read(folder)
+        extra["agents"] = agents_files.read_offered(folder)
     else:
         extra["addon"] = addon_install.preview(ctx.settings, f"source:{source_id}/{name}")
     return page.model_copy(update=extra)
@@ -165,7 +167,7 @@ def offered(ctx: Context, source_id: str, found: sources.Found) -> SourceItem:
         if kind == "app":
             return app_item(ctx, source_id, name, folder)
         if kind == "agents":
-            file = agents_files.read(folder)
+            file = agents_files.read_offered(folder)
             return SourceItem(
                 kind=kind,
                 name=name,
@@ -173,6 +175,8 @@ def offered(ctx: Context, source_id: str, found: sources.Found) -> SourceItem:
                 version=str(file.version),
                 notes=agents_notes(file),
             )
+        if kind == "system-package":
+            return system_package_item(name, folder)
         return addon_item(source_id, name, folder)
     except (AppError, ValueError) as e:  # an addon's InvalidAddonError is a ValueError
         return SourceItem(kind=kind, name=name, error=str(e))
@@ -207,7 +211,7 @@ def addon_item(source_id: str, name: str, folder: Path) -> SourceItem:
     other content."""
     addon = addon_catalog.load(folder)
     if addon.manifest.name != name:
-        raise ValueError(f"its addon.toml names another addon, {addon.manifest.name}")
+        raise ValueError(f"its {addon_catalog.MANIFEST} names another tool, {addon.manifest.name}")
     entry = addon_install.lock().get(name)
     here = f"{addon_install.SOURCE_PREFIX}{source_id}/{name}"
     return SourceItem(
@@ -219,6 +223,22 @@ def addon_item(source_id: str, name: str, folder: Path) -> SourceItem:
         and entry.source == here
         and addon_install.digest(folder) != entry.digest,
         notes=addon_notes(addon.manifest),
+    )
+
+
+def system_package_item(name: str, folder: Path) -> SourceItem:
+    """Installed: a system package of that name is in the user's folder or Handler's (B.7)."""
+    package = toolbox_parts.load(folder)  # InvalidSystemPackageError: a ValueError
+    return SourceItem(
+        kind="system-package",
+        name=name,
+        description=package.manifest.description,
+        version=str(package.manifest.version),
+        installed=name in toolbox_parts.names(),
+        notes=[
+            SourceNote(text="runs as root in the toolbox's build, for every agent", weakens=True),
+            SourceNote(text="installed with the tools that need it"),
+        ],
     )
 
 

@@ -30,3 +30,6 @@ ignore = ["PLR2004", "PLR0911", "PLR0913", "PLR0915"]
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"
 filterwarnings = ["ignore:Using `httpx`"]
+markers = [
+    "rule(*names): the rules of Handler's map this test proves, by name",
+]

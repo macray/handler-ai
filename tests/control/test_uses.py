@@ -1,9 +1,11 @@
 """D.22 conformance: what uses what, on a real handlerd: an agent's skills (its own and its
-project's), knowledge, addon configuration and model access, each seen from both ends."""
+project's), knowledge, connection and model access, each seen from both ends."""
 
 import tempfile
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from ..support.daemon import Daemon
 
@@ -21,6 +23,7 @@ def pairs(refs: list[dict[str, Any]]) -> set[tuple[str, str]]:
     return {(r["kind"], r["how"]) for r in refs}
 
 
+@pytest.mark.rule("uses.computed-not-kept", "uses.seen-from-both-ends")
 def test_what_an_agent_uses_and_what_uses_it(daemon: Daemon) -> None:
     root = Path(tempfile.mkdtemp(prefix="knowledge-"))
     (root / "acme").mkdir()
@@ -40,7 +43,7 @@ def test_what_an_agent_uses_and_what_uses_it(daemon: Daemon) -> None:
                         "model": {"account": "fake"},
                         "skills": ["own-skill"],
                         "knowledge": ["acme"],
-                        "bindings": ["browser"],
+                        "addons": [{"addon": "fake-browser", "binding": "browser"}],
                     }
                 ],
             },

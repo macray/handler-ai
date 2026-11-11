@@ -27,12 +27,16 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 from websockets.typing import Subprotocol
 
-from handler_contracts import ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX
+from handler_contracts import ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX, AcpCloseCode
 
-from .client import Daemon
+from .client import ClientError, Daemon
 
 Message = dict[str, Any]
 HELP = "Enter: send · Ctrl-C: cancel the turn (or detach) · Ctrl-D, /detach: detach · /stop: stop"
+
+
+class SessionClosedError(Exception):
+    """handlerd closed the session's WebSocket: what was asked gets no answer."""
 
 
 class Screen:
@@ -124,11 +128,27 @@ class Terminal:
                         self.handle(json.loads(line))
         except ConnectionClosed:
             pass
-        reason = self.ws.close_reason or "closed"
+        for future in self.waiting.values():
+            if not future.done():
+                future.set_exception(SessionClosedError())
+        self.waiting.clear()
         if not self.done.is_set():
-            self.screen.line(self.screen.paint(f"[session closed: {reason}]", "31"))
+            self.screen.line(self.screen.paint(f"[session closed: {self.why_closed()}]", "31"))
             self.result = 1
             self.done.set()
+
+    def why_closed(self) -> str:
+        """The close's reason; the session's error, whole, when it ended (a close's reason is cut
+        at 120 characters)."""
+        assert self.ws is not None
+        reason = self.ws.close_reason or "closed"
+        if self.ws.close_code not in (AcpCloseCode.AGENT_EXITED, AcpCloseCode.SESSION_STOPPED):
+            return reason
+        try:
+            error = self.daemon.call("GET", f"/v1/sessions/{self.session['id']}").get("error")
+        except ClientError:
+            error = None
+        return error or reason
 
     def handle(self, m: Message) -> None:
         method, mid = m.get("method"), m.get("id")
@@ -253,16 +273,20 @@ class Terminal:
         async with connect(url, subprotocols=protocols, max_size=None) as ws:
             self.ws = ws
             receiver = asyncio.create_task(self.receive())
-            await self.request(
-                "initialize", {"protocolVersion": 1, "clientCapabilities": {}}
-            )  # once it runs
-            self.session = self.daemon.call("GET", f"/v1/sessions/{self.session['id']}")
-            params = {
-                "sessionId": self.session["acpSessionId"],
-                "cwd": self.session["scope"],
-                "mcpServers": [],
-            }
-            await self.request("session/load", params)
+            try:
+                await self.request(
+                    "initialize", {"protocolVersion": 1, "clientCapabilities": {}}
+                )  # once it runs
+                self.session = self.daemon.call("GET", f"/v1/sessions/{self.session['id']}")
+                params = {
+                    "sessionId": self.session["acpSessionId"],
+                    "cwd": self.session["scope"],
+                    "mcpServers": [],
+                }
+                await self.request("session/load", params)
+            except (SessionClosedError, ConnectionClosed):
+                await receiver  # it did not start: the receiver says why
+                return self.result
             self.screen.line(self.screen.paint(HELP, "2"))
             loop = asyncio.get_running_loop()
             with contextlib.suppress(NotImplementedError):

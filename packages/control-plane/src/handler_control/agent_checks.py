@@ -39,7 +39,6 @@ from .sessions import SessionStore
 from .settings import Settings
 
 KEEP = 20  # check runs kept per agent
-WATCH_POLL = 0.5
 # what a check's answer depends on, and how a change of it is said ("since you changed …")
 MATTERS = {
     "instructions": "its instructions",
@@ -48,7 +47,7 @@ MATTERS = {
     "model_alone": "who works",
     "knowledge": "its knowledge",
     "skills": "its skills",
-    "bindings": "its addons",
+    "addons": "its addons",
 }
 
 
@@ -309,16 +308,12 @@ class CheckStore:
         self, session_id: str, check: Check
     ) -> tuple[CheckState, dict[str, Any] | None, str | None]:
         """(state, what came back of the compared fields, why), once its run ended."""
-        value, why = await self.result_of(session_id)
+        value, why = await self.sessions.result_of(session_id)
         if value is None:
             return "error", None, why
         got = {k: value.get(k) for k in check.compare}
         diff = differences(check, value)
         return ("failed", got, "; ".join(diff)) if diff else ("passed", got, None)
-
-    async def result_of(self, session_id: str) -> tuple[dict[str, Any] | None, str | None]:
-        """A run's valid result once it ended, else why it has none."""
-        return await self.sessions.result_of(session_id)
 
     def record(self, agent_id: str, run_id: str, result: CheckResult) -> None:
         """One check's result in a check run, as it is now."""

@@ -17,10 +17,12 @@
   import ModelAccessPicker from "../components/ModelAccessPicker.svelte";
   import PageHeader from "../components/PageHeader.svelte";
   import { fromSourceWords } from "../lib/sources";
-  import { api } from "../lib/api";
+  import { api, toolboxChanges, type ToolboxChanges } from "../lib/api";
+  import ToolboxConfirm from "../components/ToolboxConfirm.svelte";
   import { agentChoice, dataNeed, reaches, suggested } from "../lib/apps";
   import { whenSentence } from "../lib/automations";
-  import { chosenSpec, firstChoice, freeName, mayDo, missing, type Choice } from "../lib/setup";
+  import { chosenSpec, firstChoice, mayDo, missing, toolsAsked, type Choice } from "../lib/setup";
+  import { freeName } from "../lib/text";
   import type { AddonInfo, Agent, App, AppAgentNeed, AutomationView, BindingInfo } from "../lib/contracts.gen";
   import { agentBody, projects } from "../lib/projects.svelte";
   import { remote } from "../lib/remote.svelte";
@@ -60,7 +62,7 @@
       ]);
       [agents, automations, bindings, addons, folders] = [ag, au, bs, ad, k?.folders ?? []];
       for (const need of a.agents ?? []) {
-        if (need.definition && !choices[need.name]) choices[need.name] = firstChoice(need.definition, bs, folders);
+        if (need.definition && !choices[need.name]) choices[need.name] = firstChoice(need.definition, bs, ad, folders);
         modes[need.name] ??= "setup";
       }
       persons ??= [...(a.persons ?? [])];
@@ -105,7 +107,7 @@
     for (const n of toSetUp) {
       if (modes[n.name] === "fit") {
         if (!fitIds[n.name]) left.push(`the agent for ${n.name}`);
-      } else if (n.definition) left.push(...missing(n.definition, choices[n.name]!).map((m) => `${n.definition?.agentName}: ${m}`));
+      } else if (n.definition) left.push(...missing(n.definition, choices[n.name]!, addons).map((m) => `${n.definition?.agentName}: ${m}`));
       else left.push(`${n.name}: ${n.problem ?? "its definition cannot be read"}`);
     }
     for (const s of app.secrets ?? []) if (!s.set && !secrets[s.name]?.trim()) left.push(`the secret ${s.name}`);
@@ -126,6 +128,9 @@
     return lines;
   });
 
+  let toolbox = $state<ToolboxChanges | null>(null); // what setting up its agents adds to the toolbox
+  let confirmedAdds: string[] = []; // confirmed, sent with its agents (B.6)
+
   async function step<T>(label: string, action: () => Promise<T>): Promise<T> {
     doing = label;
     return action();
@@ -145,10 +150,10 @@
       for (const n of setups) {
         const where = n.worksIn ? target : null;
         const taken = agents.filter((x) => !x.projectId && (x.scope ?? null) === where).map((x) => x.name ?? "");
-        const named = freeName(n.definition!.agentName, taken);
+        const named = freeName(n.definition!.agentName, taken, " ");
         const agent = await step(`setting up ${named}`, () =>
           api.createAgent({
-            ...agentBody(chosenSpec(n.definition!, choices[n.name]!), { app: a.name, scope: where }, true),
+            ...agentBody(chosenSpec(n.definition!, choices[n.name]!), { app: a.name, scope: where }, true, confirmedAdds),
             origin: n.origin,
             name: named,
           }),
@@ -171,8 +176,10 @@
       await projects.refresh();
       navigate({ view: "apps", app: a.name }, true);
     } catch (e) {
-      error = `While ${doing}: ${(e as Error).message}. What was done is kept: Install goes on from there.`;
-      await load();
+      toolbox = toolboxChanges(e);
+      const failed = toolbox ? null : `While ${doing}: ${(e as Error).message}. What was done is kept: Install goes on from there.`;
+      await load(); // what was done, shown; it clears the error: set after
+      if (failed) error = failed;
     } finally {
       doing = null;
     }
@@ -192,17 +199,6 @@
     persons = [...all].sort();
   }
 
-  /** A configuration of an addon that needs no setting (the app-builder addon): its name, the addon's. */
-  async function makeConfiguration(addon: AddonInfo, need: string): Promise<void> {
-    try {
-      await api.createBinding({ name: addon.name, addon: addon.name, settings: {}, secrets: {} });
-      bindings = await api.bindings();
-      choices[need]!.bindings[addon.name] = addon.name;
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
   const showsWho = $derived(Object.keys(devicesOf).length > 1 || (remote.status?.devices ?? []).length > 0);
   // the steps shown, numbered in order
   const steps = $derived(
@@ -217,11 +213,10 @@
   </div>
 {/snippet}
 
-<PageHeader title="Install {name}" parent={{ label: "Apps", href: href({ view: "apps" }) }} titled />
+<PageHeader width="max-w-5xl" title="Install {name}" parent={{ label: "Apps", href: href({ view: "apps" }) }} />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-5xl space-y-6 px-8 py-10">
     <div class="space-y-1">
-      <h1 class="text-[1.75rem] leading-tight font-semibold tracking-[-0.022em]">Install {name}</h1>
       {#if app}<p class="text-sm text-muted-foreground">{app.source.description ?? ""} <span class="fact">· {app.source.version ?? ""} · {fromSourceWords(app.fromSource, []) ?? "from a file"}</span></p>{/if}
     </div>
     {#if app?.source.error}
@@ -278,25 +273,28 @@
                       {:else}
                         {@const c = choices[need.name]!}
                         <ModelAccessPicker bind:value={c.model} area={project?.area ?? null} alone={d.modelAlone ?? false} />
-                        {#each d.addons ?? [] as addon (addon)}
+                        {#each toolsAsked(d.addons ?? [], addons).install as addon (addon)}
+                          <div class="flex items-center gap-3">
+                            <span class="w-44 text-muted-foreground">Tool {addon}</span>
+                            <span class="text-warn">not installed: install it from <a class="text-link hover:underline" href={href({ view: "library", shelf: "tools", more: true })}>Library → Tools</a></span>
+                          </div>
+                        {/each}
+                        {#each Object.keys(c.bindings) as addon (addon)}
                           {@const fit = bindings.filter((x) => !x.error && x.addon === addon)}
-                          {@const info = addons.find((x) => x.name === addon)}
                           <div class="flex items-center gap-3">
                             <span class="w-44 text-muted-foreground">Configuration of {addon}</span>
                             {#if fit.length}
                               <NativeSelect.Root class="w-56" bind:value={c.bindings[addon]}>
                                 {#each fit as x (x.name)}<NativeSelect.Option value={x.name}>{x.name}</NativeSelect.Option>{/each}
                               </NativeSelect.Root>
-                            {:else if info && !info.settings?.length && !info.secretSlots?.length}
-                              <Button size="sm" variant="outline" onclick={() => makeConfiguration(info, need.name)}>Make one</Button>
                             {:else}
-                              <span class="text-warn">none yet: make one in <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Addons</a></span>
+                              <span class="text-warn">none yet: make one in <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Tools</a></span>
                             {/if}
                           </div>
                         {/each}
                         {#each d.knowledge ?? [] as k (k)}
                           <div class="flex items-center gap-3">
-                            <span class="w-44 text-muted-foreground">Knowledge folder</span>
+                            <span class="w-44 text-muted-foreground">Notes folder</span>
                             <NativeSelect.Root class="w-56" bind:value={c.knowledge[k]}>
                               <NativeSelect.Option value="">choose one ({k})</NativeSelect.Option>
                               {#each folders as f (f)}<NativeSelect.Option value={f}>{f}</NativeSelect.Option>{/each}
@@ -370,6 +368,10 @@
           {/if}
 
           {#if error}<p class="text-sm text-danger" data-testid="install-error">{error}</p>{/if}
+          {#if toolbox}
+            {@const t = toolbox}
+            <ToolboxConfirm changes={t} action="Add and install" onconfirm={() => ((confirmedAdds = t.adds), (toolbox = null), void install())} onback={() => (toolbox = null)} />
+          {/if}
           <div class="flex items-center justify-end gap-3">
             {#if doing}<p class="mr-auto text-sm text-muted-foreground" data-testid="install-doing">{doing}…</p>
             {:else if todo.length}<p class="mr-auto text-sm text-warn" data-testid="install-todo">Still to choose: {todo.join("; ")}.</p>

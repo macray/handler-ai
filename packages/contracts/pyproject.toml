@@ -2,7 +2,7 @@
 name = "handler-contracts"
 version = "0.1.0"
 license = "Apache-2.0"
-description = "Reference implementation of the Handler contracts (docs/dev/contracts.md)"
+description = "Reference implementation of the Handler contracts"
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.13,<3"]
 

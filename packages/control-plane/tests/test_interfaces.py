@@ -31,6 +31,7 @@ def test_schemas_are_checked() -> None:
         interfaces.check(AgentInterface(result=RESULT, fields=numbered))
 
 
+@pytest.mark.rule("job.its-result-is-checked")
 def test_the_last_result_block_counts() -> None:
     answer = (
         'First try:\n```json handler-result\n{"ok": false}\n```\nBetter:\n\n'
@@ -52,6 +53,7 @@ def test_the_last_result_block_counts() -> None:
     )
 
 
+@pytest.mark.rule("form.sessions-start-from-the-form")
 def test_inputs_are_checked(tmp_path: Path) -> None:
     form = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
     interface = AgentInterface(result=RESULT, fields=form)
@@ -68,6 +70,7 @@ def test_inputs_are_checked(tmp_path: Path) -> None:
         interfaces.check_input(ON_SKILL, SessionInput(fields={"target": "nope"}), tmp_path)
 
 
+@pytest.mark.rule("form.the-subject-is-read-only")
 def test_a_subject_is_mounted_read_only_with_its_digest(tmp_path: Path) -> None:
     folder = tmp_path / "tidy"
     folder.mkdir()
@@ -76,8 +79,8 @@ def test_a_subject_is_mounted_read_only_with_its_digest(tmp_path: Path) -> None:
     subject = interfaces.check_input(ON_SKILL, given, tmp_path)
     assert subject is not None and subject.skill == "tidy"
     assert subject.digest == skills.digest(folder)
-    mount = interfaces.subject_mount(tmp_path, subject)
-    assert (mount.target, mount.read_only, mount.kind) == ("/subject/tidy", True, "subject")
+    folder_given = interfaces.subject_folder(tmp_path, subject)
+    assert (folder_given.target, folder_given.writable) == ("/subject/tidy", False)
     (folder / "run.sh").write_text("echo\n")
     assert skills.digest(folder) != subject.digest  # changed since
     text = interfaces.request("Review it.", ON_SKILL, given, subject)
@@ -85,6 +88,7 @@ def test_a_subject_is_mounted_read_only_with_its_digest(tmp_path: Path) -> None:
     assert '"required": [\n    "ok"\n  ]' in text and "json handler-result" in text
 
 
+@pytest.mark.rule("form.instructions-name-only-its-fields")
 def test_instructions_name_fields_of_the_form() -> None:
     """D.18: `{{key}}` in an agent's instructions names a field of its form, filled in with its
     value in the first request; the Input block still holds every value."""

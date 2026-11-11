@@ -1,6 +1,6 @@
 [project]
 name = "handler-cli"
-version = "0.1.0"
+dynamic = ["version"]  # handlerd's: `handler --version` in a checkout too
 license = "Apache-2.0"
 description = "handler: command line client of the control plane daemon (contracts C and D)"
 requires-python = ">=3.12"
@@ -10,12 +10,19 @@ dependencies = ["handler-contracts", "httpx>=0.28", "websockets>=17"]
 handler = "handler_cli.cli:main"
 handler-ai = "handler_cli.cli:main"  # the same CLI: `uvx handler-ai` runs it
 
+[tool.uv]
+# an editable install reads its version again when handlerd's changes
+cache-keys = [{ file = "pyproject.toml" }, { file = "../control-plane/src/handler_control/__init__.py" }]
+
 [tool.uv.sources]
 handler-contracts = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "../control-plane/src/handler_control/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/handler_cli"]

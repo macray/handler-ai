@@ -1,0 +1,294 @@
+{
+  "$id": "urn:handler.tool/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonMcp": {
+      "description": "An MCP server the tool provides, over stdio, started from one of its own `commands`\n(installed at build time). Added to the agent's MCP servers under the tool's name.",
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "AddonMcp",
+      "type": "object"
+    },
+    "AddonSecretSlot": {
+      "description": "A secret slot: its value reaches the agent's sandbox as a phantom its proxy swaps back\ntowards `hosts` (E3, A.3), or with `delivery = \"env\"` as it is, for a tool that cannot be\ngiven a phantom (it signs its requests with the secret, or speaks something else than HTTP).",
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "hosts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hosts"
+        },
+        "delivery": {
+          "default": "proxy",
+          "enum": [
+            "proxy",
+            "env"
+          ],
+          "title": "Delivery",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "AddonSecretSlot",
+      "type": "object"
+    },
+    "AddonSlot": {
+      "description": "A setting or secret slot: the connection's value is exported as `env`.",
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "AddonSlot",
+      "type": "object"
+    },
+    "CacheDeclaration": {
+      "additionalProperties": false,
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
+        }
+      },
+      "required": [
+        "target",
+        "about"
+      ],
+      "title": "CacheDeclaration",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "const": "handler.tool/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "commands": {
+      "default": [],
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]*$",
+        "type": "string"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "check": {
+      "anyOf": [
+        {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Check"
+    },
+    "env": {
+      "anyOf": [
+        {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Env"
+    },
+    "settings": {
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "$ref": "#/$defs/AddonSlot"
+        }
+      },
+      "title": "Settings",
+      "type": "object"
+    },
+    "secretSlots": {
+      "default": {},
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "$ref": "#/$defs/AddonSecretSlot"
+        }
+      },
+      "title": "Secretslots",
+      "type": "object"
+    },
+    "egress": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress",
+      "type": "array"
+    },
+    "mcp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AddonMcp"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "needs": {
+      "default": [],
+      "items": {
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+        "type": "string"
+      },
+      "title": "Needs",
+      "type": "array"
+    },
+    "caches": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CacheDeclaration"
+      },
+      "title": "Caches",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name"
+  ],
+  "title": "AddonManifest",
+  "type": "object"
+}

@@ -32,6 +32,135 @@
       ],
       "title": "AddonSlotInfo",
       "type": "object"
+    },
+    "AddonToolbox": {
+      "description": "What an addon needs from the toolbox (B.6), against what the toolbox gives (G.5).",
+      "properties": {
+        "has": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Has",
+          "type": "array"
+        },
+        "adds": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ToolboxAdd"
+          },
+          "title": "Adds",
+          "type": "array"
+        },
+        "lacking": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Lacking",
+          "type": "array"
+        }
+      },
+      "title": "AddonToolbox",
+      "type": "object"
+    },
+    "CacheDeclaration": {
+      "additionalProperties": false,
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
+        }
+      },
+      "required": [
+        "target",
+        "about"
+      ],
+      "title": "CacheDeclaration",
+      "type": "object"
+    },
+    "ToolboxAdd": {
+      "description": "A system package (B.7) a save or an install adds to the toolbox, for what it needs.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "provides": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Provides",
+          "type": "array"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "script": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Script"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ToolboxAdd",
+      "type": "object"
     }
   },
   "description": "What installing from `source` would add (G.5), shown before the user decides; `digest`\nnames exactly this content: an install of other content is refused.",
@@ -79,6 +208,22 @@
         "type": "string"
       },
       "title": "Commands",
+      "type": "array"
+    },
+    "needs": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Needs",
+      "type": "array"
+    },
+    "caches": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CacheDeclaration"
+      },
+      "title": "Caches",
       "type": "array"
     },
     "env": {
@@ -152,6 +297,14 @@
       ],
       "default": null,
       "title": "Replaces"
+    },
+    "toolbox": {
+      "$ref": "#/$defs/AddonToolbox",
+      "default": {
+        "has": [],
+        "adds": [],
+        "lacking": []
+      }
     }
   },
   "required": [

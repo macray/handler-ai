@@ -16,25 +16,31 @@ from handler_contracts import (
     APP_HOME,
     APP_RUN_DIR,
     APP_SOCKET,
+    HANDLER_BIN,
     RUNTIME_IMAGE,
     SANDBOX_API_VERSION,
+    Addon,
     AppManifest,
     Confinement,
     Enforcement,
     FilteredNetwork,
+    HandlerTool,
     HarnessLaunch,
-    ImageMount,
+    HostFolder,
     Injection,
-    Mount,
+    MountKind,
     NetworkMode,
     NetworkPolicy,
     NoNetwork,
     OpenNetwork,
+    Paste,
     Resources,
     SandboxSpec,
-    SandboxUser,
+    SessionMount,
+    SocketFolder,
+    SystemPackageDaemon,
     TerminalStart,
-    WaylandDisplay,
+    WorkFolder,
     is_within,
 )
 
@@ -47,6 +53,33 @@ class ScopeError(ValueError):
 
 class AddonConflictError(ValueError):
     """An addon sets an env var the harness sets too (no silent override)."""
+
+
+class DaemonConflictError(ValueError):
+    """A toolbox daemon's env var is set by the harness or an addon too (no silent override)."""
+
+
+# B.7: the toolbox's daemons a sandbox has, started by this command before the agent's program.
+DAEMONS_TOOL = f"{HANDLER_BIN}/handler-daemons"
+DAEMONS_SCRIPT = """#!/bin/sh
+# handler: the toolbox's daemons (B.7), each in the background, then the agent's program; what
+# each says goes to /tmp/handler-daemons/<command>.log
+mkdir -p /tmp/handler-daemons
+while [ "$1" != "--" ]; do
+  "$1" < /dev/null > "/tmp/handler-daemons/$1.log" 2>&1 &
+  shift
+done
+shift
+exec "$@"
+"""
+
+
+def started_daemons(
+    daemons: list[SystemPackageDaemon], confinement: Confinement, display: bool
+) -> list[SystemPackageDaemon]:
+    """Those of the toolbox's daemons a sandbox with these abilities starts (B.7)."""
+    has = {confinement, *(["display"] if display else [])}
+    return [d for d in daemons if has & set(d.abilities)]
 
 
 def canonical_scope(scope: str) -> str:
@@ -90,15 +123,24 @@ def network_policy(
     addon_egress: list[str] | None = None,
     *,
     agent_allow: list[str] | None = None,
+    blocked: list[str] | None = None,
+    injections: list[Injection] | None = None,
 ) -> NetworkPolicy:
-    """The agent's network: in filtered mode, the required hosts and its own; enforcement
-    live-switchable (A.4)."""
+    """The agent's network: in filtered mode, the required hosts and its own, and those the
+    person keeps blocked; enforcement live-switchable (A.4). `injections`: the secrets its filter gives in place of the phantoms the
+    launch holds (A.3); none without a network (secrets.Delivery)."""
     if mode == "none":
         return NoNetwork(mode="none")
     if mode == "open":
-        return OpenNetwork(mode="open")
+        return OpenNetwork(mode="open", injections=list(injections or []))
     allow = sorted(set(required_egress(launch, addon_egress)) | set(agent_allow or []))
-    return FilteredNetwork(mode="filtered", allow=allow, enforcement=enforcement)
+    return FilteredNetwork(
+        mode="filtered",
+        allow=allow,
+        blocked=list(blocked or []),
+        enforcement=enforcement,
+        injections=list(injections or []),
+    )
 
 
 def sandbox_spec(
@@ -110,51 +152,123 @@ def sandbox_spec(
     enforcement: Enforcement,
     confinement: Confinement,
     allow: list[str] | None = None,
+    blocked: list[str] | None = None,
     labels: dict[str, str] | None = None,
     addons: AddonLaunch | None = None,
-    knowledge: list[Mount] | None = None,
-    subject: Mount | None = None,
-    display: WaylandDisplay | None = None,
+    knowledge: list[HostFolder] | None = None,
+    subject: HostFolder | None = None,
+    display: bool = False,
     terminal: TerminalStart | None = None,
+    paste: str | None = None,
     injections: list[Injection] | None = None,
+    daemons: list[SystemPackageDaemon] | None = None,
 ) -> SandboxSpec:
     """`scope` must already be checked (check_scope), `addons` resolved from checked bindings
-    (addons.check, addons.resolve), `knowledge` built from checked folders (knowledge.mounts),
+    (addons.check, addons.resolve), `knowledge` built from checked folders (knowledge.folders),
     `subject` from a run's checked input (D.18).
-    `network`, `enforcement`, `confinement` and `allow` (its own allowed hosts): the agent's.
+    `network`, `enforcement`, `confinement`, `allow` (its own allowed hosts) and `blocked` (those
+    the person keeps blocked): the agent's.
 
-    `terminal`: the process runs on the client's terminal (D.16), whose type it is told.
+    `display`: its windows on the person's screen (A.6), the display its runtime finds.
+    `terminal`: the process runs on the client's terminal (D.16), whose type it is told;
+    `paste`: the host folder the client puts a pasted image into, read as its clipboard.
     `injections`: the secrets its proxy gives in place of the phantoms `launch` holds (A.3).
+    `daemons`: the toolbox's (B.7); those of the sandbox's abilities start before its program.
     """
     addons = addons or AddonLaunch()
     if clash := sorted(addons.env.keys() & launch.env.keys()):
-        raise AddonConflictError(f"addon env vars also set by the harness: {', '.join(clash)}")
+        raise AddonConflictError(f"tool env vars also set by the harness: {', '.join(clash)}")
+    started = started_daemons(daemons or [], confinement, display)
+    daemon_env = {k: v for d in started for k, v in d.env.items()}
+    if clash := sorted(daemon_env.keys() & (launch.env.keys() | addons.env.keys())):
+        raise DaemonConflictError(
+            f"toolbox daemon env vars also set by the harness or a tool: {', '.join(clash)}"
+        )
+    argv = list(launch.argv)
+    tools = list(launch.tools)
+    if started:
+        argv = [DAEMONS_TOOL, *(d.command for d in started), "--", *argv]
+        tools.append(HandlerTool(target=DAEMONS_TOOL, content=DAEMONS_SCRIPT))
     term_env = {}
     if terminal is not None:
         term_env = {"TERM": terminal.term} | (
             {"COLORTERM": terminal.colorterm} if terminal.colorterm else {}
         )
-    scope_mount = Mount(source=scope, target=scope, read_only=False, kind="scope")
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
         name=name,
-        confinement=confinement,
+        isolation=confinement,
         image=launch.image,
-        argv=list(launch.argv),
-        env=dict(launch.env) | addons.env | term_env,
+        argv=argv,
+        env=dict(launch.env) | addons.env | daemon_env | term_env,
         workdir=scope,
-        user=SandboxUser(mode="host-user", home=launch.home),
-        mounts=[scope_mount, *launch.mounts, *(knowledge or []), *([subject] if subject else [])],
-        image_mounts=list(addons.image_mounts),
-        path_append=list(addons.path_append),
+        home=launch.home,
+        work_folder=WorkFolder(path=scope),
+        folders=[
+            *launch.folders,
+            *launch.skills,
+            *(knowledge or []),
+            *([subject] if subject else []),
+        ],
+        caches=list(launch.caches),
+        kept_files=list(launch.kept_files),
         files=list(launch.files),
-        writable_paths=list(launch.writable_paths),
-        network=network_policy(launch, network, enforcement, addons.egress, agent_allow=allow),
+        tools=tools,
+        addons=list(addons.images),
+        network=network_policy(
+            launch,
+            network,
+            enforcement,
+            addons.egress,
+            agent_allow=allow,
+            blocked=blocked,
+            injections=injections,
+        ),
         display=display,
+        paste=Paste(source=paste) if paste is not None else None,
         labels=labels,
         tty=terminal is not None,
-        injections=list(injections or []),
     )
+
+
+def seen(
+    *,
+    launch: HarnessLaunch,
+    scope: str,
+    addons: AddonLaunch | None = None,
+    knowledge: list[HostFolder] | None = None,
+    subject: HostFolder | None = None,
+) -> list[SessionMount]:
+    """What a session's sandbox (sandbox_spec, from the same parts) sees of the host, each by
+    what it is (F.8); browsable: its folder, knowledge, a subject, skills."""
+
+    def folder(f: HostFolder, kind: MountKind) -> SessionMount:
+        browsable = kind in ("knowledge", "subject", "config")
+        return SessionMount(target=f.target, kind=kind, read_only=not f.writable,
+                            source=f.source, browsable=browsable)  # fmt: skip
+
+    found = [SessionMount(target=scope, kind="scope", read_only=False, source=scope,
+                          browsable=True)]  # fmt: skip
+    found += [folder(f, "state") for f in launch.folders]
+    found += [
+        SessionMount(target=f.target, kind="state", read_only=False, source=f.source,
+                     browsable=False)
+        for f in launch.kept_files
+    ]  # fmt: skip
+    found += [
+        SessionMount(target=c.target, kind="cache", read_only=False, source=c.source,
+                     browsable=False)
+        for c in launch.caches
+    ]  # fmt: skip
+    found += [folder(f, "config") for f in launch.skills]
+    found += [folder(f, "knowledge") for f in knowledge or []]
+    found += [folder(subject, "subject")] if subject else []
+    found += [
+        SessionMount(target=i.target, kind="tools", read_only=True, source=i.source,
+                     browsable=False)
+        for i in (addons or AddonLaunch()).images
+    ]  # fmt: skip
+    return found
 
 
 CHECK_HOME = "/home/agent"  # the harnesses' home (harness.toml), where agents use addons
@@ -164,29 +278,24 @@ def addon_check_spec(
     *,
     name: str,
     toolbox: str,
-    image: str,
+    source: str,
     target: str,
     scope: str,
     argv: list[str],
-    path_append: list[str] | None = None,
+    path: str | None = None,
 ) -> SandboxSpec:
-    """G.4: an addon image checked as agents get it: mounted read-only at `target` in the
-    toolbox, confined like an agent (`strict`, the host user), no network. `path_append`: the
-    addon's bin directory as agents get it on PATH, or nothing to see what the toolbox alone
-    provides. `scope`: an empty folder, checked (the workdir)."""
-    mounts = [ImageMount(image=image, target=target)]
-    path = list(path_append or [])
-    return _check_spec(
-        name=name, toolbox=toolbox, scope=scope, argv=argv, image_mounts=mounts, path_append=path
-    )
+    """G.4: an addon's folder checked as agents get it: mounted read-only at `target` in the
+    toolbox, confined like an agent (`strict`, the host user), no network. `path`: the addon's
+    bin directory as agents get it on PATH, or nothing to see what the toolbox alone provides.
+    `scope`: an empty folder, checked (the workdir)."""
+    addon = Addon(source=source, target=target, path=path)
+    return _check_spec(name=name, toolbox=toolbox, scope=scope, argv=argv, addons=[addon])
 
 
 def toolbox_check_spec(*, name: str, toolbox: str, scope: str, argv: list[str]) -> SandboxSpec:
     """B.6: a command run in the toolbox alone, as agents get it, confined like an agent
     (`strict`, the host user), no network. `scope`: an empty folder, checked (the workdir)."""
-    return _check_spec(
-        name=name, toolbox=toolbox, scope=scope, argv=argv, image_mounts=[], path_append=[]
-    )
+    return _check_spec(name=name, toolbox=toolbox, scope=scope, argv=argv, addons=[])
 
 
 def _check_spec(
@@ -195,8 +304,7 @@ def _check_spec(
     toolbox: str,
     scope: str,
     argv: list[str],
-    image_mounts: list[ImageMount],
-    path_append: list[str],
+    addons: list[Addon],
 ) -> SandboxSpec:
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
@@ -205,12 +313,9 @@ def _check_spec(
         argv=argv,
         env={},
         workdir=scope,
-        user=SandboxUser(mode="host-user", home=CHECK_HOME),
-        mounts=[Mount(source=scope, target=scope, read_only=False, kind="scope")],
-        image_mounts=image_mounts,
-        path_append=path_append,
-        files=[],
-        writable_paths=[],
+        home=CHECK_HOME,
+        work_folder=WorkFolder(path=scope),
+        addons=addons,
         network=NoNetwork(mode="none"),
         labels={"handler.check": name},
     )
@@ -228,19 +333,18 @@ def automation_run_spec(
     definition: str,
     input_dir: str,
     output: str,
-    bin_dir: str,
+    commands: dict[str, str],
     services: str | None,
     trial: bool,
 ) -> SandboxSpec:
     """I.3: an automation's run. Its command line (`sh -c`) in the toolbox, confined like an
-    agent (`strict`, the host user), no network; every mount at its host path: its definition
-    read-only (the workdir), its input read-only, its output read-write, handler's commands
-    (`handler-llm`) read-only on PATH, and the folder of its services socket when it has one."""
-    mounts = [
-        Mount(source=definition, target=definition, read_only=True, kind="scope"),
-        Mount(source=input_dir, target=input_dir, read_only=True, kind="subject"),
-        Mount(source=output, target=output, read_only=False, kind="state"),
-        Mount(source=bin_dir, target=bin_dir, read_only=True, kind="config"),
+    agent (`strict`, the host user), no network; every folder at its host path: its output
+    read-write (its work folder), its definition read-only (the workdir), its input read-only,
+    and its services socket when it has one, at SERVICES_DIR (A.10). `commands`: handler's (`handler-llm`),
+    name → content, given as commands (tools in HANDLER_BIN)."""
+    folders = [
+        HostFolder(source=definition, target=definition, writable=False),
+        HostFolder(source=input_dir, target=input_dir, writable=False),
     ]
     env = {
         "HANDLER_INPUT": input_dir,
@@ -248,10 +352,12 @@ def automation_run_spec(
         "HANDLER_RUN": run_id,
         "HANDLER_TRY": "1" if trial else "0",
     }
+    sockets = []
     if services is not None:
+        name = os.path.basename(services)
         folder = os.path.dirname(services)
-        mounts.append(Mount(source=folder, target=folder, read_only=True, kind="state"))
-        env["HANDLER_SERVICES"] = services
+        sockets.append(SocketFolder(source=folder, target=SERVICES_DIR, reaches=[name]))
+        env["HANDLER_SERVICES"] = f"{SERVICES_DIR}/{name}"
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
         name=name,
@@ -259,17 +365,18 @@ def automation_run_spec(
         argv=["sh", "-c", run],
         env=env,
         workdir=definition,
-        user=SandboxUser(mode="host-user", home=AUTOMATION_HOME),
-        mounts=mounts,
-        path_append=[bin_dir],
-        files=[],
-        writable_paths=[],
+        home=AUTOMATION_HOME,
+        work_folder=WorkFolder(path=output),
+        folders=folders,
+        socket_folders=sockets,
+        tools=[HandlerTool(target=f"{HANDLER_BIN}/{n}", content=c) for n, c in commands.items()],
         network=NoNetwork(mode="none"),
         labels={"handler.automation": name},
     )
 
 
 APP_MEMORY = "512m"
+SERVICES_DIR = "/run/handler-services"  # an automation's services socket (I.5) is in it
 
 
 def app_sandbox_spec(
@@ -322,15 +429,24 @@ def app_sandbox_spec(
         | ({"HANDLER_APP_FILES": json.dumps({n: p for n, p, _ in files})} if files else {})
         | ({"HANDLER_APP_API": APP_API_SOCKET} if manifest.needs.handler_api and not test else {}),
         workdir=data,
-        user=SandboxUser(mode="host-user", home=APP_HOME),
-        mounts=[
-            Mount(source=data, target=data, read_only=False, kind="scope"),
-            Mount(source=code, target=APP_CODE_DIR, read_only=True, kind="app"),
-            Mount(source=run, target=APP_RUN_DIR, read_only=False, kind="app"),
-            *(Mount(source=p, target=p, read_only=not rw, kind="app") for _, p, rw in files),
+        home=APP_HOME,
+        work_folder=WorkFolder(path=data),
+        folders=[
+            HostFolder(source=code, target=APP_CODE_DIR, writable=False),
+            # its files needs, each a folder or a file (H.9): their shape waits for the App work
+            *(HostFolder(source=p, target=p, writable=rw) for _, p, rw in files),
         ],
-        files=[],
-        writable_paths=[],
+        # its socket, and handlerd's for its needs (H.3, H.9, H.11)
+        socket_folders=[
+            SocketFolder(
+                source=run,
+                target=APP_RUN_DIR,
+                serves=[os.path.basename(APP_SOCKET)],
+                reaches=[os.path.basename(APP_API_SOCKET)]
+                if manifest.needs.handler_api and not test
+                else [],
+            )
+        ],
         network=network,
         resources=manifest.resources or Resources(memory=APP_MEMORY),
         labels={"handler.app": manifest.name},

@@ -1,5 +1,5 @@
 {
-  "comment": "Envelope test vectors (docs/dev/design/remote.md §4), checked by the Python connector and the remote client's WebCrypto code.",
+  "comment": "Envelope test vectors (remote design §4), checked by the Python connector and the remote client's WebCrypto code.",
   "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
   "hostId": "h_0123456789abcdef",
   "deviceId": "d_fedcba9876543210",

@@ -1,0 +1,25 @@
+{
+  "$id": "urn:handler.control/v1/run-plan-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/plans/{id}/run`: run it again from a step (D.27).",
+  "properties": {
+    "from": {
+      "minimum": 1,
+      "title": "From",
+      "type": "integer"
+    },
+    "allow": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allow",
+      "type": "array"
+    }
+  },
+  "required": [
+    "from"
+  ],
+  "title": "RunPlanRequest",
+  "type": "object"
+}

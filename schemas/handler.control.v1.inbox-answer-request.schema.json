@@ -1,0 +1,34 @@
+{
+  "$id": "urn:handler.control/v1/inbox-answer-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/inbox/{id}/answer`: hosts of a message's `refused` allowed or kept blocked for\nits agent (F.9); a session's agent is told; `again` (allowed only) runs its plan from its\nstep, or its automation, again.",
+  "properties": {
+    "decision": {
+      "enum": [
+        "allowed",
+        "kept blocked"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "hosts": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Hosts",
+      "type": "array"
+    },
+    "again": {
+      "default": false,
+      "title": "Again",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "decision",
+    "hosts"
+  ],
+  "title": "InboxAnswerRequest",
+  "type": "object"
+}

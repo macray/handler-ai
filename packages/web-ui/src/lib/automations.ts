@@ -1,6 +1,7 @@
 // Automations (contract I): when a session stops or at a time, handler runs a script, an agent or an
 // app's route. What the pages say of one in words: when it runs, what it runs, a run.
 import type { Automation, AutomationRun, Schedule } from "./contracts.gen";
+import { slug } from "./text";
 
 /** When it runs, as a sentence: "Every 1h", "At 08:30 on mon, fri", "When a session of project shop stops". */
 export function whenSentence(definition: Automation | null | undefined): string {
@@ -15,15 +16,6 @@ export function whenSentence(definition: Automation | null | undefined): string 
   if (only?.project?.length) who.push(`of project ${only.project.join(", ")}`);
   if (only?.agent?.length) who.push(`of agent ${only.agent.join(", ")}`);
   return who.length ? `When a session ${who.join(" and ")} stops` : "When any session stops";
-}
-
-/** What it runs, in a few words: "a script", "the agent reviewer", "a route of the app coach". */
-export function runSentence(definition: Automation | null | undefined): string {
-  const run = definition?.run;
-  if (run === undefined) return "";
-  if (typeof run === "string") return "runs a script";
-  if ("agent" in run) return `runs the agent ${run.agent}${run.project ? ` of ${run.project}` : ""}`;
-  return `calls ${run.call} of the app ${run.app}`;
 }
 
 export function onSchedule(definition: Automation | null | undefined): boolean {
@@ -119,8 +111,7 @@ export function suggestName(what: string, form: ScheduleForm | null): string {
         : form.days.length === 5 && WEEKDAYS.every((d) => form.days.includes(d))
           ? "weekdays"
           : form.days.join("-");
-  const base = what.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${base || "automation"}-${when}`.slice(0, 64).replace(/-+$/, "");
+  return `${slug(what) || "automation"}-${when}`.slice(0, 64).replace(/-+$/, "");
 }
 
 /** The automations that are on and run that agent (by id, I.1). */
@@ -183,4 +174,24 @@ export function howOften(form: ScheduleForm): string {
   }
   const week = Math.round((7 * 1440) / minutes);
   return week >= 1 ? `about ${week} run${week === 1 ? "" : "s"} a week` : "less than one run a week";
+}
+
+/** What it runs, as the Library's filters say it: one of your agents, an app's route, or your
+ *  script; null while its definition cannot be read. */
+export type RunsKind = "agent" | "app" | "script";
+export function runsKind(definition: Automation | null | undefined): RunsKind | null {
+  const run = definition?.run;
+  if (run === undefined) return null;
+  if (typeof run === "string") return "script";
+  return "agent" in run ? "agent" : "app";
+}
+
+/** What it runs, in a word or two: the agent's name ("Reviewer"), "Planner's route", "your
+ *  script". `agentName`: the name of the agent it is bound to (I.1), when there is one. */
+export function runsWords(definition: Automation | null | undefined, agentName?: string): string {
+  const run = definition?.run;
+  if (run === undefined) return "";
+  if (typeof run === "string") return "your script";
+  if ("agent" in run) return agentName || run.agent;
+  return `${run.app}'s route`;
 }

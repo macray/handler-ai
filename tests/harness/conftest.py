@@ -1,6 +1,9 @@
 """Contract B conformance: the full pipeline for a harness, black box.
 
-    agent ──render (B)──► HarnessLaunch ──compose──► SandboxSpec ──handler-sandbox-podman (A)──► ACP
+    agent ──render (B)──► HarnessLaunch ──compose──► SandboxSpec ──handler-sandbox-<runtime> (A)──► ACP
+
+On the default runtime (runtimes.default_runtime: Podman; Apple container on a Mac), its images
+looked up through its own `image inspect` (A.7).
 
 Credentials for real prompt turns are opt-in (tests are skipped without them):
     HANDLER_TEST_CLAUDE_CONFIG_DIR / HANDLER_TEST_CLAUDE_CONFIG_JSON
@@ -8,7 +11,6 @@ Credentials for real prompt turns are opt-in (tests are skipped without them):
     HANDLER_TEST_MISTRAL_API_KEY    a Mistral API key
 """
 
-import shutil
 import subprocess
 import uuid
 from collections.abc import Iterator
@@ -18,17 +20,21 @@ from typing import Any
 import pytest
 
 from handler_contracts import AgentSpec, McpServer, NetworkMode
-from handler_control import compose, sandbox_process
+from handler_control import compose
 from handler_harness import catalog, render
 
+from ..sandbox.conftest import popen
 from ..support import dev_env
 from ..support.acp_client import AcpClient
+from ..support.runtimes import default_runtime
 
 
 def image_present(image: str) -> bool:
-    if not shutil.which("podman"):
+    runtime = default_runtime()
+    if runtime is None:
         return False
-    return subprocess.run(["podman", "image", "exists", image], check=False).returncode == 0
+    found = [runtime.binary, "image", "inspect", image]
+    return subprocess.run(found, capture_output=True, check=False).returncode == 0
 
 
 @pytest.fixture
@@ -62,7 +68,6 @@ def start_agent(
     launch = render(
         harness.descriptor,
         agent,
-        checked,
         files or {},
         account_token=account_token,
         provider_key=provider_key,
@@ -78,9 +83,13 @@ def start_agent(
         confinement="strict",
         allow=allow,
     )
+    runtime = default_runtime()
+    assert runtime is not None  # image_present said so
     if network != "none":
-        dev_env.ensure_network_filter()
-    proc = sandbox_process.start(
-        spec, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-    )
+        dev_env.ensure_network_filter(runtime.binary)
+    doc = spec.model_dump(mode="json", by_alias=True, exclude_none=True)
+    proc = popen(
+        runtime.binary, doc, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )  # fmt: skip
     return AcpClient.over_process(proc, on_permission="deny"), launch

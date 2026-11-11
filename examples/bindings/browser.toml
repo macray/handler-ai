@@ -1,6 +1,0 @@
-# A web browser for the agent (addon `playwright`, docs/dev/design/browser.md). No setting needed;
-# logins: addons/playwright/PROVISIONING.md. Copy to ~/.config/handler-ai/bindings/ and give it to an
-# agent (web UI: Addons in the agent's form; CLI: `--binding browser`), with `--display` to watch the browser window.
-apiVersion  = "handler.binding/v1"
-addon       = "playwright"
-description = "Web browser, no login"

@@ -5,6 +5,7 @@
   // it, saved back from there).
   import { Button } from "$lib/components/ui/button";
   import * as NativeSelect from "$lib/components/ui/native-select";
+  import HelperCard from "./HelperCard.svelte";
   import RunForm from "./RunForm.svelte";
   import RunList from "./RunList.svelte";
   import { api } from "../lib/api";
@@ -113,10 +114,16 @@
         {/if}
       </div>
     {:else}
-      <p class="text-sm text-muted-foreground">
-        No agent reviews skills yet. <a class="text-link hover:underline" href={href({ view: "set-up-helper", need: "skill-review" })} data-testid="make-reviewer">Set up the Skill reviewer</a>
-        (choose its models): it reads the skill, never runs it, and says what it makes your agents do.
-      </p>
+      <div data-testid="make-reviewer">
+        <HelperCard need="skill-review" onready={() => void refresh()}>
+          {#snippet preview()}
+            <div class="space-y-1 text-xs">
+              <p class="font-medium">Does what it says · runs 1 script · reaches no site</p>
+              <p>scripts/check.sh only reads the files it is given.</p>
+            </div>
+          {/snippet}
+        </HelperCard>
+      </div>
     {/if}
     {#if runs.length}<RunList {runs} {agents} digest={skill.digest} />{/if}
     <p class="text-xs text-muted-foreground">A review advises: it never allows or blocks anything. Read what it points at.</p>
@@ -130,10 +137,7 @@
       </div>
       <p class="text-xs text-muted-foreground">A session working on a copy of the skill: nothing changes here until you save it back from the session (Save to library, Replace).</p>
     {:else}
-      <p class="text-sm text-muted-foreground">
-        <a class="text-link hover:underline" href={href({ view: "set-up-helper", need: "skill-creator" })}>Set up the Skill creator</a> (choose its models) to
-        improve skills with it.
-      </p>
+      <HelperCard need="skill-creator" onready={() => void refresh()} />
     {/if}
   </section>
   {#if error}<p class="text-sm text-danger">{error}</p>{/if}

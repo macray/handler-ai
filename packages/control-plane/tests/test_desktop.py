@@ -25,6 +25,7 @@ def logged(log: Path) -> list[str]:
     return []
 
 
+@pytest.mark.rule("files.a-file-is-shown-never-opened")
 def test_a_file_is_selected_in_its_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
     gdbus = fake(tmp_path, "gdbus", 0)
@@ -37,6 +38,7 @@ def test_a_file_is_selected_in_its_folder(tmp_path: Path, monkeypatch: pytest.Mo
     assert not opener.exists()
 
 
+@pytest.mark.rule("files.a-file-is-shown-never-opened")
 def test_without_the_service_its_folder_is_opened_never_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -47,6 +49,7 @@ def test_without_the_service_its_folder_is_opened_never_the_file(
     assert logged(opener) == ["/work"]
 
 
+@pytest.mark.rule("files.a-file-is-shown-never-opened")
 def test_nothing_to_show_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
     assert not desktop.reveal(Path("/work"), is_folder=True)

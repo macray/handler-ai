@@ -3,6 +3,7 @@ against a real handlerd: sessions held by the daemon, used from the terminal, th
 another client."""
 
 import argparse
+import asyncio
 import contextlib
 import io
 import json
@@ -14,9 +15,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from websockets.asyncio.server import ServerConnection, serve
 
 from handler_cli.client import ClientError
-from handler_cli.session_commands import acknowledge_outside, settle_flags
+from handler_cli.session_commands import acknowledge_outside, flag_changes, settle_flags
+from handler_cli.terminal import Terminal
+from handler_harness.render import FILTERED_NETWORK
 
 from ..support.acp_client import AcpClient
 from ..support.daemon import Daemon
@@ -77,6 +81,7 @@ def test_run_is_an_ad_hoc_session_here(daemon: Daemon) -> None:
     assert r.returncode != 0 and "which account or provider?" in r.stderr
 
 
+@pytest.mark.rule("cli.the-folder-decides-the-project")
 def test_run_names_an_agent_of_the_project_of_the_folder(daemon: Daemon) -> None:
     folder = daemon.make_scope()
     p = project(daemon, folder)
@@ -85,7 +90,8 @@ def test_run_names_an_agent_of_the_project_of_the_folder(daemon: Daemon) -> None
     r = handler(daemon, "run", "Review", "-p", "report", "--detach", cwd=inside)
     assert r.returncode == 0, r.stderr
     sid = session_id(r.stdout)
-    events(daemon, sid, "Be brief.\\n\\nreport")  # the agent's instructions, then the request
+    # the agent's instructions, what its filtered network means, then the request
+    events(daemon, sid, json.dumps(f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport")[1:-1])
     assert next(s for s in sessions(daemon) if s["id"] == sid)["projectId"] == p["id"]
     assert "review" in handler(daemon, "session", "list").stdout
     r = handler(daemon, "run", "nope", cwd=folder)
@@ -93,6 +99,23 @@ def test_run_names_an_agent_of_the_project_of_the_folder(daemon: Daemon) -> None
     assert "(its agents: dev, review)" in r.stderr
 
 
+@pytest.mark.rule("cli.the-folder-decides-the-project")
+def test_a_project_with_no_agent_yet_refuses(daemon: Daemon) -> None:
+    """In the folder of a project with no agent, nothing runs: it says where to add one."""
+    folder = daemon.make_scope()
+    with daemon.http() as c:
+        r = c.post("/v1/projects", json={"folder": str(folder), "name": "empty"})
+        assert r.status_code == 201, r.text
+    empty = r.json()["id"]
+    r = handler(daemon, "run", "--detach", cwd=folder)
+    assert r.returncode == 1
+    assert "the project empty has no agent yet: add one on its page in the web UI" in r.stderr
+    assert not [s for s in sessions(daemon) if s.get("projectId") == empty]
+
+
+@pytest.mark.rule(
+    "cli.the-folder-decides-the-project", "cli.another-area-runs-only-outside-once-confirmed"
+)
 def test_the_project_s_folder_decides_the_agent(daemon: Daemon) -> None:
     """In a project's folder, `handler run` uses its agents and their settings; another account runs
     its default agent, unless it is not made for the project's area (D.19): refused, and
@@ -135,6 +158,7 @@ def test_the_project_s_folder_decides_the_agent(daemon: Daemon) -> None:
             c.put("/v1/accounts/fake", json={"name": "fake", "harness": "fake"})
 
 
+@pytest.mark.rule("cli.a-flag-is-never-ignored")
 def test_a_flag_that_differs_from_the_project_s_agent_is_saved_never_ignored(
     daemon: Daemon,
 ) -> None:
@@ -165,6 +189,7 @@ def test_a_flag_that_differs_from_the_project_s_agent_is_saved_never_ignored(
     assert r.returncode != 0 and "name one of its agents: handler run AGENT" in r.stderr
 
 
+@pytest.mark.rule("cli.the-folder-decides-the-project")
 def test_an_account_picks_the_agent_whose_model_it_is(daemon: Daemon) -> None:
     """D.1: naming an account runs the project's agent on it, the default agent first."""
     folder = daemon.make_scope()
@@ -211,7 +236,8 @@ def test_terminal_client(daemon: Daemon) -> None:
                 seen.append(out.get(timeout=0.5))
 
     try:
-        expect("> hello")  # replayed
+        expect("> Your network goes through Handler's network filter")  # replayed: its first
+        expect("hello")  # prompt, what its filtered network means before the request
         proc.stdin.write("report\n")
         proc.stdin.flush()
         expect('"mode": "yolo"')
@@ -227,6 +253,64 @@ def test_terminal_client(daemon: Daemon) -> None:
     finally:
         proc.kill()
     assert next(s for s in sessions(daemon) if s["id"] == sid)["state"] == "running"
+
+
+def test_run_says_why_a_session_did_not_start_and_ends(daemon: Daemon) -> None:
+    """A session that cannot start (its account's token in an environment variable handlerd does
+    not have): `handler run -p` says why in full, a line and no traceback, and exits 1 instead
+    of waiting. Its why is the session's error: the WebSocket close's reason is cut at 120
+    characters."""
+    here = daemon.make_scope()
+    var = "HANDLER_TEST_" + "NOT_SET_" * 16  # long: past what a close's reason can say
+    added = handler(daemon, "account", "add", "unset-env", "fake", "--area", "any",
+                    "--token-env", var)  # fmt: skip
+    assert added.returncode == 0, added.stderr
+    try:
+        r = subprocess.run(
+            [HANDLER, "run", "unset-env", "-p", "hi"], cwd=here, env=env(daemon),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, check=False,
+        )  # fmt: skip
+        assert r.returncode == 1, (r.stdout, r.stderr)
+        assert f"environment variable {var} is not set" in r.stdout
+        assert "Traceback" not in r.stderr, r.stderr
+    finally:
+        handler(daemon, "account", "rm", "unset-env")
+
+
+class _Daemon:
+    """What the terminal client asks handlerd over HTTP: the session, its error."""
+
+    def __init__(self, error: str | None) -> None:
+        self.error = error
+
+    def call(self, method: str, path: str, json: Any = None) -> dict[str, Any]:
+        return {"id": "s_1", "error": self.error}
+
+
+@pytest.mark.parametrize("when", ["at-once", "after-initialize"])
+def test_the_terminal_client_ends_when_handlerd_closes_before_the_session_runs(
+    when: str,
+) -> None:
+    """handlerd closes the WebSocket of a session that failed to start (1011, its reason cut at
+    120 characters), before or after the client's `initialize`: the client says the session's
+    error and returns 1; before, a traceback (the close came first) or a wait until killed."""
+
+    async def refuse(ws: ServerConnection) -> None:
+        if when == "after-initialize":
+            await ws.recv()
+        await ws.close(1011, "environment variable NOPE is n")
+
+    out = io.StringIO()
+
+    async def attach() -> int:
+        async with serve(refuse, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            daemon = _Daemon("environment variable NOPE is not set")
+            terminal = Terminal(daemon, {"id": "s_1"}, out)  # ty: ignore[invalid-argument-type]
+            return await asyncio.wait_for(terminal.run(f"ws://127.0.0.1:{port}", "t"), 10)
+
+    assert asyncio.run(attach()) == 1
+    assert "[session closed: environment variable NOPE is not set]" in out.getvalue()
 
 
 def test_attach_stdio_and_acp_agent_bridge_a_session(daemon: Daemon) -> None:
@@ -247,7 +331,7 @@ def test_attach_stdio_and_acp_agent_bridge_a_session(daemon: Daemon) -> None:
         assert new["sessionId"].startswith("s") and new["modes"]["currentModeId"] == "yolo"
         client.prompt(new["sessionId"], "report")
         # the agent's instructions go with the first prompt (F.3)
-        assert json.loads(client.text())["prompt"] == ["Be brief.\n\nreport"]
+        assert json.loads(client.text())["prompt"] == [f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport"]
         assert not [u for u in client.updates if str(u.get("method", "")).startswith("_handler/")]
     finally:
         client.close()
@@ -292,6 +376,7 @@ def test_attach_stdio_and_acp_agent_bridge_a_session(daemon: Daemon) -> None:
     assert next(s for s in sessions(daemon) if s["id"] == sid)["state"] == "running"
 
 
+@pytest.mark.rule("cli.another-area-runs-only-outside-once-confirmed")
 def test_anyway_with_an_account_not_for_the_area_is_typed_yes(monkeypatch: Any) -> None:
     """D.19: --anyway in a Work project's folder with a Personal account: the person types yes in
     a terminal; anything else, and no terminal at all, does not start it."""
@@ -320,6 +405,7 @@ def test_anyway_with_an_account_not_for_the_area_is_typed_yes(monkeypatch: Any) 
     acknowledge_outside(d, project | {"area": "Personal"}, "perso", args)  # nothing to confirm
 
 
+@pytest.mark.rule("cli.a-flag-is-never-ignored")
 def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any) -> None:
     """In a terminal, handler asks "Save this to the agent?": yes saves it (the lists added to),
     with the agent's other settings and own fields; anything else starts nothing."""
@@ -338,13 +424,14 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
         "id": "a1", "name": "tests", "scope": "/code/x", "model": {"account": "fake",
         "harness": "fake", "requiredHosts": []}, "network": "filtered", "egress": "enforce",
         "allow": ["a.test:443"], "confinement": "strict", "permissions": "bypass",
-        "bindings": [], "knowledge": [], "display": False, "skills": ["s"],
+        "addons": [], "knowledge": [], "display": False, "skills": ["s"],
         "acpUrl": "ws://x", "connections": [],
     }  # fmt: skip
     flags: dict[str, Any] = {"network": None, "log_only": True, "containers": False}
     flags["permissions"] = None
-    flags |= {"display": False, "allow": ["b.test:443", "a.test:443"], "binding": None}
-    args = argparse.Namespace(**flags, knowledge=None, save=False)
+    flags |= {"display": False, "allow": ["b.test:443", "a.test:443"], "tool": None}
+    flags["keep_blocked"] = None
+    args = argparse.Namespace(**flags, notes=None, save=False)
     d: Any = FakeDaemon()
     monkeypatch.setattr("sys.stdin", Terminal())
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
@@ -359,6 +446,25 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
     assert body["model"] == {"account": "fake", "harness": "fake"}
     assert (body["name"], body["scope"], body["skills"]) == ("tests", "/code/x", ["s"])
     saved.clear()
-    same = argparse.Namespace(**flags | {"log_only": False}, knowledge=None, save=False)
+    same = argparse.Namespace(**flags | {"log_only": False}, notes=None, save=False)
     assert settle_flags(d, agent | {"allow": ["a.test:443", "b.test:443"]}, same, None)
     assert saved == []  # nothing differs: nothing asked, nothing saved
+
+
+@pytest.mark.rule("save.a-host-is-allowed-or-kept-blocked")
+def test_keep_blocked_and_allow_take_a_host_off_the_other_list() -> None:
+    """--keep-blocked adds to the hosts kept blocked and takes them off the allowed ones;
+    --allow the reverse (A.3: never both)."""
+    agent = {"allow": ["a.test:443", "b.test:443"], "blocked": ["c.test:443"]}
+    none = {"network": None, "log_only": False, "containers": False, "permissions": None}
+    none |= {"display": False, "tool": None, "notes": None}
+    args = argparse.Namespace(**none, allow=None, keep_blocked=["a.test:443"])
+    assert flag_changes(agent, args) == (
+        {"blocked": ["a.test:443", "c.test:443"], "allow": ["b.test:443"]},
+        ["kept blocked + a.test:443"],
+    )
+    args = argparse.Namespace(**none, allow=["c.test:443"], keep_blocked=None)
+    assert flag_changes(agent, args) == (
+        {"allow": ["a.test:443", "b.test:443", "c.test:443"], "blocked": []},
+        ["allow + c.test:443"],
+    )

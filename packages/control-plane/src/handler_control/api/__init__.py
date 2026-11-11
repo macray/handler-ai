@@ -18,13 +18,16 @@ section, wired by `create_app` in this order:
     agents       /v1/agents … every agent, whatever its home (D.1, D.2): created, updated,
                  deleted; POST /v1/agents/{id}/terminal → its terminal program's sandbox (D.16)
     sessions     /v1/sessions … daemon-held chats (F)
-    remote       /v1/remote … (D.7, docs/dev/design/remote.md)
-    apps         /v1/apps … (H, docs/dev/design/apps.md); the apps themselves are served
+    plans        /v1/plans … steps written, approved and run one after another; /v1/plan-drafts …
+                 the plans being written (D.27)
+    remote       /v1/remote … (D.7, remote design)
+    apps         /v1/apps … (H, apps design); the apps themselves are served
                  at their own origins (app_http.py), outermost
     automations  /v1/automations …, /v1/automation-examples, their runs; the runs on a session
                  (I.9)
     inbox        /v1/inbox … what handler tells the person (apps' notifications, automations'
                  results)
+    ui           /v1/ui … the web UI's sign-in: a one-time link sets its cookie (auth.py)
     acp          WebSocket /v1/agents/{id}/acp → launcher.start → Relay(policy) (C)
                  WebSocket /v1/sessions/{id}/acp → attach to a daemon-held session (F.4)
     web UI       static files at / + folder picker (webui.py), mounted last
@@ -35,10 +38,12 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
-from .. import __version__, auth, webui
+from handler_contracts import RefusedHost
+
+from .. import __version__, auth, refusals, webui
 from ..agent_checks import CheckStore
 from ..agent_service import AgentService
-from ..agents import AgentRegistry
+from ..agents import AgentRecord, AgentRegistry
 from ..app_http import AppOrigins
 from ..app_runs import AppRuns
 from ..apps import AppStore
@@ -48,9 +53,11 @@ from ..builds import BuildStore
 from ..image_updates import ImageUpdater
 from ..improvements import ImprovementStore
 from ..inbox import Inbox
+from ..plan_drafts import PlanDrafts
+from ..plans import PlanStore, install_skill
 from ..projects import ProjectRegistry
 from ..remote import Connector
-from ..sessions import SessionStore
+from ..sessions import SessionRecord, SessionStore
 from ..settings import Settings
 from ..uses import UseGraph
 from ..voice import VoiceStore
@@ -72,6 +79,8 @@ from .folders import add_folder_routes
 from .handler_needs import add_handler_need_routes
 from .images import add_addon_image_routes, add_image_routes
 from .inbox import add_inbox_routes
+from .pins import add_pin_routes
+from .plans import add_plan_routes
 from .projects import add_project_routes
 from .providers import add_provider_routes
 from .remote import add_remote_routes
@@ -79,6 +88,8 @@ from .secrets import add_secret_routes
 from .sessions import add_session_routes
 from .skills import add_skill_archive_routes, add_skill_file_routes, add_skill_routes
 from .sources import add_source_routes
+from .toolbox import add_toolbox_routes
+from .ui import add_ui_routes
 from .uses import add_use_routes
 from .voice import add_voice_routes
 
@@ -89,6 +100,13 @@ def create_app(settings: Settings) -> FastAPI:
     sessions = SessionStore(settings, registry)
     projects = ProjectRegistry(settings.state_dir, registry)
     inbox = Inbox(settings)
+
+    def refused_while_away(
+        rec: SessionRecord, agent: AgentRecord, hosts: list[RefusedHost]
+    ) -> None:
+        inbox.add(**refusals.session_message(rec, agent, hosts))
+
+    sessions.refusal_listeners.append(refused_while_away)
     apps = AppStore(settings, token, inbox, AppRuns(settings, sessions, projects, inbox))
     ctx = Context(
         settings,
@@ -96,7 +114,7 @@ def create_app(settings: Settings) -> FastAPI:
         registry,
         projects,
         sessions,
-        builds := BuildStore(settings),
+        builds := BuildStore(settings, registry),
         Connector(settings, sessions, apps),
         apps,
         ImageUpdater(settings, builds, registry),
@@ -115,6 +133,8 @@ def create_app(settings: Settings) -> FastAPI:
             improvements=improvements,
             apps=apps,
         ),
+        PlanStore(settings, registry, projects, sessions, inbox),
+        PlanDrafts(settings, projects),
     )
 
     ctx.remote.projects = ctx.projects
@@ -127,7 +147,10 @@ def create_app(settings: Settings) -> FastAPI:
         ctx.apps.start()
         ctx.updates.start()
         ctx.automations.start()
+        install_skill(settings)
+        ctx.plans.start_watching()
         yield
+        await ctx.plans.close()
         await ctx.improvements.close()
         await ctx.checks.close()
         await ctx.automations.close()
@@ -159,19 +182,23 @@ def add_routes(app: FastAPI, ctx: Context) -> None:
     add_folder_routes(app, ctx)
     add_cache_routes(app, ctx)
     add_secret_routes(app, ctx)
+    add_toolbox_routes(app, ctx)
     add_image_routes(app, ctx)
     add_addon_image_routes(app, ctx)
     add_addon_install_routes(app, ctx)
     add_source_routes(app, ctx)
     add_project_routes(app, ctx)
+    add_pin_routes(app, ctx)
     add_agent_routes(app, ctx)
     add_agent_check_routes(app, ctx)
     add_use_routes(app, ctx)
     add_session_routes(app, ctx)
+    add_plan_routes(app, ctx)
     add_remote_routes(app, ctx)
     add_app_routes(app, ctx)
     add_ask_routes(app, ctx)
     add_voice_routes(app, ctx)
     add_automation_routes(app, ctx)
     add_inbox_routes(app, ctx)
+    add_ui_routes(app, ctx)
     add_acp_endpoint(app, ctx)

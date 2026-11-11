@@ -1,15 +1,18 @@
-"""H.16 conformance: a draft of an app's code opened at its own address, in podman: on copies
+"""H.16 conformance: a draft of an app's code opened at its own address, in a real sandbox: on copies
 taken when opened (what is done there leaves the app and its data as they were), each page with
 the draft's banner, closed when the draft is thrown away."""
 
 from pathlib import Path
 
+import pytest
+
 from ..support.daemon import Daemon
-from .conftest import AppClient, add_app, api, copy_fixture, requires_podman
+from .conftest import AppClient, add_app, api, copy_fixture, requires_app_runtime
 
-pytestmark = requires_podman
+pytestmark = requires_app_runtime
 
 
+@pytest.mark.rule("origin.opened-by-a-one-time-link", "draft.opened-on-copies")
 def test_an_opened_draft_works_on_copies(daemon: Daemon, data_root: Path) -> None:
     assert add_app(daemon, copy_fixture("app", data_root)).status_code == 201
     r = api(daemon, "POST", "/v1/apps/counter/deploy")

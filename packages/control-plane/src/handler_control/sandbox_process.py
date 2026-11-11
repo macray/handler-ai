@@ -4,7 +4,7 @@ handler-sandbox-<impl> launch           with the SandboxSpec JSON on fd 3; its s
                                         the agent's ACP stream (with `tty`, D.16: none, the
                                         client runs `attach`), stderr carries logs and egress
                                         events
-handler-sandbox-<impl> set-allow|set-egress on a running sandbox (A.4)
+handler-sandbox-<impl> set-allow|set-blocked|set-egress|set-watched on a running sandbox (A.4)
 handler-sandbox-<impl> attach NAME      run by `handler terminal` (D.16), never by handlerd
 handler-sandbox-<impl> sweep            what launchers that died left behind (daemon.py)
 """
@@ -26,8 +26,10 @@ from handler_contracts import Enforcement, SandboxSpec
 
 log = logging.getLogger("handler.sandbox")
 
-IMPLEMENTATION = "handler-sandbox-podman"
-LAUNCHER_PREFIX = f"{IMPLEMENTATION}: "  # a line of the launcher's own, not the sandbox's logs
+EXECUTABLE_PREFIX = "handler-sandbox-"  # + the runtime's name: its executable (contract A)
+# the runtime handlerd uses when none was chosen: the system's (D.2)
+DEFAULT_RUNTIME = "apple" if sys.platform == "darwin" else "podman"
+_runtime = [DEFAULT_RUNTIME]  # the one in use (runtime.toml, read at start: runtime.load)
 # tests only: another executable in its place (tests/support/fake_sandbox.py, which runs the fake
 # harness on the host so the daemon's tests need no container)
 TEST_SANDBOX_ENV = "HANDLER_TEST_SANDBOX"
@@ -37,25 +39,75 @@ STOP_TIMEOUT = 20.0
 FOLLOW_INTERVAL = 0.2  # seconds between two reads of a detached launcher's output
 
 
-def binary() -> str:
-    """The implementation's executable: next to our interpreter first (same install), else PATH."""
-    if test := os.environ.get(TEST_SANDBOX_ENV):
-        return test
-    name = IMPLEMENTATION
-    sibling = Path(sys.executable).parent / name
+def give_dev_agent(*folders: Path) -> None:
+    """Dev containers (handlerd as root, the sandbox's user HANDLER_SANDBOX_DEV_UID, A3): the
+    folders a sandbox writes (an app backend's, a run's output) become that uid's, as they are
+    the host user's elsewhere."""
+    dev = os.environ.get("HANDLER_SANDBOX_DEV_UID")
+    if not dev:
+        return
+    for folder in folders:
+        os.chown(folder, int(dev), int(dev), follow_symlinks=False)
+        for parent, dirs, names in os.walk(folder):
+            for entry in (*dirs, *names):
+                os.chown(Path(parent) / entry, int(dev), int(dev), follow_symlinks=False)
+
+
+def current() -> str:
+    """The sandbox runtime in use, by name ("podman")."""
+    return _runtime[0]
+
+
+def use(name: str) -> None:
+    _runtime[0] = name
+
+
+def executable(name: str) -> str | None:
+    """Runtime `name`'s executable: next to our interpreter first (same install), else on PATH;
+    None when it is not installed."""
+    sibling = Path(sys.executable).parent / f"{EXECUTABLE_PREFIX}{name}"
     if sibling.exists():
         return str(sibling)
-    return shutil.which(name) or name
+    return shutil.which(f"{EXECUTABLE_PREFIX}{name}")
 
 
-def prepare_host_dirs(spec: SandboxSpec) -> None:
-    """Create cache directories that do not exist yet (a project's own are made on first use).
+MACOS_ONLY = "apple"  # Apple container: offered on macOS only, never elsewhere (D.2)
+NOT_ON_MACOS = "podman"  # rootless Podman: never offered on macOS (Apple container instead)
 
-    Only `cache` mounts: a missing scope or state path is an error the sandbox must report (A1).
-    """
-    for m in spec.mounts:
-        if m.kind == "cache":
-            Path(m.source).mkdir(parents=True, exist_ok=True)
+
+def for_another_system(name: str) -> str | None:
+    """Why runtime `name` is not offered on this system, or None when it is."""
+    if name == MACOS_ONLY and sys.platform != "darwin":
+        return f"the {name} runtime is for macOS"
+    if name == NOT_ON_MACOS and sys.platform == "darwin":
+        return f"the {name} runtime is not offered on macOS"
+    return None
+
+
+def installed() -> list[str]:
+    """The runtimes installed here, by name: every `handler-sandbox-<name>` executable, but one
+    for another system."""
+    dirs = [Path(sys.executable).parent, *map(Path, os.environ.get("PATH", "").split(os.pathsep))]
+    names = {
+        f.name.removeprefix(EXECUTABLE_PREFIX)
+        for d in dirs
+        if d.is_dir()
+        for f in d.glob(f"{EXECUTABLE_PREFIX}*")
+        if os.access(f, os.X_OK)
+    }
+    return sorted(n for n in names if not for_another_system(n))
+
+
+def binary() -> str:
+    """The executable of the runtime in use."""
+    if test := os.environ.get(TEST_SANDBOX_ENV):
+        return test
+    return executable(current()) or f"{EXECUTABLE_PREFIX}{current()}"
+
+
+def launcher_prefix() -> str:
+    """How a line of the launcher's own starts, not of the sandbox's logs."""
+    return f"{EXECUTABLE_PREFIX}{current()}: "
 
 
 def _spec_fd(spec: SandboxSpec) -> int:
@@ -66,20 +118,19 @@ def _spec_fd(spec: SandboxSpec) -> int:
         return os.dup(f.fileno())  # the dup keeps the unlinked file alive
 
 
-def _fd_kwargs(fd: int) -> dict[str, Any]:
-    return {
-        "pass_fds": (fd, SPEC_FD),  # SPEC_FD must survive close_fds, which runs after preexec_fn
-        "preexec_fn": lambda: os.dup2(fd, SPEC_FD),
-    }
+def _launch_argv(fd: int) -> list[str]:
+    """`launch` with the spec moved from `fd` to SPEC_FD by a shell that then becomes the runtime:
+    subprocess cannot move it itself (a dup2 in preexec_fn needs SPEC_FD in pass_fds, which fails
+    in the child when the parent's SPEC_FD is not inherited by a fork: macOS's kqueue)."""
+    return ["/bin/sh", "-c", f'exec "$0" launch {SPEC_FD}<&{fd} {fd}<&-', binary()]
 
 
 def start(spec: SandboxSpec, **popen_kwargs: Any) -> subprocess.Popen[bytes]:
     """Launch the sandbox for `spec`; the caller owns the returned process (its stdio)."""
-    prepare_host_dirs(spec)
     fd = _spec_fd(spec)
     try:
         return subprocess.Popen(  # ty: ignore[invalid-return-type]
-            [binary(), "launch"], **_fd_kwargs(fd), **popen_kwargs
+            _launch_argv(fd), pass_fds=(fd,), **popen_kwargs
         )
     finally:
         os.close(fd)
@@ -87,17 +138,15 @@ def start(spec: SandboxSpec, **popen_kwargs: Any) -> subprocess.Popen[bytes]:
 
 async def start_async(spec: SandboxSpec, *, line_limit: int) -> asyncio.subprocess.Process:
     """Same, for asyncio: stdin/stdout/stderr are pipes; `line_limit` bounds one ACP message."""
-    prepare_host_dirs(spec)
     fd = _spec_fd(spec)
     try:
         return await asyncio.create_subprocess_exec(
-            binary(),
-            "launch",
+            *_launch_argv(fd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=line_limit,
-            **_fd_kwargs(fd),
+            pass_fds=(fd,),
         )
     finally:
         os.close(fd)
@@ -106,17 +155,15 @@ async def start_async(spec: SandboxSpec, *, line_limit: int) -> asyncio.subproce
 async def start_piped(spec: SandboxSpec, *, line_limit: int) -> asyncio.subprocess.Process:
     """Same, for a process that serves something else than its stdio (an app's backend):
     no stdin, stdout and stderr merged into one pipe for its log."""
-    prepare_host_dirs(spec)
     fd = _spec_fd(spec)
     try:
         return await asyncio.create_subprocess_exec(
-            binary(),
-            "launch",
+            *_launch_argv(fd),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             limit=line_limit,
-            **_fd_kwargs(fd),
+            pass_fds=(fd,),
         )
     finally:
         os.close(fd)
@@ -128,21 +175,20 @@ def start_detached(spec: SandboxSpec) -> tuple[subprocess.Popen[bytes], int]:
     (the unit's stop or restart kills every process in it); no stdin; its output (stdout and stderr)
     into an unlinked file, as a pipe would break with handlerd. Returns the process and that file,
     for `follow`; the caller closes it."""
-    prepare_host_dirs(spec)
     fd = _spec_fd(spec)
-    argv = [binary(), "launch"]
+    argv = _launch_argv(fd)
     if os.environ.get("INVOCATION_ID") and (systemd_run := shutil.which("systemd-run")):
         scope = [systemd_run, "--user", "--scope", "--collect", "--quiet", f"--unit={spec.name}"]
         argv = [*scope, "--", *argv]
     with tempfile.TemporaryFile() as output:
         try:
-            proc: subprocess.Popen[bytes] = subprocess.Popen(  # ty: ignore[invalid-assignment]
+            proc: subprocess.Popen[bytes] = subprocess.Popen(
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=output,
                 stderr=output,
                 start_new_session=True,
-                **_fd_kwargs(fd),
+                pass_fds=(fd,),
             )
         finally:
             os.close(fd)
@@ -191,8 +237,8 @@ async def read_stderr(
     assert proc.stderr is not None
     async for raw in proc.stderr:
         line = raw.decode(errors="replace").rstrip()
-        if on_launcher is not None and line.startswith(LAUNCHER_PREFIX):
-            on_launcher(line.removeprefix(LAUNCHER_PREFIX))
+        if on_launcher is not None and line.startswith(prefix := launcher_prefix()):
+            on_launcher(line.removeprefix(prefix))
         log_line(line, label, on_egress)
 
 
@@ -213,6 +259,17 @@ def attach_command(sandbox: str) -> list[str]:
 async def set_allow(sandbox: str, allow: list[str]) -> str | None:
     """A running filtered sandbox's allow-list, replaced (A.4); the error, if any."""
     return await _verb("set-allow", sandbox, *allow)
+
+
+async def set_blocked(sandbox: str, blocked: list[str]) -> str | None:
+    """A running filtered sandbox's hosts kept blocked, replaced (A.4); the error, if any."""
+    return await _verb("set-blocked", sandbox, *blocked)
+
+
+async def set_watched(sandbox: str, turn: str | None) -> str | None:
+    """Whether someone watches a running filtered sandbox's session, in which turn (None:
+    nobody), so its filter holds a request a while for their answer (A.4); the error, if any."""
+    return await _verb("set-watched", sandbox, *([turn] if turn else []))
 
 
 async def set_egress(sandbox: str, egress: Enforcement) -> str | None:

@@ -1,6 +1,6 @@
 """Agents files (D.23): agents written so they can be set up again in another project, as a
-whole: their definitions without what is yours (the models they run as, their folder, the addon
-configurations and knowledge folders they were given), with what they need instead. A project's
+whole: their definitions without what is yours (the models they run as, their folder, the connections
+and notes folders they were given), with what they need instead. A project's
 agents exported (a zip, made on the fly, never kept), and set up again in another project from it.
 
     <state>/agent-imports/<name>/   a file being imported: until its agents are set up (the
@@ -37,7 +37,7 @@ from handler_contracts import (
     ExportAgentsRequest,
 )
 
-from . import bindings, definitions, files, skills
+from . import definitions, files, skills
 from .agents import AgentRecord, describe
 from .projects import ProjectRecord
 from .settings import Settings
@@ -80,6 +80,28 @@ def read(folder: Path) -> AgentsFile:
         raise ValueError(f"{Path(e.filename or folder).name} is missing") from None
     except (OSError, ValidationError) as e:
         raise ValueError(str(e)) from None
+
+
+def read_offered(folder: Path) -> AgentsFile:
+    """A source's agents (D.26: its folder named as the file), read as `stage_folder` takes
+    them: ValueError with why they cannot be."""
+    file = read(folder)
+    _named(folder, folder.name)
+    return file
+
+
+def _named(folder: Path, expected: str | None = None) -> str:
+    """The name its agents.toml gives (`expected`, when given): ValueError when it gives none."""
+    try:
+        meta = tomllib.loads((folder / META_FILE).read_text())
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{META_FILE}: {e}") from None
+    name = str(meta.get("name", ""))
+    if not skills.NAME.fullmatch(name):
+        raise ValueError(f"its name {name!r} is not one (lowercase letters, digits, -)")
+    if expected is not None and name != expected:
+        raise ValueError(f"its {META_FILE} names another file, {name}")
+    return name
 
 
 def read_checks(part: Path) -> list[AgentsFileCheck]:
@@ -134,7 +156,7 @@ def draft(
     parts: list[AgentsFileAgent] = []
     replaced: list[str] = []
     for agent in agents:
-        definition, said = as_definition(settings, agent, project)
+        definition, said = as_definition(agent, project)
         part = unique(slug(definition.agent_name), {p.part for p in parts})
         parts.append(AgentsFileAgent(part=part, definition=definition, checks=checks[agent.id]))
         replaced += [f"{definition.agent_name}: {line}" for line in said]
@@ -148,30 +170,22 @@ def draft(
     return AgentsExport(file=file, replaced=replaced)
 
 
-def as_definition(
-    settings: Settings, agent: AgentRecord, project: ProjectRecord | None
-) -> tuple[AgentDefinition, list[str]]:
+def as_definition(agent: AgentRecord, project: ProjectRecord) -> tuple[AgentDefinition, list[str]]:
     """The agent as a definition, and what of yours it leaves out, in words."""
     said: list[str] = []
     runs_on = describe(agent.model)
     if agent.model_alone:  # a provider, and no folder: one model call a turn (D.18)
         said.append(f"runs on {runs_on} → a provider, chosen at set-up")
-    elif project is not None:
-        said.append(f"runs on {runs_on} → its model, chosen at set-up")
-        said.append(f"works in {project.folder} → the folder of the project it is set up in")
     else:
         said.append(f"runs on {runs_on} → its model, chosen at set-up")
-        if agent.scope is not None:
-            said.append(f"works in {agent.scope} → a folder per session at set-up")
-    addons = []
-    for name in agent.bindings:
-        loaded = bindings.get(settings.bindings_dir, name)
-        if loaded.binding is None:
-            raise AgentsFileError(409, "addon configuration unreadable", f"{name}: {loaded.error}")
-        addons.append(loaded.binding.addon)
-        said.append(f"addon configuration {name} → one of {loaded.binding.addon}, chosen at set-up")
+        said.append(f"works in {project.folder} → the folder of the project it is set up in")
+    for use in agent.addons:
+        if use.binding is not None:
+            said.append(f"connection {use.binding} → one of {use.addon}, chosen at set-up")
+    for use in agent.project_addons:
+        said.append(f"tool {use.addon}, given by its project → it uses it")
     for folder in agent.knowledge:
-        said.append(f"knowledge folder {folder} → one chosen at set-up ({folder} if you have it)")
+        said.append(f"notes folder {folder} → one chosen at set-up ({folder} if you have it)")
     for name in agent.project_skills:
         said.append(f"skill {name}, given by its project → it picks it")
     definition = AgentDefinition(
@@ -185,7 +199,7 @@ def as_definition(
         permissions=agent.permissions,
         skills=sorted({*agent.skills, *agent.project_skills}),
         interface=agent.interface,
-        addons=sorted(set(addons)),
+        addons=sorted({u.addon for u in agent.addon_uses}),
         knowledge=agent.knowledge,
         display=agent.display,
         model_alone=agent.model_alone,
@@ -270,15 +284,7 @@ def stage_folder(settings: Settings, source: Path) -> AgentsFile:
 def _keep(settings: Settings, folder: Path, expected: str | None = None) -> AgentsFile:
     """`folder` (an agents file's content, in the staging folder) read and kept under its name
     (`expected`, when given)."""
-    try:
-        meta = tomllib.loads((folder / META_FILE).read_text())
-        name = str(meta.get("name", ""))
-        if not skills.NAME.fullmatch(name):
-            raise ValueError(f"its name {name!r} is not one (lowercase letters, digits, -)")
-        if expected is not None and name != expected:
-            raise ValueError(f"its {META_FILE} names another file, {name}")
-    except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"{META_FILE}: {e}") from None
+    name = _named(folder, expected)
     file = read(folder)  # the folder's name is not the file's: checked first
     target = root(settings) / name
     shutil.rmtree(target, ignore_errors=True)

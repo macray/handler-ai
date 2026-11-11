@@ -1,0 +1,20 @@
+{
+  "$id": "urn:handler.control/v1/system-packages-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "PUT /v1/toolbox/system-packages: the system packages on, in their order; those they\ndepend on are turned on with them. Applied by the next toolbox build.",
+  "properties": {
+    "systemPackages": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "type": "string"
+      },
+      "title": "Systempackages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "systemPackages"
+  ],
+  "title": "SystemPackagesRequest",
+  "type": "object"
+}

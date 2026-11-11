@@ -1,8 +1,11 @@
 """D.13 through a real handlerd: the work folders, owned by this computer, and what they allow."""
 
+import pytest
+
 from ..support.daemon import Daemon
 
 
+@pytest.mark.rule("folders.agents-work-only-inside-them", "folders.never-handler-s-own")
 def test_work_folders(daemon: Daemon) -> None:
     """Replaced as written; never the daemon's own folders; a folder outside them cannot be
     an ad-hoc agent's or a project's."""

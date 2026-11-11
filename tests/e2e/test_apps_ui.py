@@ -1,4 +1,4 @@
-"""Apps in real browsers (docs/dev/design/apps.md): the Apps page registers, deploys and
+"""Apps in real browsers (apps design): the Apps page registers, deploys and
 shares the test app; the desk opens it at its own origin; a family member's phone (paired for apps
 only) uses the same instance through the gateway, in the sandboxed frame.
 
@@ -68,17 +68,18 @@ def daemon(data_root: Path, stub: StubLlm) -> Iterator[Daemon]:
     yield from start_daemon(extra_env=env, extra_providers={"stub": stub.provider()})
 
 
+@pytest.mark.rule("phone-app.only-to-whom-it-is-shared-with", "phone-app.its-page-reaches-nothing")
 def test_desk_and_family_phone_share_one_app(
     browser: Browser, daemon: Daemon, gateway: Gateway, data_root: Path
 ) -> None:
     source = copy_fixture("app", data_root)
     desk = browser.new_context().new_page()
-    desk.goto(f"{daemon.base_url}/#token={daemon.token}")
+    desk.goto(daemon.ui_url())
 
     # the gateway, then a phone paired for alice (apps only)
-    desk.goto(f"{daemon.base_url}/#/settings/remote")
-    desk.get_by_label("Gateway URL").fill(gateway.url)
-    desk.get_by_label("Host token").fill(gateway.host_token)
+    desk.goto(f"{daemon.base_url}/#/settings/phone")
+    desk.get_by_test_id("gateway-url").fill(gateway.url)
+    desk.get_by_test_id("host-token").fill(gateway.host_token)
     desk.get_by_test_id("save-gateway").click()
     desk.get_by_test_id("pair-open").click()
     desk.get_by_test_id("device-for-family").check()
@@ -89,8 +90,8 @@ def test_desk_and_family_phone_share_one_app(
     desk.get_by_role("button", name="Done").click()
     expect(desk.get_by_test_id("device-person")).to_have_text("alice · apps only")
 
-    # Apps: register, deploy, share with alice, open at the desk
-    desk.goto(f"{daemon.base_url}/#/apps")
+    # Library → Apps → Get more: install from a file, deploy, share with alice; open from Apps
+    desk.goto(f"{daemon.base_url}/#/library/apps/more")
     file: FilePayload = {
         "name": "counter.zip",
         "mimeType": "application/zip",
@@ -103,8 +104,10 @@ def test_desk_and_family_phone_share_one_app(
     persons = desk.get_by_test_id("app-persons")  # installed: its page
     expect(persons.get_by_label("you")).to_be_checked(timeout=300_000)
     expect(persons.get_by_label("alice")).to_be_checked()
+    desk.goto(f"{daemon.base_url}/#/apps")  # Apps opens it
+    card = desk.get_by_test_id("app-card").filter(has_text="counter")
     with desk.context.expect_page() as opened:
-        desk.get_by_test_id("app-open").click()
+        card.get_by_test_id("app-open").click()
     local = opened.value
     expect(local.locator("#n")).to_have_text("0", timeout=60_000)
     local.click("#add")
@@ -137,7 +140,7 @@ def test_an_action_is_tried_from_the_app_s_page(browser: Browser, daemon: Daemon
     """H.12 in the UI: the deployed counter's page lists what you can ask it; Try runs it once
     and shows its answer."""
     desk = browser.new_page()
-    desk.goto(f"{daemon.base_url}/#token={daemon.token}")
+    desk.goto(daemon.ui_url())
     desk.goto(f"{daemon.base_url}/#/apps/counter")
     action = desk.get_by_test_id("app-action").filter(has_text="Count one more")
     expect(action).to_contain_text("instant")
@@ -153,13 +156,22 @@ ROUTER = Path(__file__).parents[2] / (
 )
 
 
+@pytest.mark.rule(
+    "ask.a-pick-runs-at-once-as-the-owner",
+    "router.the-one-you-gave",
+    "voice.off-until-a-speech-model-is-chosen",
+    "voice.where-it-goes-is-said",
+    "voice.heard-is-asked-at-once",
+)
 def test_ask_picks_the_app_and_answers(browser: Browser, daemon: Daemon, stub: StubLlm) -> None:
-    """D.24 in the UI: with no router, Ask says it needs one; with one (the model alone, a stub
+    """D.24 in the UI, Chat's Ask tab: with no router, Ask says it needs one; with one (the model alone, a stub
     provider), what you type is routed to the counter's action, which answers on the page. D.25:
     Settings → Voice chooses the stub's speech model, then what is said is heard and asked."""
     desk = browser.new_page()
-    desk.goto(f"{daemon.base_url}/#token={daemon.token}")
-    desk.goto(f"{daemon.base_url}/#/ask")
+    desk.goto(daemon.ui_url())
+    desk.goto(f"{daemon.base_url}/#/chat")
+    desk.get_by_test_id("chat-tab-ask").click()  # Ask is on Chat's page, apart from the chat
+    expect(desk).to_have_url(re.compile(r"#/chat/ask$"))
     expect(desk.get_by_test_id("ask-no-router")).to_be_visible()
     router = {
         "name": "Ask router",
@@ -192,7 +204,7 @@ def test_ask_picks_the_app_and_answers(browser: Browser, daemon: Daemon, stub: S
         assert c.get("/v1/voice").json()["model"] == "stub/ears"
     # a microphone the browser makes up (a tone), then spoken: written down, sent, marked heard
     desk.add_init_script(MICROPHONE)
-    desk.goto(f"{daemon.base_url}/#/ask")
+    desk.goto(f"{daemon.base_url}/#/chat/ask")
     desk.reload()  # a new document: the script runs in it
     desk.get_by_test_id("ask-mic").click()
     expect(desk.get_by_test_id("ask-listening")).to_be_visible()
@@ -228,7 +240,7 @@ def test_a_draft_is_opened_from_the_app_s_page(browser: Browser, daemon: Daemon)
         body = {"agentId": agent["id"], "appDraft": {"app": "counter"}}
         session = c.post("/v1/sessions", json=body).json()
     desk = browser.new_page()
-    desk.goto(f"{daemon.base_url}/#token={daemon.token}")
+    desk.goto(daemon.ui_url())
     desk.goto(f"{daemon.base_url}/#/apps/counter")
     bar = desk.get_by_test_id("app-draft")
     with desk.context.expect_page() as opened:

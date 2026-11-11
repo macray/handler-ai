@@ -25,7 +25,6 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import * as NativeSelect from "$lib/components/ui/native-select";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
   import PickRow from "../components/PickRow.svelte";
   import SkillReview from "../components/SkillReview.svelte";
   import { api } from "../lib/api";
@@ -34,6 +33,7 @@
   import { scanFindings, who } from "../lib/skills";
   import { href, leaving, navigate, type Imported } from "../lib/router.svelte";
   import { NEW_SKILL, readSkill, writeSkill, type SkillDoc } from "../lib/skillmd";
+  import { formatBytes } from "../lib/text";
 
   let { name, imported }: { name: string | null; imported?: Imported } = $props(); // name null: a new skill
 
@@ -238,10 +238,6 @@
     if (last) await select(last);
   }
 
-  function size(bytes: number): string {
-    return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} kB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  }
-
   $effect(() => {
     untrack(() => void act(load)); // once: what it reads (the form) must not load it again
   });
@@ -276,7 +272,7 @@
   {/if}
 {/snippet}
 
-<PageHeader titled title={name ?? "New skill"} parent={{ label: "Skills", href: list }}>
+<PageHeader title={name ?? "New skill"} parent={{ label: "Skills", href: list }}>
   {#snippet actions()}
     {#if name !== null}
       <Button variant="ghost" size="sm" disabled={busy} onclick={download} data-testid="skill-download"><Download />Download</Button>
@@ -287,8 +283,7 @@
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto grid w-full max-w-6xl gap-6 px-8 py-10 md:grid-cols-[14rem_1fr]" data-testid="skill-editor">
     <div class="space-y-3 md:col-span-2">
-      <PageTitle title={name ?? "New skill"} />
-      {#if skill && !imported}
+            {#if skill && !imported}
         <div class="space-y-1" data-testid="skill-placement">
           <div class="text-xs font-medium text-muted-foreground">Who gets it</div>
           {@render placement(skill)}
@@ -346,7 +341,7 @@
         <button
           type="button"
           class="flex w-full cursor-pointer items-center justify-between gap-2 rounded px-2 py-1 text-left font-mono text-xs {file?.path === f.path ? 'bg-muted font-medium' : 'hover:bg-muted/60'}"
-          title={`${f.path} · ${size(f.size)}`}
+          title={`${f.path} · ${formatBytes(f.size)}`}
           onclick={() => select(f.path)}
           data-testid="skill-file"
         >
@@ -450,7 +445,7 @@
         {#if file.text !== null}
           <Textarea bind:value={file.text} rows={22} class="min-h-96 font-mono text-xs" spellcheck={false} data-testid="skill-file-content" />
         {:else}
-          <p class="text-sm text-muted-foreground">A binary file ({size(file.size)}). Upload it again to replace it.</p>
+          <p class="text-sm text-muted-foreground">A binary file ({formatBytes(file.size)}). Upload it again to replace it.</p>
         {/if}
         <div class="flex flex-wrap items-center gap-2">
           {#if file.text !== null}

@@ -1,0 +1,10 @@
+# handler-relay (main.go), built for the platform the runtime builds for (its own Linux: arm64 in
+# Apple container's VMs). FROM scratch: the runtime exports its file (/handler-relay) to a folder
+# of the host, mounted read-only into the sandboxes that need it.
+FROM docker.io/library/golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod main.go ./
+RUN CGO_ENABLED=0 GOFLAGS=-trimpath go build -ldflags="-s -w" -o /handler-relay .
+
+FROM scratch
+COPY --from=build /handler-relay /handler-relay

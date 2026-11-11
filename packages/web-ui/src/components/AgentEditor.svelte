@@ -1,35 +1,34 @@
 <script lang="ts">
-  // An agent of a project, or an ad-hoc one (no project: in a folder, or a folder per session),
-  // to add one or edit it. First how it is used: chatted with, briefed (its interface without a
-  // result, D.18: a form starts each session, then a chat) or given a job (its interface: a form
-  // in, a result out, unattended); a change of use that drops a saved brief or result says so.
-  // Then in groups, each needing only what is above it: what it is for (its goal or name); a
-  // brief's or a job's form, and a job's result, edited as fields (JobEditor); its instructions,
-  // which may name the form's fields, `{{key}}` (D.18), inserted by their labels (a field not
-  // saved yet keeps its placeholders when its label, so its key, changes);
-  // who works (an agent program, or the model alone: D.18, no sandbox, no tools, only providers;
-  // then its model, a harness on an account or a provider with a model; a session may run with
-  // another, picked when it starts) and where; what it is given (addons, skills, knowledge);
-  // what it may do (permissions, network, sandbox); how it is started (default agent, from the
-  // phone, unattended). Its sandbox settings are its own (nothing is inherited; a new one starts
-  // with the defaults of new agents); the hosts its account or provider and its
-  // addons need are shown "required by". Its addons, knowledge and skills are its own too; its
-  // project's skills come on top. A save that widens what it may do is confirmed (D.8). A new
-  // agent of a project set up like another but for its model is pointed to that one: one goal,
-  // one agent. An agent with a job never asks (bypass, confirmed when chosen); the automations
-  // that run it are listed with it (I.1); "Save and try" saves it, then opens its page and its
-  // run form; "Save and run it on a schedule…" saves it, then opens a new automation's form. On
-  // the model alone, what only a sandbox has (addons, skills, its permissions, network and
-  // sandbox, a folder) is not offered: each says why in one line.
+  // An agent of a project, or one outside projects (in a folder, or a folder per session), to add
+  // one or edit it: the one agent form, every setting visible, nothing folded. Rows first: its
+  // name (what it is for; "Assistant" for a project's first) and description, how it is used
+  // (Talk; Brief: a form starts each session, then a talk; Job: a form in, a result out,
+  // unattended, D.18; a change of use that drops a saved brief or result says so), who works (two
+  // chips: its program, or the model alone, then what it runs on and its model), its tools,
+  // skills and notes; outside projects, its folder. Then a brief's or a job's form (JobEditor), its
+  // instructions, which may name the form's fields `{{key}}` (a field not saved yet keeps its
+  // placeholders when its label, so its key, changes); then Can do (CanDo: the network and the
+  // switches, no named preset; the model alone has no sandbox, said in one card); then how it is
+  // started (default agent, from the phone, the automations that run it, I.1). Its settings are
+  // its own, nothing inherited; a new one starts with only the sites it needs. A save that widens
+  // what it may do is confirmed (D.8). A new agent of a project set up like another but for its
+  // model is pointed to that one: one goal, one agent. A job never asks (bypass, confirmed when
+  // chosen); "Save and try" saves it, then opens its page and its run form; "Save and run it on a
+  // schedule…" saves it, then opens a new automation's form.
   import type { Agent, AgentOrigin, AutomationView, HarnessInfo, Project, UseRef } from "../lib/contracts.gen";
   import { resultProblems, runsAgent, whenSentence } from "../lib/automations";
   import { dependents } from "../lib/apps";
-  import { accessLabel, accessOf, chosen, sameRun } from "../lib/access";
-  import { api, ApiError } from "../lib/api";
-  import { agentBody, agentLabel, agentSpec, emptyAgent, homeOf, presetOf, PRESETS, sameSetup, withModelAlone, type AgentSpec, type Home, type Sandbox } from "../lib/projects.svelte";
+  import { accessLabel, accessOf, chosen, sameModel, sameRun } from "../lib/access";
+  import { api, ApiError, toolboxChanges, type ToolboxChanges } from "../lib/api";
+  import ToolboxConfirm from "./ToolboxConfirm.svelte";
+  import { runtime } from "../lib/runtime.svelte";
+  import { agentBody, agentLabel, agentSpec, emptyAgent, homeOf, sameSetup, withModelAlone, type AgentSpec, type Home } from "../lib/projects.svelte";
   import { href, type Route } from "../lib/router.svelte";
-  import { GROUP, SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
-  import { PERMISSION_LABEL, type NetworkMode } from "../lib/agents";
+  import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
+  import { PERMISSION_LABEL } from "../lib/agents";
+  import { productName } from "../lib/harnesses.svelte";
+  import { neededSites } from "../lib/safety";
+  import type { AccountInfo, AddonInfo, ProviderInfo } from "../lib/contracts.gen";
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import FlaskConical from "@lucide/svelte/icons/flask-conical";
@@ -40,23 +39,21 @@
   import { tick, untrack } from "svelte";
   import JobEditor from "./JobEditor.svelte";
   import CalendarClock from "@lucide/svelte/icons/calendar-clock";
-  import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ClipboardList from "@lucide/svelte/icons/clipboard-list";
   import NotebookPen from "@lucide/svelte/icons/notebook-pen";
   import MessageSquare from "@lucide/svelte/icons/message-square";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
-  import Bot from "@lucide/svelte/icons/bot";
-  import Zap from "@lucide/svelte/icons/zap";
   import PromptBox from "./PromptBox.svelte";
-  import BindingPicker from "./BindingPicker.svelte";
+  import AddonPicker from "./AddonPicker.svelte";
   import FolderPicker from "./FolderPicker.svelte";
-  import HostList from "./HostList.svelte";
   import KnowledgePicker from "./KnowledgePicker.svelte";
   import SkillPicker from "./SkillPicker.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import When from "./When.svelte";
-  import ModelAccessPicker from "./ModelAccessPicker.svelte";
+  import ModelChoice from "./ModelChoice.svelte";
+  import CanDo from "./CanDo.svelte";
+  import SettingRow from "./SettingRow.svelte";
 
   let {
     project,
@@ -80,16 +77,21 @@
 
   // the props give the initial values only
   // svelte-ignore state_referenced_locally
-  let spec = $state<AgentSpec>(agent ? agentSpec(agent, project ?? { defaultAgent: null }) : (start ?? emptyAgent()));
+  let spec = $state<AgentSpec>(
+    agent ? agentSpec(agent, project ?? { defaultAgent: null }) : (start ?? { ...emptyAgent(), name: project && !project.agents.length ? "Assistant" : "" }),
+  );
   // an ad-hoc agent's folder; null: a folder per session (D.18)
   // svelte-ignore state_referenced_locally
   let folder = $state<string | null>(agent ? (agent.scope ?? null) : (startFolder ?? null));
   let busy = $state(false);
   let error = $state<string | null>(null);
   let risks = $state<string | null>(null); // what the last save would widen, to confirm
+  let toolbox = $state<(ToolboxChanges & { risks: boolean }) | null>(null); // what it adds to the toolbox
   // saved by "Save and try" (its page, to run it) or "Save and run it on a schedule…" (the form)
   let next = $state<"try" | "schedule" | null>(null);
   let displayAvailable = $state(false); // the daemon found a Wayland display (A.6)
+  // what this computer's sandbox runtime gives (A.8), as last checked; unknown: nothing greyed
+  const gives = $derived(runtime.last?.supports ?? null);
   api.health().then(
     (h) => (displayAvailable = h.display ?? false),
     () => (displayAvailable = false),
@@ -102,15 +104,10 @@
   );
 
   // who works (D.18): an agent program, or the model alone (what only a sandbox has goes)
-  const PROGRAMS = [
-    { alone: false, label: "An agent program", hint: "Claude Code, Codex…: it works on files and runs tools, in its sandbox.", icon: Bot },
-    { alone: true, label: "The model alone", hint: "One model call a turn, in seconds: no files, no tools, no sandbox. On a provider.", icon: Zap },
-  ];
   function chooseProgram(alone: boolean): void {
     if (alone === spec.modelAlone) return;
     spec = withModelAlone(spec, alone);
     if (alone) folder = null;
-    customizing = false;
   }
 
   // the modes its harness offers (pi has only bypass); all while unknown
@@ -136,60 +133,25 @@
     if (preferred) spec = { ...withModelAlone(spec, preferred.modelAlone ?? false), model: accessOf(preferred.model) };
   });
 
+
+
   type PermissionMode = Agent["permissions"];
-  type Confinement = Agent["confinement"];
 
-  const MODES: { mode: NetworkMode; label: string; hint: string }[] = [
-    { mode: "none", label: "No network", hint: "Nothing: no model API either, unless the agent runs a local model." },
-    { mode: "filtered", label: "Filtered", hint: "Only the hosts below, plus those its account or provider and its addons require." },
-    { mode: "open", label: "Open", hint: "Anything on the internet (and your LAN)." },
-  ];
-
-  const PERMISSIONS: { mode: PermissionMode; label: string; hint: string }[] = [
-    { mode: "ask", label: PERMISSION_LABEL.ask, hint: "You answer each of its requests (edit a file, run a command)." },
-    { mode: "accept-edits", label: PERMISSION_LABEL["accept-edits"], hint: "It edits files without asking; anything else is asked." },
-    {
-      mode: "bypass",
-      label: PERMISSION_LABEL.bypass,
-      hint: "It never asks: only its sandbox and its network limit what it runs.",
-    },
-  ];
-
-  const CONFINEMENTS: { value: Confinement; label: string; hint: string }[] = [
-    { value: "strict", label: "Strict", hint: "A locked-down container: the default." },
-    {
-      value: "nested",
-      label: "Runs containers",
-      hint: "Podman inside the sandbox (e.g. for tests in containers): a weaker confinement.",
-    },
-    { value: "privileged", label: "Privileged", hint: "Last resort: a privileged container is about as safe as no sandbox." },
-  ];
-
-  // a safety preset sets its permissions, network and sandbox at once; "Customize" shows them
-  // (open from the start when they match no preset)
-  const preset = $derived(presetOf(spec));
-  // svelte-ignore state_referenced_locally
-  let customizing = $state(presetOf(spec) === undefined);
-  function applyPreset(sandbox: Sandbox): void {
-    Object.assign(spec, sandbox);
-  }
-  const hostsNote = $derived(
-    spec.network === "filtered" && spec.allow.length ? ` ${spec.allow.length} host${spec.allow.length === 1 ? "" : "s"} allowed.` : "",
+  // the sites what it uses needs: handlerd's own list for a saved agent unchanged, else what its
+  // model and its tools (its own and its project's) say they reach
+  let infos = $state<{ accounts: AccountInfo[]; providers: ProviderInfo[]; addons: AddonInfo[] }>({ accounts: [], providers: [], addons: [] });
+  Promise.all([api.accounts(), api.providers(), api.addons()]).then(
+    ([accounts, providers, addons]) => (infos = { accounts, providers, addons }),
+    () => {},
   );
-  const summary = $derived(
-    preset
-      ? `${preset.hint}; a strict sandbox.${hostsNote}`
-      : `Its own: ${PERMISSION_LABEL[spec.permissions].toLowerCase()}, ${MODES.find((m) => m.mode === spec.network)?.label.toLowerCase()} network${spec.network === "filtered" && spec.egress === "log-only" ? " (log only)" : ""}, ${CONFINEMENTS.find((c) => c.value === spec.confinement)?.label.toLowerCase()} sandbox.${hostsNote}`,
-  );
-  const summaryTone = $derived(
-    spec.confinement === "privileged" ? "text-danger" : spec.network === "open" || spec.confinement === "nested" ? "text-warn" : "text-muted-foreground",
-  );
-
+  const uses = $derived([...spec.addons, ...(project?.addons ?? [])]);
+  const unchanged = $derived(!!agent && sameModel(spec.model, agent.model) && JSON.stringify(spec.addons) === JSON.stringify(agent.addons ?? []));
+  const needed = $derived(neededSites(spec.model, uses, infos, unchanged ? (agent?.model.requiredHosts ?? []) : undefined));
 
   // how it is used, the first choice, as cards saying each the same three things: how it starts,
   // who is there, how it ends
   const USES: { use: Use; label: string; hint: string; icon: typeof MessageSquare }[] = [
-    { use: "chat", label: "Chat", hint: "Say what to do, or nothing; you talk with it until you are done.", icon: MessageSquare },
+    { use: "chat", label: "Talk", hint: "Say what to do, or nothing; you talk with it until you are done.", icon: MessageSquare },
     { use: "brief", label: "Brief", hint: "Fill in a form to start, then work on it together.", icon: NotebookPen },
     { use: "job", label: "Job", hint: "Fill in a form; it works alone and returns a result.", icon: ClipboardList },
   ];
@@ -226,7 +188,7 @@
       : folder === ""
         ? "Choose its folder."
         : project && !spec.name.trim()
-          ? "Give it a goal."
+          ? "Give it a name."
           : null,
   );
   // a field's key that changed in place (it follows its label until saved): its placeholders too
@@ -307,7 +269,7 @@
     confirmBypass = false;
   }
 
-  async function save(confirm = false): Promise<void> {
+  async function save(confirm = false, adds: string[] = []): Promise<void> {
     busy = true;
     error = null;
     try {
@@ -317,12 +279,14 @@
         : project
           ? { projectId: project.id }
           : { app: origin?.kind === "app" ? origin.name : null, scope: folder };
-      const body = agentBody({ ...spec, origin: agent ? (agent.origin ?? null) : (origin ?? null) }, home, confirm);
+      const body = agentBody({ ...spec, origin: agent ? (agent.origin ?? null) : (origin ?? null) }, home, confirm, adds);
       const saved = agent ? await api.updateAgent(agent.id, body) : await api.createAgent(body);
-      risks = null;
+      risks = toolbox = null;
       onsaved(saved, next === "schedule" ? { view: "edit-automation", agent: saved.id } : next === "try" ? { view: "agent", id: saved.id } : undefined);
     } catch (e) {
+      const changes = toolboxChanges(e);
       if (e instanceof ApiError && e.status === 409 && e.title === "risks not confirmed") risks = e.detail ?? e.title;
+      else if (changes) ((risks = null), (toolbox = { ...changes, risks: confirm }));
       else {
         error = (e as Error).message;
         next = null;
@@ -339,132 +303,64 @@
   }
 </script>
 
-<form class="space-y-10" onsubmit={submit} data-testid="agent-editor">
-  <section class="space-y-2" aria-labelledby="group-use" data-testid="agent-use">
-    <h2 id="group-use" class="text-base font-semibold">How will you use it?</h2>
-    <div class="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-labelledby="group-use">
-      {#each USES as u (u.label)}
-        {@const on = confirmBypass ? u.use === "job" : u.use === use}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={on}
-          class="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:border-foreground/30 {on ? 'border-primary ring-1 ring-primary' : ''}"
-          onclick={() => chooseUse(u.use)}
-          data-testid="agent-use-{u.use}"
-        >
-          <u.icon class="mt-0.5 size-5 shrink-0 {on ? 'text-primary' : 'text-muted-foreground'}" />
-          <span class="space-y-0.5">
-            <span class="block text-sm font-medium">{u.label}</span>
-            <span class="block text-xs text-muted-foreground">{u.hint}</span>
-          </span>
-        </button>
-      {/each}
-    </div>
-    {#if confirmBypass}
-      <div class="flex items-start gap-3 rounded-md border border-warn/40 bg-warn/5 p-3" role="alertdialog" aria-labelledby="bypass-title" data-testid="agent-confirm-bypass">
-        <ShieldAlert class="size-5 shrink-0 text-warn" />
-        <div class="space-y-2">
-          <p id="bypass-title" class="text-sm font-medium">Permissions: {PERMISSION_LABEL[spec.permissions]} → {PERMISSION_LABEL.bypass}</p>
-          <p class="text-xs text-muted-foreground">A job runs alone, so it never asks before acting. Only what it may reach (below) limits it.</p>
-          <div class="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" onclick={acceptBypass} data-testid="agent-accept-bypass">Switch to {PERMISSION_LABEL.bypass}</Button>
-            <Button type="button" size="sm" variant="ghost" onclick={() => (confirmBypass = false)}>Cancel</Button>
-          </div>
-        </div>
+<form class="space-y-8" onsubmit={submit} data-testid="agent-editor">
+  <div class="divide-y overflow-hidden rounded-[10px] border bg-card shadow-panel">
+    <SettingRow label="Name" for="agent-name">
+      <div class="flex flex-wrap items-center gap-3">
+        <Input id="agent-name" class="max-w-60" bind:value={spec.name} required={!!project} data-testid="agent-name-input" />
+        <span class="text-xs text-muted-foreground">what it's for: Reviewer, Release notes…</span>
       </div>
-    {/if}
-    {#if drops}<p class="text-xs text-warn" data-testid="agent-use-drops">{drops}</p>{/if}
-  </section>
-
-  <section class="space-y-4 border-t pt-8" aria-labelledby="group-for">
-    <h2 id="group-for" class={GROUP}>What it is for</h2>
-    <div class="grid gap-4 sm:grid-cols-2">
-      <div class="space-y-2">
-        <Label for="agent-name">{project ? "Goal" : "Name"}</Label>
-        <Input id="agent-name" bind:value={spec.name} required={!!project} placeholder="e.g. Dev, Review, Contracts check" data-testid="agent-name-input" />
-        {#if project}<p class="text-xs text-muted-foreground">Name it by its purpose, not its model.</p>{/if}
-      </div>
-      <div class="space-y-2">
-        <Label for="agent-description">Description</Label>
-        <Input id="agent-description" bind:value={spec.description} placeholder="e.g. reviews the branch, never edits" data-testid="agent-description" />
-      </div>
-    </div>
-  </section>
-
-  {#if spec.interface !== ""}
-    <section class="space-y-4 border-t pt-8" aria-labelledby="group-job">
-      <JobEditor bind:value={spec.interface} fresh={!agent?.interface && !start?.interface} brief={use === "brief"} />
-      {#if lacks.length}
-        <p class="text-xs text-warn" data-testid="agent-interface-lacks">An automation can run it only when its <code>result</code> has {lacks.join(" and ")}.</p>
-      {/if}
-    </section>
-  {/if}
-
-  <section class="space-y-4 border-t pt-8" aria-labelledby="group-instructions">
-    <h2 id="group-instructions" class={GROUP}>Its instructions</h2>
-    <div class="space-y-2">
-      <Label for="agent-instructions" class="sr-only">Instructions</Label>
-      <PromptBox
-        id="agent-instructions"
-        bind:value={spec.instructions}
-        bind:ref={instructionsBox}
-        fields={formFields}
-        placeholder="e.g. Review the diff against main and list the issues. Do not edit files."
-        testid="agent-instructions"
-      />
-      {#if spec.interface !== "" && !formFields.length}
-        <p class="text-xs text-muted-foreground" data-testid="instructions-no-fields">Add fields to the form above to use their values here.</p>
-      {:else if formFields.length}
-        <div class="flex flex-wrap items-center gap-1.5" data-testid="instructions-fields">
-          <span class="text-xs text-muted-foreground">Insert from the form:</span>
-          {#each formFields as f (f.key)}
+    </SettingRow>
+    <SettingRow label="Description" for="agent-description">
+      <Input id="agent-description" class="max-w-md" bind:value={spec.description} placeholder="optional: shown when you point at it" data-testid="agent-description" />
+    </SettingRow>
+    <SettingRow label="Use" data-testid="agent-use">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="use">
+          {#each USES as u (u.use)}
+            {@const on = confirmBypass ? u.use === "job" : u.use === use}
             <button
               type="button"
-              class="cursor-pointer rounded-md border bg-muted px-1.5 py-px text-xs hover:bg-accent"
-              title="Puts {`{{${f.key}}}`} here: its value when a session starts"
-              onclick={() => insertField(f.key)}
-              data-testid="instructions-field">{f.title}</button
+              role="radio"
+              aria-checked={on}
+              class="{SEGMENT} inline-flex items-center gap-1.5 {on ? SEGMENT_ON : SEGMENT_OFF}"
+              onclick={() => chooseUse(u.use)}
+              data-testid="agent-use-{u.use}"
             >
+              <u.icon class="size-4" />{u.label}
+            </button>
           {/each}
         </div>
+        <span class="text-xs text-muted-foreground">{USES.find((u) => u.use === use)?.hint}</span>
+      </div>
+      {#if confirmBypass}
+        <div class="flex items-start gap-3 rounded-md border border-warn/40 bg-warn/5 p-3" role="alertdialog" aria-labelledby="bypass-title" data-testid="agent-confirm-bypass">
+          <ShieldAlert class="size-5 shrink-0 text-warn" />
+          <div class="space-y-2">
+            <p id="bypass-title" class="text-sm font-medium">A job never asks before acting</p>
+            <p class="text-xs text-muted-foreground">It runs alone: only what it can do (below) limits it. Asks before acting goes off.</p>
+            <div class="flex gap-2">
+              <Button type="button" size="sm" variant="destructive" onclick={acceptBypass} data-testid="agent-accept-bypass">Make it a job</Button>
+              <Button type="button" size="sm" variant="ghost" onclick={() => (confirmBypass = false)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
       {/if}
-      <p class="text-xs text-muted-foreground">
-        {job
-          ? "Sent at the start of each run, with the form's values; how to give the result back is added for you."
-          : use === "brief"
-            ? "Optional. Sent at the start of each session, with the form's values."
-            : "Optional. Sent at the start of each session."}
-      </p>
-    </div>
-  </section>
-
-  <section class="space-y-4 border-t pt-8" aria-labelledby="group-runs">
-    <h2 id="group-runs" class={GROUP}>Who works</h2>
-    <div class="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="who works" data-testid="agent-program">
-      {#each PROGRAMS as p (p.label)}
-        {@const on = spec.modelAlone === p.alone}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={on}
-          class="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 text-left transition-colors hover:border-foreground/30 {on ? 'border-primary ring-1 ring-primary' : ''}"
-          onclick={() => chooseProgram(p.alone)}
-          data-testid={p.alone ? "agent-program-model" : "agent-program-harness"}
-        >
-          <p.icon class="mt-0.5 size-5 shrink-0 {on ? 'text-primary' : 'text-muted-foreground'}" />
-          <span class="space-y-0.5">
-            <span class="block text-sm font-medium">{p.label}</span>
-            <span class="block text-xs text-muted-foreground">{p.hint}</span>
-          </span>
-        </button>
-      {/each}
-    </div>
-    <div class="space-y-2" data-testid="agent-model">
-      {#key spec.modelAlone}
-        <ModelAccessPicker bind:value={spec.model} area={project?.area ?? null} alone={spec.modelAlone} />
-      {/key}
-      <p class="text-xs text-muted-foreground">A session starts with it; you can pick another for one session when you start it. An automation always runs it with this one.</p>
+      {#if drops}<p class="text-xs text-warn" data-testid="agent-use-drops">{drops}</p>{/if}
+      {#if job && onSubscription}
+        <p class="text-xs text-muted-foreground" data-testid="agent-unattended-subscription">
+          It runs on a subscription ({onSubscription}): subscription plans are for ordinary, individual use (their vendors' terms). For an agent that
+          runs on its own, an API key is recommended.
+        </p>
+      {/if}
+    </SettingRow>
+    <SettingRow label="Who works" data-testid="agent-model">
+      <ModelChoice
+        agent={{ id: agent?.id ?? "", name: spec.name, model: spec.model, area: project?.area ?? null, modelAlone: spec.modelAlone }}
+        own
+        onchange={(m) => (spec.model = accessOf(m))}
+        onalone={chooseProgram}
+      />
       {#if dropped}
         <p class="text-xs text-warn">Its past conversations with {accessLabel(dropped)} cannot be resumed after this change.</p>
       {/if}
@@ -477,306 +373,205 @@
           but for its model: start a session of it and choose that model instead.
         </p>
       {/if}
-    </div>
-
-    {#if spec.modelAlone}
-      <p class="text-xs text-muted-foreground" data-testid="agent-no-folder">No folder: the model alone reads what its form, the conversation and its knowledge give it.</p>
-    {:else if project}
-      <p class="text-xs text-muted-foreground">It works in the project's folder, <code>{project.folder}</code>.</p>
-    {:else}
-      <div class="space-y-2" data-testid="agent-folder">
-        <Label>Works in</Label>
-        <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="folder">
-          {#each [{ own: false, label: "A folder per session" }, { own: true, label: "A folder" }] as f (f.label)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={(folder !== null) === f.own}
-              class="{SEGMENT} {(folder !== null) === f.own ? SEGMENT_ON : SEGMENT_OFF}"
-              onclick={() => (folder = f.own ? (agent?.scope ?? "") : null)}
-              data-testid={f.own ? "folder-own" : "folder-per-session"}
-            >
-              {f.label}
-            </button>
-          {/each}
-        </div>
-        {#if folder === null}
-          <p class="text-xs text-muted-foreground">Each session starts in an empty folder of its own, kept with the session.</p>
+    </SettingRow>
+    {#if !project}
+      <SettingRow label="Works in" data-testid="agent-folder">
+        {#if spec.modelAlone}
+          <p class="text-xs text-muted-foreground" data-testid="agent-no-folder">No folder: the model alone reads what its form, the conversation and its notes give it.</p>
         {:else}
-          <FolderPicker bind:value={folder} />
+          <div class="inline-flex self-start rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="folder">
+            {#each [{ own: false, label: "A folder per session" }, { own: true, label: "A folder" }] as f (f.label)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={(folder !== null) === f.own}
+                class="{SEGMENT} {(folder !== null) === f.own ? SEGMENT_ON : SEGMENT_OFF}"
+                onclick={() => (folder = f.own ? (agent?.scope ?? "") : null)}
+                data-testid={f.own ? "folder-own" : "folder-per-session"}
+              >
+                {f.label}
+              </button>
+            {/each}
+          </div>
+          {#if folder === null}
+            <p class="text-xs text-muted-foreground">Each session starts in an empty folder of its own, kept with the session.</p>
+          {:else}
+            <FolderPicker bind:value={folder} />
+          {/if}
+          {#if movedFolder}<p class="text-xs text-warn">Its past conversations stay where they were: they cannot be resumed after this change.</p>{/if}
         {/if}
-        {#if movedFolder}<p class="text-xs text-warn">Its past conversations stay where they were: they cannot be resumed after this change.</p>{/if}
+      </SettingRow>
+    {/if}
+    <SettingRow label="Tools">
+      {#if spec.modelAlone}
+        <p class="text-xs text-muted-foreground" data-testid="agent-alone-not-given">None: a tool needs an agent program.</p>
+      {:else}
+        <AddonPicker chips projectId={project?.id} given={project?.addons ?? []} bind:value={spec.addons} />
+      {/if}
+    </SettingRow>
+    <SettingRow label="Skills">
+      {#if spec.modelAlone}
+        <p class="text-xs text-muted-foreground">None: a skill can run scripts, it needs an agent program.</p>
+      {:else}
+        <SkillPicker projectId={project?.id} bind:value={spec.skills} pending={pendingSkills} />
+      {/if}
+    </SettingRow>
+    <SettingRow label="Notes">
+      <KnowledgePicker bind:value={spec.knowledge} />
+    </SettingRow>
+  </div>
+
+  {#if spec.interface !== ""}
+    <section class="space-y-4" aria-label="its form" data-testid="agent-form-fields">
+      <JobEditor bind:value={spec.interface} fresh={!agent?.interface && !start?.interface} brief={use === "brief"} />
+      {#if lacks.length}
+        <p class="text-xs text-warn" data-testid="agent-interface-lacks">An automation can run it only when its <code>result</code> has {lacks.join(" and ")}.</p>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="space-y-2" aria-labelledby="group-instructions">
+    <h2 id="group-instructions" class="text-sm font-semibold">Instructions</h2>
+    <Label for="agent-instructions" class="sr-only">Instructions</Label>
+    <PromptBox
+      id="agent-instructions"
+      bind:value={spec.instructions}
+      bind:ref={instructionsBox}
+      fields={formFields}
+      placeholder="e.g. Review the diff against main and list the issues. Do not edit files."
+      testid="agent-instructions"
+    />
+    {#if spec.interface !== "" && !formFields.length}
+      <p class="text-xs text-muted-foreground" data-testid="instructions-no-fields">Add fields to the form above to use their values here.</p>
+    {:else if formFields.length}
+      <div class="flex flex-wrap items-center gap-1.5" data-testid="instructions-fields">
+        <span class="text-xs text-muted-foreground">Insert from the form:</span>
+        {#each formFields as f (f.key)}
+          <button
+            type="button"
+            class="cursor-pointer rounded-md border bg-muted px-1.5 py-px text-xs hover:bg-accent"
+            title="Puts {`{{${f.key}}}`} here: its value when a session starts"
+            onclick={() => insertField(f.key)}
+            data-testid="instructions-field">{f.title}</button
+          >
+        {/each}
       </div>
     {/if}
+    <p class="text-xs text-muted-foreground">
+      {job
+        ? "Sent at the start of each run, with the form's values; how to give the result back is added for you."
+        : use === "brief"
+          ? "Optional. Sent at the start of each session, with the form's values."
+          : "Optional. Sent at the start of each session."}
+    </p>
   </section>
 
-  <section class="space-y-6 border-t pt-8" aria-labelledby="group-given">
-    <h2 id="group-given" class={GROUP}>What it is given</h2>
-    {#if spec.modelAlone}
-      <KnowledgePicker bind:value={spec.knowledge} />
-      <p class="text-xs text-muted-foreground">Its notes are put into each call (at most 192 KiB in all).</p>
-      <ul class="space-y-1 text-xs text-muted-foreground" data-testid="agent-alone-not-given">
-        <li>No addons: an addon is a tool, it needs an agent program.</li>
-        <li>No skills: a skill can run scripts, it needs an agent program.</li>
-      </ul>
-    {:else}
-      <BindingPicker projectId={project?.id} bind:value={spec.bindings} />
-      <SkillPicker projectId={project?.id} bind:value={spec.skills} pending={pendingSkills} />
-      <KnowledgePicker bind:value={spec.knowledge} />
-    {/if}
-  </section>
-
-  <section class="space-y-6 border-t pt-8" aria-labelledby="group-may">
-    <h2 id="group-may" class={GROUP}>What it may do</h2>
-    {#if spec.modelAlone}
-      <div class="space-y-1 rounded-lg border border-ok/30 bg-ok/5 p-3" data-testid="agent-alone-safe">
-        <p class="flex items-center gap-1.5 text-sm font-medium text-ok"><ShieldCheck class="size-4" />Nothing outside this call</p>
+  {#if spec.modelAlone}
+    <section class="space-y-2" aria-labelledby="group-can" data-testid="agent-can-do">
+      <h2 id="group-can" class="text-sm font-semibold">Can do</h2>
+      <div class="space-y-1 rounded-[10px] border bg-card p-4 shadow-panel" data-testid="agent-alone-safe">
+        <p class="flex items-center gap-1.5 text-sm font-medium"><ShieldCheck class="size-4 text-safe" />Nothing outside this call</p>
         <p class="text-xs text-muted-foreground">
           No files, no network, no tools: it reads what it is sent and answers, whatever it is told. Sent to its provider at each call: the conversation
-          (its form's values first) and its knowledge's notes.
+          (its form's values first) and its notes.
         </p>
       </div>
-    {:else}
-    {#if job}
-      <div class="space-y-1">
-        <p class="flex items-center gap-1.5 text-xs font-medium text-warn" data-testid="agent-unattended-permissions">
-          <ShieldAlert class="size-4" />
-          It never asks before acting ({PERMISSION_LABEL.bypass}{permissionsBefore !== null ? `, was ${PERMISSION_LABEL[permissionsBefore]}` : ""}): its network and its sandbox are all that limit it.
-        </p>
-        {#if onSubscription}
-          <p class="text-xs text-muted-foreground" data-testid="agent-unattended-subscription">
-            It runs on a subscription ({onSubscription}): subscription plans are for ordinary, individual use (their vendors' terms). For an
-            agent that runs on its own, an API key (a provider) is recommended.
-          </p>
-        {/if}
-      </div>
-    {/if}
-    <div class="space-y-2" data-testid="agent-preset">
-      <Label>Safety preset</Label>
-      <div class="flex flex-wrap items-center gap-3">
-        <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="safety preset">
-          {#each PRESETS as p (p.id)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={preset?.id === p.id}
-              disabled={job && p.sandbox.permissions !== "bypass"}
-              class="{SEGMENT} disabled:cursor-not-allowed disabled:opacity-50 {preset?.id === p.id ? SEGMENT_ON : SEGMENT_OFF}"
-              title={job && p.sandbox.permissions !== "bypass" ? "Runs unattended: it never asks" : undefined}
-              onclick={() => applyPreset(p.sandbox)}
-              data-testid={`agent-preset-${p.id}`}
-            >
-              {p.label}
-            </button>
-          {/each}
-        </div>
-        <Button type="button" variant="ghost" size="sm" onclick={() => (customizing = !customizing)} aria-expanded={customizing} data-testid="agent-customize">
-          <ChevronDown class="transition-transform {customizing ? 'rotate-180' : ''}" />{preset ? "Customize" : "Its own settings"}
-        </Button>
-      </div>
-      <p class="text-xs {summaryTone}" data-testid="agent-preset-summary">{summary}</p>
-    </div>
-
-    {#if customizing}
-      <div class="space-y-6 rounded-lg border p-4" data-testid="agent-custom">
-        <div class="space-y-2" data-testid="agent-permissions">
-          <Label>Permissions</Label>
-          <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="permissions">
-            {#each PERMISSIONS as m (m.mode)}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={spec.permissions === m.mode}
-                disabled={(offered !== undefined && !offered.includes(m.mode)) || (job && m.mode !== "bypass")}
-                class="{SEGMENT} disabled:cursor-not-allowed disabled:opacity-50 {spec.permissions === m.mode ? SEGMENT_ON : SEGMENT_OFF}"
-                title={job && m.mode !== "bypass" ? "Runs unattended" : undefined}
-                onclick={() => (spec.permissions = m.mode)}
-                data-testid={`permissions-${m.mode}`}
-              >
-                {m.label}
-              </button>
-            {/each}
-          </div>
-          <p class="text-xs {spec.permissions === 'bypass' ? 'text-warn' : 'text-muted-foreground'}">
-            {PERMISSIONS.find((m) => m.mode === spec.permissions)?.hint}
-            {job ? "Fixed: it runs unattended." : "A session can change it."}
-          </p>
-          {#if offered && !offered.includes(spec.permissions)}
-            <p class="text-xs text-danger">Its agent program does not have this mode (it offers: {offered.join(", ")}).</p>
-          {/if}
-        </div>
-
-        <div class="space-y-2" data-testid="agent-network">
-          <Label>Network</Label>
-          <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="network">
-            {#each MODES as m (m.mode)}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={spec.network === m.mode}
-                class="{SEGMENT} {spec.network === m.mode ? SEGMENT_ON : SEGMENT_OFF}"
-                onclick={() => (spec.network = m.mode)}
-                data-testid={`network-${m.mode}`}
-              >
-                {m.label}
-              </button>
-            {/each}
-          </div>
-          <p class="text-xs {spec.network === 'open' ? 'text-warn' : 'text-muted-foreground'}">{MODES.find((m) => m.mode === spec.network)?.hint}</p>
-          {#if spec.network === "filtered"}
-            <div class="space-y-4 pt-1">
-              <div class="flex items-start gap-2">
-                <Checkbox id="agent-log-only" checked={spec.egress === "log-only"} onCheckedChange={(c) => (spec.egress = c === true ? "log-only" : "enforce")} data-testid="agent-log-only" />
-                <div class="space-y-0.5">
-                  <Label for="agent-log-only">Log only</Label>
-                  <p class="text-xs text-muted-foreground">Lets everything through and records it: allow the hosts the project needs, then turn it off.</p>
-                </div>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <div class="space-y-2">
-          <Label>Sandbox</Label>
-          <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="confinement">
-            {#each CONFINEMENTS as c (c.value)}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={spec.confinement === c.value}
-                class="{SEGMENT} {spec.confinement === c.value ? SEGMENT_ON : SEGMENT_OFF}"
-                onclick={() => (spec.confinement = c.value)}
-                data-testid={`confinement-${c.value}`}
-              >
-                {c.label}
-              </button>
-            {/each}
-          </div>
-          <p class="text-xs {spec.confinement === 'strict' ? 'text-muted-foreground' : spec.confinement === 'privileged' ? 'text-danger' : 'text-warn'}">
-            {CONFINEMENTS.find((c) => c.value === spec.confinement)?.hint}
-          </p>
-          <div class="flex items-start gap-2 pt-2">
-            <Checkbox id="agent-display" bind:checked={spec.display} disabled={!displayAvailable && !spec.display} />
-            <div class="space-y-0.5">
-              <Label for="agent-display">Show windows on my screen and paste images</Label>
-              <p class="text-xs text-muted-foreground">
-                {#if displayAvailable}
-                  It can open windows on your desktop (e.g. the playwright browser) and use your clipboard, so images can be pasted in its
-                  terminal; it then also reads what you copy. Without it, its browser is headless.
-                {:else}
-                  No Wayland display found by the daemon.
-                {/if}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    {#if spec.network === "filtered"}
-    <div class="space-y-1.5" data-testid="agent-hosts">
-      <Label>Allowed hosts</Label>
-      <HostList value={spec.allow} onchange={(next) => { spec.allow = next; }} empty="None." />
-    </div>
-    {#if agent?.model.requiredHosts?.length}
-      <div class="space-y-2" data-testid="agent-required-hosts">
-        <p class="text-xs text-muted-foreground">Also allowed, as its model and its addons require:</p>
-        <ul class="space-y-0.5 text-xs">
-          {#each agent.model.requiredHosts as r (r.host + r.by)}
-            <li><span class="font-mono">{r.host}</span> <span class="text-muted-foreground">required by {r.by}</span></li>
-          {/each}
-        </ul>
-      </div>
-    {/if}
-    {/if}
-    {/if}
-  </section>
+    </section>
+  {:else}
+    <CanDo bind:spec {job} {offered} program={productName(spec.model.harness ?? "")} {needed} {gives} {displayAvailable} />
+  {/if}
 
   {#if project || agent || job}
-  <section class="space-y-3 border-t pt-8" aria-labelledby="group-started">
-    <h2 id="group-started" class={GROUP}>How it is started</h2>
-    {#if project}
-      <div class="flex items-center gap-2">
-        <Checkbox id="agent-default" bind:checked={spec.default} disabled={agent?.id === project.defaultAgent} />
-        <Label for="agent-default" class="font-normal">The project's default agent</Label>
-      </div>
-      <div class="flex items-start gap-2">
-        <Checkbox id="agent-remote" bind:checked={spec.remoteStart} data-testid="agent-remote-start" />
-        <div class="space-y-0.5">
-          <Label for="agent-remote" class="font-normal">Can be started from your phone</Label>
-          <p class="text-xs text-muted-foreground">By your paired devices (Settings → Remote), which then share the session.</p>
-        </div>
-      </div>
-    {/if}
-    {#if agent || job}
-      <div class="space-y-2" data-testid="agent-automations">
-        <Label>Started automatically</Label>
-        {#if !agent}
-          <p class="text-xs text-muted-foreground">An automation runs it at a time, or when a session stops.</p>
-        {:else if automations.length}
-          <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm">
-            {#each automations as a (a.name)}
-              <li class="flex flex-wrap items-center gap-2 px-3 py-2">
-                <a class="font-medium text-link hover:underline" href={href({ view: "automation", name: a.name })}>{a.name}</a>
-                <StatusBadge status={a.enabled ? "on" : "off"} />
-                <span class="text-muted-foreground">{whenSentence(a.definition)}{#if a.nextAt}, next <When at={a.nextAt} />{/if}</span>
-                {#if a.problems?.length}<span class="text-xs text-danger">{a.problems.length} problem{a.problems.length === 1 ? "" : "s"}</span>{/if}
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="text-xs text-muted-foreground">No automation runs it.</p>
+    <section class="space-y-2" aria-labelledby="group-started">
+      <h2 id="group-started" class="text-sm font-semibold">How it is started</h2>
+      <div class="divide-y overflow-hidden rounded-[10px] border bg-card shadow-panel">
+        {#if project}
+          <div class="flex items-center gap-2 px-4 py-3">
+            <Checkbox id="agent-default" bind:checked={spec.default} disabled={agent?.id === project.defaultAgent} />
+            <Label for="agent-default" class="font-normal">The project's default agent</Label>
+          </div>
+          <div class="flex items-start gap-2 px-4 py-3">
+            <Checkbox id="agent-remote" bind:checked={spec.remoteStart} data-testid="agent-remote-start" />
+            <div class="space-y-0.5">
+              <Label for="agent-remote" class="font-normal">Can be started from your phone</Label>
+              <p class="text-xs text-muted-foreground">By your paired devices (Settings → Your phone), which then share the session.</p>
+            </div>
+          </div>
         {/if}
-        <div class="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={busy || !job || !spec.name.trim() || !!blocker || lacks.length > 0}
-            onclick={() => ((next = "schedule"), void save())}
-            data-testid="agent-schedule"
-          >
-            <CalendarClock />Save and run it on a schedule…
-          </Button>
-          {#if !job}
-            <p class="text-xs text-muted-foreground">Only for jobs (choose at the top).</p>
-          {:else if !spec.name.trim()}
-            <p class="text-xs text-muted-foreground">An automation finds it by its name: give it one above.</p>
-          {:else if lacks.length}
-            <p class="text-xs text-muted-foreground">Its result needs {lacks.join(" and ")} first (above).</p>
-          {/if}
-        </div>
-      </div>
-    {/if}
-    {#if usedBy.length}
-      <div class="space-y-2" data-testid="agent-used-by">
-        <Label>Used by</Label>
-        <p class="text-xs text-muted-foreground">They run it when you use them. Its form and result must still fit what they send and read.</p>
-        <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm">
-          {#each usedBy as u (`${u.kind}/${u.id}`)}
-            <li class="flex flex-wrap items-center gap-2 px-3 py-2">
-              <a
-                class="font-medium text-link hover:underline"
-                href={u.kind === "handler" ? href({ view: "settings", section: "helpers" }) : href({ view: "apps", app: u.id })}>{u.label}</a
+        {#if agent || job}
+          <div class="space-y-2 px-4 py-3" data-testid="agent-automations">
+            <Label>Started automatically</Label>
+            {#if !agent}
+              <p class="text-xs text-muted-foreground">An automation runs it at a time, or when a session stops.</p>
+            {:else if automations.length}
+              <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm">
+                {#each automations as a (a.name)}
+                  <li class="flex flex-wrap items-center gap-2 px-3 py-2">
+                    <a class="font-medium text-link hover:underline" href={href({ view: "automation", name: a.name })}>{a.name}</a>
+                    <StatusBadge status={a.enabled ? "on" : "off"} />
+                    <span class="text-muted-foreground">{whenSentence(a.definition)}{#if a.nextAt}, next <When at={a.nextAt} />{/if}</span>
+                    {#if a.problems?.length}<span class="text-xs text-danger">{a.problems.length} problem{a.problems.length === 1 ? "" : "s"}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="text-xs text-muted-foreground">No automation runs it.</p>
+            {/if}
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy || !job || !spec.name.trim() || !!blocker || lacks.length > 0}
+                onclick={() => ((next = "schedule"), void save())}
+                data-testid="agent-schedule"
               >
-              <span class="text-muted-foreground">{u.how}</span>
-            </li>
-          {/each}
-        </ul>
+                <CalendarClock />Save and run it on a schedule…
+              </Button>
+              {#if !job}
+                <p class="text-xs text-muted-foreground">Only for jobs (choose its use above).</p>
+              {:else if !spec.name.trim()}
+                <p class="text-xs text-muted-foreground">An automation finds it by its name: give it one above.</p>
+              {:else if lacks.length}
+                <p class="text-xs text-muted-foreground">Its result needs {lacks.join(" and ")} first (above).</p>
+              {/if}
+            </div>
+          </div>
+        {/if}
+        {#if usedBy.length}
+          <div class="space-y-2 px-4 py-3" data-testid="agent-used-by">
+            <Label>Used by</Label>
+            <p class="text-xs text-muted-foreground">They run it when you use them. Its form and result must still fit what they send and read.</p>
+            <ul class="divide-y overflow-hidden rounded-lg border bg-card text-sm">
+              {#each usedBy as u (`${u.kind}/${u.id}`)}
+                <li class="flex flex-wrap items-center gap-2 px-3 py-2">
+                  <a
+                    class="font-medium text-link hover:underline"
+                    href={u.kind === "handler" ? href({ view: "settings", section: "helpers" }) : href({ view: "apps", app: u.id })}>{u.label}</a
+                  >
+                  <span class="text-muted-foreground">{u.how}</span>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
       </div>
-    {/if}
-  </section>
+    </section>
   {/if}
 
   <div class="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t bg-background px-1 py-3">
     {#if risks}
       <div class="w-full space-y-2 rounded-md border border-warn/40 bg-warn/5 p-3 text-sm" data-testid="agent-risks">
-        <p>This gives the agent more than {agent ? "before" : "a new agent gets by default"}: {risks}.</p>
+        <p>This gives the agent more than {agent ? "before" : "a new agent starts with"}: {risks}.</p>
         <div class="flex gap-2">
           <Button type="button" size="sm" variant="destructive" disabled={busy} onclick={() => save(true)} data-testid="agent-confirm-risks">Save anyway</Button>
           <Button type="button" size="sm" variant="ghost" onclick={() => ((risks = null), (next = null))}>Back</Button>
         </div>
       </div>
+    {/if}
+    {#if toolbox}
+      {@const t = toolbox}
+      <ToolboxConfirm changes={t} {busy} onconfirm={() => save(t.risks, t.adds)} onback={() => ((toolbox = null), (next = null))} />
     {/if}
     {#if spec.interface !== ""}
       <Button type="button" disabled={busy || !!blocker} onclick={() => ((next = "try"), void save())} data-testid="agent-save-try"><FlaskConical />Save and try</Button>
@@ -788,7 +583,7 @@
     {#if blocker}<p class="text-xs text-muted-foreground" data-testid="agent-save-blocker">{blocker}</p>{/if}
     {#if agent && live}
       <p class="text-xs text-muted-foreground">
-        {live} running: hosts and log-only apply to {live === 1 ? "it" : "them"} at once, the rest to new sessions.
+        {live} running: its sites and learning them apply to {live === 1 ? "it" : "them"} at once, the rest to new sessions.
       </p>
     {/if}
     {#if error}<p class="w-full text-sm text-danger">{error}</p>{/if}

@@ -12,13 +12,15 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
 import subprocess
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 from handler_contracts import TerminalStart, TerminalStarted
 
-from . import launcher, sandbox_process
+from . import addon_folders, launcher, sandbox_process
 from .agents import AgentRecord, AgentRegistry, LiveConnection, RunsAs
 from .settings import Settings
 
@@ -44,6 +46,7 @@ async def start(
     """Start the sandbox, running as `runs` (checks.session_model), and wait until it is ready
     for its client. AgentStartError, TerminalStartError, OSError when it cannot."""
     started, output = launcher.start_terminal(settings, record, runs, start)
+    paste = launcher.paste_folder(settings, started.spec.name)
     proc = started.process
     assert isinstance(proc, subprocess.Popen)
     lines = sandbox_process.follow(proc, output)
@@ -54,10 +57,12 @@ async def start(
     except BaseException:
         proc.terminate()
         os.close(output)
+        shutil.rmtree(paste, ignore_errors=True)
         raise
     if said:
         proc.terminate()
         os.close(output)
+        shutil.rmtree(paste, ignore_errors=True)
         raise TerminalStartError("; ".join(said[-3:])[:300])
     conn = LiveConnection(
         id=started.connection_id,
@@ -69,11 +74,12 @@ async def start(
     )
     record.connections[conn.id] = conn
     registry.touch(record)
-    task = asyncio.create_task(_follow(record, registry, conn, lines, output))
+    followed = _follow(settings, record, registry, conn, lines, output=output, paste=paste)
+    task = asyncio.create_task(followed)
     _followed.add(task)
     task.add_done_callback(_followed.discard)
     attach = sandbox_process.attach_command(started.spec.name)
-    return TerminalStarted(sandbox=started.spec.name, attach=attach)
+    return TerminalStarted(sandbox=started.spec.name, attach=attach, paste=str(paste))
 
 
 async def _until_ready(lines: AsyncIterator[str]) -> list[str]:
@@ -87,13 +93,17 @@ async def _until_ready(lines: AsyncIterator[str]) -> list[str]:
 
 
 async def _follow(
+    settings: Settings,
     record: AgentRecord,
     registry: AgentRegistry,
     conn: LiveConnection,
     lines: AsyncIterator[str],
+    *,
     output: int,
+    paste: Path,
 ) -> None:
-    """Its logs and egress events until the launcher ends (handlerd stopping: it goes on alone)."""
+    """Its logs and egress events until the launcher ends (handlerd stopping: it goes on alone,
+    its paste folder left in the runtime folder)."""
 
     def on_egress(event: dict[str, str]) -> None:
         registry.add_event(record, conn.id, event)
@@ -105,4 +115,6 @@ async def _follow(
     finally:
         with contextlib.suppress(OSError):
             os.close(output)
+        shutil.rmtree(paste, ignore_errors=True)
         record.connections.pop(conn.id, None)
+        addon_folders.sweep_soon(settings)  # a folder it mounted may be free

@@ -37,6 +37,7 @@ echo "try=$HANDLER_TRY run=$HANDLER_RUN"
 """
 
 
+@pytest.mark.rule("script.no-network-no-secret")
 def test_a_runs_sandbox_is_confined() -> None:
     root = dev_env.make_scope()
     try:
@@ -44,6 +45,7 @@ def test_a_runs_sandbox_is_confined() -> None:
         for folder in folders.values():
             folder.mkdir()
         (folders["input"] / "given").write_text("the conversation\n")
+        sandbox_process.give_dev_agent(folders["output"])  # as handlerd's copy_definition
         spec = compose.automation_run_spec(
             name="handler-run-a-test",
             run_id="a_test",
@@ -52,7 +54,7 @@ def test_a_runs_sandbox_is_confined() -> None:
             definition=str(folders["definition"]),
             input_dir=str(folders["input"]),
             output=str(folders["output"]),
-            bin_dir=str(BIN),
+            commands={p.name: p.read_text() for p in BIN.iterdir()},
             services=None,
             trial=True,
         )

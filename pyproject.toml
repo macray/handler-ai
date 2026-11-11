@@ -5,7 +5,10 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "handler-contracts",
+    "handler-sandbox-kit",
     "handler-sandbox-podman",
+    "handler-sandbox-apple",
+    "handler-sandbox-docker",
     "handler-harness-adapters",
     "handler-control-plane",
     "handler-cli",
@@ -28,7 +31,10 @@ package = false
 [tool.uv.workspace]
 members = [
     "packages/contracts",
+    "packages/sandbox-kit",
     "packages/sandbox-podman",
+    "packages/sandbox-apple",
+    "packages/sandbox-docker",
     "packages/harness-adapters",
     "packages/control-plane",
     "packages/cli",
@@ -36,7 +42,10 @@ members = [
 
 [tool.uv.sources]
 handler-contracts = { workspace = true }
+handler-sandbox-kit = { workspace = true }
 handler-sandbox-podman = { workspace = true }
+handler-sandbox-apple = { workspace = true }
+handler-sandbox-docker = { workspace = true }
 handler-harness-adapters = { workspace = true }
 handler-control-plane = { workspace = true }
 handler-cli = { workspace = true }
@@ -54,12 +63,15 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PL"]
-ignore = ["PLR2004", "PLR0913", "RUF012"]  # RUF012: pydantic copies mutable defaults
+ignore = ["PLR2004", "PLR0913", "RUF012", "E501"]  # RUF012: pydantic copies mutable defaults
 
 [tool.ruff.lint.isort]
 known-first-party = [
     "handler_contracts",
+    "handler_sandbox_kit",
     "handler_sandbox_podman",
+    "handler_sandbox_apple",
+    "handler_sandbox_docker",
     "handler_harness",
     "handler_control",
     "handler_cli",
@@ -71,7 +83,10 @@ python-version = "3.12"
 [tool.ty.src]
 include = [
     "packages/contracts",
+    "packages/sandbox-kit",
     "packages/sandbox-podman",
+    "packages/sandbox-apple",
+    "packages/sandbox-docker",
     "packages/harness-adapters",
     "packages/control-plane",
     "packages/cli",
@@ -88,3 +103,6 @@ addopts = "-q"
 # a hung test fails with its stack instead of blocking the run (the slowest takes ~7 s); tests
 # that pull or build images say how long they may take: pytest.mark.timeout(IMAGE_TIMEOUT)
 timeout = 120
+markers = [
+    "rule(*names): the rules this test proves, by name; a failure names them",
+]

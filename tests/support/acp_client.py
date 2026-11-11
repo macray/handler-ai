@@ -39,6 +39,7 @@ class AcpClient:
         self.updates: list[dict[str, Any]] = []
         self._next_id = 0
         self._inbox: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self._closing = False
         threading.Thread(target=self._read, args=(receive,), daemon=True).start()
 
     # ── transports ──────────────────────────────────────────────────────
@@ -80,8 +81,14 @@ class AcpClient:
     def _read(self, receive: Iterator[str]) -> None:
         for text in receive:
             for line in text.splitlines():
-                if line.strip():
+                if not line.strip():
+                    continue
+                try:
                     self._inbox.put(json.loads(line))
+                except json.JSONDecodeError:
+                    if not self._closing:
+                        raise
+                    break  # an agent told to stop may exit in the middle of a line
         self._inbox.put(None)
 
     def send(self, msg: dict[str, Any]) -> None:
@@ -134,11 +141,6 @@ class AcpClient:
                 if msg["method"] == method:
                     return msg.get("params") or {}
 
-    def wait_closed(self, timeout: float = 30) -> None:
-        """Drain until the connection closes."""
-        while self._inbox.get(timeout=timeout) is not None:
-            pass
-
     # ── convenience ─────────────────────────────────────────────────────
 
     def initialize(self, capabilities: dict[str, Any] | None = None) -> Any:
@@ -169,4 +171,5 @@ class AcpClient:
         return "".join(chunks)
 
     def close(self) -> None:
+        self._closing = True
         self._close()

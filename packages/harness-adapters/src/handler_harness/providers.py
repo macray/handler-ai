@@ -14,14 +14,20 @@ that harness, for what only it knows (a chat template, a compat flag).
 """
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from handler_contracts import HarnessDescriptor, Provider, ProviderModel, egress_target
+from handler_contracts import (
+    CONTAINER_HOST,
+    HarnessDescriptor,
+    Provider,
+    ProviderModel,
+    egress_target,
+)
 
-CONTAINER_HOST = "host.containers.internal"  # a container's name for the machine it runs on
 _LOOPBACK = ("localhost", "127.0.0.1", "::1")
 NO_KEY = "none"  # what a server that checks nothing is given as a key
 REPLY_RESERVE = 16384  # room left for a reply when the model gives no max_output (pi's default)
@@ -78,7 +84,7 @@ def egress(descriptor: HarnessDescriptor, provider: Provider) -> str:
     return egress_target(reachable(choose_endpoint(descriptor, provider)))
 
 
-def choose_model(provider: Provider, wanted: str | None, harness: str) -> ProviderModel:
+def choose_model(provider: Provider, wanted: str | None) -> ProviderModel:
     if wanted is None:
         if not provider.chat_models:
             raise ProviderError("provider serves speech models only")
@@ -102,7 +108,7 @@ def express(
     call = Call(
         descriptor=descriptor,
         provider=provider,
-        model=choose_model(provider, wanted_model, descriptor.name),
+        model=choose_model(provider, wanted_model),
         endpoint=reachable(endpoint),
         key=key,
         has_instructions=has_instructions,
@@ -115,6 +121,12 @@ def reserve(model: ProviderModel, context: int) -> int:
     `max_output`, at most a fifth of the window (a `max_output` as large as the window would
     otherwise compact a small one at half)."""
     return min(model.max_output or REPLY_RESERVE, int(context * RESERVE_SHARE))
+
+
+def _vibe_headroom(window: int) -> int:
+    """The tokens Vibe keeps free above its compaction threshold for the summary request: no
+    threshold may leave less (mistral-vibe 3's `threshold_bounds`)."""
+    return min(24000, math.ceil(window / 4))
 
 
 def _merged(call: Call, entry: dict[str, Any]) -> dict[str, Any]:
@@ -205,9 +217,9 @@ def codex(call: Call) -> Expressed:
 
 
 def vibe(call: Call) -> Expressed:
-    """Vibe: a provider and a model in config.toml. Vibe has no context window setting: its
-    `auto_compact_threshold` is both where it compacts and the window it reports over ACP; no
-    setting takes the maximum output either."""
+    """Vibe: a provider and a model in config.toml. Its compaction threshold leaves room for the
+    reply (`reserve`) and for its own summary request, which it refuses a threshold to eat into
+    (`_vibe_headroom`); it refuses a maximum output that does not fit the window."""
     m = call.model
     key_env = "MISTRAL_API_KEY" if call.key else ""
     provider = [
@@ -234,7 +246,11 @@ def vibe(call: Call) -> Expressed:
     if m.reasoning:
         model["thinking"] = "medium"
     if m.context_window:
-        model["auto_compact_threshold"] = m.context_window - reserve(m, m.context_window)
+        window = m.context_window
+        model["max_context_length"] = window
+        model["auto_compact_threshold"] = window - max(reserve(m, window), _vibe_headroom(window))
+    if m.max_output and (not m.context_window or m.max_output < m.context_window):
+        model["max_output_tokens"] = m.max_output
     model = _merged(call, model)
     lines = [f"active_model = {_toml(m.id)}", "", *provider, "", "[[models]]"]
     lines += [f"{key} = {_toml(value)}" for key, value in model.items()]

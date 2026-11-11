@@ -1,20 +1,15 @@
 {
   "$id": "urn:handler.control/v1/toolbox-containerfile",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The user's toolbox Containerfile (B.6, D.4), and the default it was copied from.",
+  "description": "The toolbox's generated Containerfile (B.7), read-only: what the next build builds.",
   "properties": {
     "content": {
       "title": "Content",
       "type": "string"
-    },
-    "defaultContent": {
-      "title": "Defaultcontent",
-      "type": "string"
     }
   },
   "required": [
-    "content",
-    "defaultContent"
+    "content"
   ],
   "title": "ToolboxContainerfile",
   "type": "object"

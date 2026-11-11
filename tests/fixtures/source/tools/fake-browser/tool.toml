@@ -1,0 +1,14 @@
+# An addon whose tool is an MCP server (G.1), as a browser's would be: the test daemon's `browser`
+# binding uses it (P8). Never built: the test daemon makes its folder, empty (G.4).
+apiVersion = "handler.tool/v1"
+name = "fake-browser"
+description = "A browser for the tests, as an MCP server"
+image = "localhost/handler-ai-tool-fake-browser"
+commands = ["fake-browser-mcp"]
+
+[mcp]
+command = ["fake-browser-mcp"]
+
+[settings.headless]
+env = "HANDLER_FAKE_BROWSER_HEADLESS"
+description = "\"1\": always headless. Not set (or any other value): a window when the agent has a display, headless otherwise"

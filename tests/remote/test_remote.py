@@ -1,14 +1,17 @@
-"""Remote control conformance (docs/dev/design/remote.md, contract D.7): a real handlerd, a real
+"""Remote control conformance (remote design, contract D.7): a real handlerd, a real
 gateway, a device in Python. The gateway is treated as hostile where it matters: envelopes replayed,
 held back, altered, or sent back to their sender are refused by handlerd.
 """
 
+import contextlib
 import time
 from collections.abc import Iterator
 from typing import Any
 
 import httpx
 import pytest
+
+from handler_control import remote_crypto as rc
 
 from ..support.acp_client import AcpClient
 from ..support.daemon import Daemon, start_daemon
@@ -79,6 +82,11 @@ def shared(daemon: Daemon) -> dict[str, Any]:
     return session
 
 
+@pytest.mark.rule(
+    "remote.polls-only-while-something-is-reachable",
+    "remote.the-light-says-why",
+    "share.off-until-you-switch-it-on",
+)
 def test_light_follows_sharing(daemon: Daemon) -> None:
     wait_light(daemon, "idle")  # nothing shared: no polling
     session = running_session(daemon)
@@ -89,6 +97,7 @@ def test_light_follows_sharing(daemon: Daemon) -> None:
     wait_light(daemon, "idle")
 
 
+@pytest.mark.rule("envelope.acknowledged-by-the-host", "phone.an-ordinary-attachment")
 def test_device_drives_a_shared_session(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon)
     listed = device.request(None, "_handler/remote/list_sessions")["sessions"]
@@ -119,6 +128,7 @@ def test_device_drives_a_shared_session(daemon: Daemon, shared: dict[str, Any]) 
     assert [d["attached"] for d in status["devices"] if d["name"] == "phone"][-1] == [shared["id"]]
 
 
+@pytest.mark.rule("phone.an-ordinary-attachment")
 def test_device_answers_a_permission_request(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon)
     attach(device, shared)
@@ -135,6 +145,7 @@ def test_device_answers_a_permission_request(daemon: Daemon, shared: dict[str, A
     assert '"optionId": "yes"' in device.text(s)
 
 
+@pytest.mark.rule("share.off-until-you-switch-it-on", "phone.only-the-allowed-methods")
 def test_only_shared_sessions_and_allowed_methods(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon)
     private = running_session(daemon)
@@ -151,6 +162,7 @@ def test_only_shared_sessions_and_allowed_methods(daemon: Daemon, shared: dict[s
         device.request(None, "_handler/remote/share", {"s": private["id"]})
 
 
+@pytest.mark.rule("share.off-until-you-switch-it-on", "share.off-closes-the-devices-at-once")
 def test_unsharing_closes_the_device(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon)
     attach(device, shared)
@@ -171,6 +183,7 @@ def test_unsharing_closes_the_device(daemon: Daemon, shared: dict[str, Any]) -> 
     assert share(daemon, shared).status_code == 409
 
 
+@pytest.mark.rule("envelope.bound-to-its-way", "envelope.taken-once-before-it-expires")
 def test_hostile_gateway_is_refused(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon)
     frame = {
@@ -205,6 +218,36 @@ def test_hostile_gateway_is_refused(daemon: Daemon, shared: dict[str, Any]) -> N
     assert altered["id"] not in device.acks and reflected["id"] not in device.acks
 
 
+@pytest.mark.rule("device.revoked-is-refused")
+def test_a_revoked_device_the_gateway_still_relays_gets_no_answer(
+    daemon: Daemon, gateway: Gateway, shared: dict[str, Any]
+) -> None:
+    """Revoked, then registered again at the gateway by hand (a gateway that does not forget
+    it): what it sends reaches handlerd, which answers none of it.
+
+    If this fails: a lost phone still reaches your sessions through a gateway that kept it."""
+    device = pair(daemon, "kept by the gateway")
+    assert device.request(None, "_handler/remote/list_sessions")["sessions"]
+    with daemon.http() as c:
+        assert c.delete(f"/v1/remote/devices/{device.id}").status_code == 204
+    host = httpx.Client(
+        base_url=gateway.url, headers={"Authorization": f"Bearer {gateway.host_token}"}
+    )
+    again = host.put(
+        f"/v1/host/devices/{device.id}", json={"tokenHash": rc.gateway_token_hash(device.key)}
+    )
+    assert again.is_success, again.text
+    device.cursor = ""  # its mailbox at the gateway is a new one
+    rid = device.call(None, "_handler/remote/list_sessions")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:  # the host polls; an answer would come by now
+        with contextlib.suppress(httpx.HTTPStatusError):  # forgotten again by handlerd's sync
+            device.poll(wait=0.5)
+    print("DBG", rid, device.frames[-3:], device.rejected, device.acks[-3:])
+    assert [f for f in device.frames if f["m"].get("id") == rid] == []
+
+
+@pytest.mark.rule("gateway.each-caller-its-own-mailboxes", "device.revoked-is-refused")
 def test_revoked_device_is_locked_out(daemon: Daemon, shared: dict[str, Any]) -> None:
     device = pair(daemon, "lost phone")
     attach(device, shared)
@@ -218,6 +261,11 @@ def test_revoked_device_is_locked_out(daemon: Daemon, shared: dict[str, Any]) ->
     assert device.http.get("/v1/device/poll", params={"wait": 0}).status_code == 401
 
 
+@pytest.mark.rule(
+    "remote.the-light-says-why",
+    "remote.the-host-token-over-https",
+    "device.paired-from-this-computer-only",
+)
 def test_pairing_needs_a_gateway_and_a_valid_token(daemon: Daemon, gateway: Gateway) -> None:
     with daemon.http() as c:
         bad = {"gatewayUrl": gateway.url, "hostToken": "not-a-token"}
@@ -239,6 +287,7 @@ def test_pairing_needs_a_gateway_and_a_valid_token(daemon: Daemon, gateway: Gate
         share(daemon, session, False)
 
 
+@pytest.mark.rule("phone.an-ordinary-attachment")
 def test_local_client_is_unaffected(daemon: Daemon, shared: dict[str, Any]) -> None:
     """Sanity: a shared session is still an ordinary session locally."""
     client: AcpClient = daemon.connect(shared["acpUrl"])
@@ -251,6 +300,11 @@ def test_local_client_is_unaffected(daemon: Daemon, shared: dict[str, Any]) -> N
         client.close()
 
 
+@pytest.mark.rule(
+    "remote.polls-only-while-something-is-reachable",
+    "device.a-family-member-s-reaches-apps-only",
+    "phone.starts-only-the-agents-you-marked",
+)
 def test_device_starts_a_session_of_an_allowed_agent(daemon: Daemon) -> None:
     """D.7: the owner's device lists the agents marked `remoteStart` (the host polls for them,
     nothing else being shared) and starts a session of one, shared with it once it runs."""
@@ -296,6 +350,9 @@ def test_device_starts_a_session_of_an_allowed_agent(daemon: Daemon) -> None:
         kid.request(None, "_handler/remote/start_session", {"agentId": coder["id"]})
 
 
+@pytest.mark.rule(
+    "remote.polls-only-while-something-is-reachable", "phone.starts-only-the-agents-you-marked"
+)
 def test_device_starts_a_chat(daemon: Daemon) -> None:
     """D.7, D.1: who you talk to in Chat (an agent whose home is Chat) is listed for the owner's
     devices with no `remoteStart`, the one used last the default, and started from them (Ask's
@@ -322,3 +379,38 @@ def test_device_starts_a_chat(daemon: Daemon) -> None:
         assert c.get(f"/v1/sessions/{started['session']}").json()["origin"] == "phone"
     with pytest.raises(DeviceError):  # not a chat (a folder) and not marked remoteStart
         device.request(None, "_handler/remote/start_session", {"agentId": other["id"]})
+
+
+def nulls(value: Any, where: str = "") -> list[str]:
+    """Where `value` holds a `null`."""
+    if value is None:
+        return [where or "."]
+    if isinstance(value, dict):
+        return [n for k, v in value.items() for n in nulls(v, f"{where}.{k}")]
+    if isinstance(value, list):
+        return [n for i, v in enumerate(value) for n in nulls(v, f"{where}[{i}]")]
+    return []
+
+
+@pytest.mark.rule("phone.messages-are-contract-documents")
+def test_the_device_channel_speaks_its_contract_documents(
+    daemon: Daemon, shared: dict[str, Any]
+) -> None:
+    """A control request whose params do not fit its document gets -32602; a result and a
+    notification leave absent fields out, never `null`.
+
+    If this fails: the phone and handlerd drift apart, and a phone reads `null` where its
+    document has nothing."""
+    device = pair(daemon)
+    for params in ({}, {"agentId": 5}, {"agentId": "a", "surprise": True}):
+        with pytest.raises(DeviceError) as refused:
+            device.request(None, "_handler/remote/start_session", params)
+        assert refused.value.code == -32602, params
+    for method in ("list_sessions", "list_agents", "list_apps", "inbox"):
+        result = device.request(None, f"_handler/remote/{method}")
+        assert nulls(result) == [], (method, nulls(result))
+    share(daemon, running_session(daemon))  # told to the device: sessions_changed
+    device.wait_frame(lambda f: f["m"].get("method") == "_handler/remote/sessions_changed")
+    for frame in device.frames:
+        if "method" in frame["m"]:
+            assert nulls(frame["m"].get("params")) == [], frame

@@ -21,9 +21,11 @@ class ClientError(RuntimeError):
         status: int | None = None,
         title: str | None = None,
         detail: str | None = None,
+        toolbox_adds: list[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status, self.title, self.detail = status, title, detail  # handlerd's answer, if any
+        self.toolbox_adds = toolbox_adds  # 409 "toolbox changes not confirmed": to send back
 
 
 def base_url() -> str:
@@ -84,5 +86,5 @@ class Daemon:
                 raise ClientError(f"{r.status_code} {r.text}", r.status_code) from None
             title, detail = problem.get("title"), problem.get("detail")
             message = f"{r.status_code} {title}: {detail or ''}".rstrip(": ")
-            raise ClientError(message, r.status_code, title, detail)
+            raise ClientError(message, r.status_code, title, detail, problem.get("toolboxAdds"))
         return r

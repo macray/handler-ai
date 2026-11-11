@@ -1,8 +1,8 @@
-"""Remote connector (docs/dev/design/remote.md §5): paired devices reach shared sessions through a
+"""Remote connector (remote design §5): paired devices reach shared sessions through a
 gateway that handlerd polls — handlerd never listens to anything but loopback.
 
     config     <config>/remote.json          gateway URL + host token (0600)
-    devices    <config>/remote-devices.json  paired devices and their keys (0600)
+    devices    <config>/remote-devices.json  paired devices, their keys and push subscriptions (0600)
     seen       <state>/remote-replay.json    ids of the envelopes taken, each until it expires
     push key   <config>/vapid.json           Web Push signing key (0600), made when first asked
 
@@ -22,7 +22,7 @@ device's person (app_remote.py, H.8). handlerd polls while a session or an app i
 an agent may be started from a device (`remoteStart`, or one you talk to in Chat: the owner's
 devices start sessions of it).
 
-A5 (docs/dev/design/apps.md §5.3, §7): what a device queued at the gateway while the host was
+A5 (apps design §5.3, §7): what a device queued at the gateway while the host was
 off is taken when handlerd is back (only app calls to routes the app declares "queued", until
 they expire: 7 days); what handler tells a person (its inbox: apps' notifications, automations'
 results) is pushed, content-free, to the devices of that person (Web Push).
@@ -62,6 +62,7 @@ from handler_contracts import (
     PushKey,
     PushSubscribeParams,
     PushSubscription,
+    PushTest,
     RemoteActionRun,
     RemoteAgent,
     RemoteDevice,
@@ -75,6 +76,7 @@ from handler_contracts import (
     StartedSession,
     StartSessionParams,
     TranscribeParams,
+    WebPush,
 )
 
 from . import agents, files, webpush
@@ -155,7 +157,7 @@ class Device:
     last_seen_at: datetime | None = None
     person: str = "owner"
     scope: DeviceScope = "all"
-    push_endpoint: str | None = None  # its Web Push subscription (A5)
+    push: WebPush | None = None  # its Web Push subscription (A5)
 
     def to_json(self) -> Message:
         return {
@@ -163,7 +165,7 @@ class Device:
             "name": self.name,
             "person": self.person,
             "scope": self.scope,
-            "pushEndpoint": self.push_endpoint,
+            "push": self.push.model_dump(by_alias=True) if self.push else None,
             "key": rc.b64(self.key),
             "createdAt": self.created_at.isoformat(),
             "lastSeenAt": self.last_seen_at.isoformat() if self.last_seen_at else None,
@@ -178,9 +180,9 @@ class Device:
             rc.unb64(d["key"]),
             datetime.fromisoformat(d["createdAt"]),
             datetime.fromisoformat(seen) if seen else None,
-            d.get("person", "owner"),
-            "apps" if d.get("scope") == "apps" else "all",
-            d.get("pushEndpoint"),
+            d["person"],
+            d["scope"],
+            WebPush.model_validate(d["push"]) if d["push"] else None,
         )
 
 
@@ -226,16 +228,14 @@ class Seen:
 
 
 class Connector:
-    def __init__(
-        self, settings: Settings, sessions: SessionStore, apps: AppStore | None = None
-    ) -> None:
+    def __init__(self, settings: Settings, sessions: SessionStore, apps: AppStore) -> None:
         self.settings = settings
         self.sessions = sessions
         self.apps = apps
         self.projects: ProjectRegistry | None = None  # set by the app: names, remote agents
         self.assistant: Assistant | None = None  # set by the app: Ask from the owner's devices
         self.voice: VoiceStore | None = None  # set by the app: speaking to Ask (D.25)
-        self.app_channel = AppChannel(apps) if apps else None
+        self.app_channel = AppChannel(apps)
         self.config_file = settings.config_dir / "remote.json"
         self.devices_file = settings.config_dir / "remote-devices.json"
         self.seen = Seen(settings.state_dir / "remote-replay.json")
@@ -255,12 +255,11 @@ class Connector:
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(15.0, read=POLL_WAIT + 15.0))
         sessions.listeners.append(self.sessions_changed)
         sessions.registry.listeners.append(self.agents_changed)
-        if apps is not None:
-            apps.listeners.append(self.apps_changed)
-            apps.inbox.listeners.append(self.on_message)
+        apps.listeners.append(self.apps_changed)
+        apps.inbox.listeners.append(self.on_message)
         self.queue_checked = 0.0  # monotonic
         self._vapid: webpush.Vapid | None = None
-        self.pushes: set[asyncio.Task[None]] = set()
+        self.pushes: set[asyncio.Task[Any]] = set()  # running: pushes, slow answers
 
     # ── lifecycle ───────────────────────────────────────────────────────
 
@@ -305,7 +304,7 @@ class Connector:
         (D.24): handlerd polls."""
         agents = bool(self.projects and self.projects.remote_agents()) or bool(self.chats())
         asking = bool(self.assistant and self.assistant.ready())
-        shared = bool(self.shared()) or bool(self.apps and self.apps.remote_apps())
+        shared = bool(self.shared()) or bool(self.apps.remote_apps())
         return shared or agents or asking
 
     def agents_changed(self) -> None:
@@ -409,7 +408,7 @@ class Connector:
         """An app was shared, unshared, deployed or removed: each device around gets its list."""
         self.wake.set()
         for link in self.links.values():
-            if time.monotonic() - link.last_seen < LEASE and self.apps is not None:
+            if time.monotonic() - link.last_seen < LEASE:
                 apps = wire(SharedApps(apps=self.apps.remote_apps(link.device.person)))
                 self.send(link, None, notification("_handler/remote/apps_changed", **apps))
 
@@ -612,8 +611,6 @@ class Connector:
     async def app_call(self, link: Link, s: str, m: Message) -> None:
         params = m.get("params") if isinstance(m.get("params"), dict) else {}
         try:
-            if self.app_channel is None:
-                raise RemoteAppError(NOT_SHARED, "no apps here")
             name = s[len(APP_CHANNEL) :]
             result = await self.app_channel.handle(
                 name, link.device.person, str(m.get("method")), params or {}
@@ -695,7 +692,6 @@ class Connector:
 
     def action_run(self, device: Device, params: ActionRunParams) -> RemoteActionRun:
         self.asker(device)
-        assert self.apps is not None
         try:
             run = self.apps.action_run(params.app, params.action, params.run_id)
         except AppError as e:
@@ -705,7 +701,11 @@ class Connector:
     @property
     def slow(self) -> dict[str, Callable[[Device, dict[str, Any]], Awaitable[BaseModel]]]:
         """The requests answered once a provider was called: not in the polling loop's turn."""
-        return {"_handler/remote/ask": self.ask, "_handler/remote/transcribe": self.transcribe}
+        return {
+            "_handler/remote/ask": self.ask,
+            "_handler/remote/transcribe": self.transcribe,
+            "_handler/remote/push_test": self.push_test,
+        }
 
     async def answer_later(self, link: Link, m: Message, call: Awaitable[BaseModel]) -> None:
         try:
@@ -788,11 +788,11 @@ class Connector:
             self.sessions.set_remote(session_id, True)
 
     def list_apps(self, device: Device) -> AppList:
-        apps = self.apps.remote_apps(device.person) if self.apps else []
+        apps = self.apps.remote_apps(device.person)
         return AppList(person=device.person, scope=device.scope, apps=apps)
 
     def device_inbox(self, device: Device) -> InboxList:
-        found = self.apps.inbox.list(device.person) if self.apps else []
+        found = self.apps.inbox.list(device.person)
         return InboxList(messages=found)
 
     # ── Web Push (A5) ───────────────────────────────────────────────────
@@ -807,16 +807,18 @@ class Connector:
         return PushKey(public_key=self.vapid.public_key)
 
     def push_subscribe(self, device: Device, params: PushSubscribeParams) -> PushSubscription:
-        endpoint = params.endpoint
-        if endpoint is not None and not webpush.valid_endpoint(endpoint):
+        sub = params.subscription
+        if sub is not None and not webpush.valid_endpoint(sub.endpoint):
             raise RemoteError("endpoint: a browser push service's https URL")
-        device.push_endpoint = endpoint  # None: unsubscribe
+        if sub is not None and not webpush.valid_keys(sub.keys.p256dh, sub.keys.auth):
+            raise RemoteError("keys: the subscription's p256dh and auth")
+        device.push = sub  # None: unsubscribe
         self.save_devices()
-        return PushSubscription(subscribed=endpoint is not None)
+        return PushSubscription(subscribed=sub is not None)
 
     def on_message(self, message: InboxMessage) -> None:
         for device in self.devices.values():
-            if device.person == message.person and device.push_endpoint:
+            if device.person == message.person and device.push:
                 self.push_to(device)
 
     def push_to(self, device: Device) -> None:
@@ -824,20 +826,29 @@ class Connector:
         self.pushes.add(task)
         task.add_done_callback(self.pushes.discard)
 
-    async def push(self, device: Device) -> None:
-        endpoint = device.push_endpoint
-        if endpoint is None:
-            return
+    async def push(self, device: Device) -> str | None:
+        """One push to the device: None once its push service took it, else why not."""
+        if device.push is None:
+            return "notifications are off on this device"
         try:
-            status = await webpush.push(self.http, self.vapid, endpoint, PUSH_CONTACT)
+            status = await webpush.push(self.http, self.vapid, device.push, PUSH_CONTACT)
         except httpx.HTTPError as e:
             log.info("remote: push to %s: %s", device.id, describe(e))
-            return
+            return f"Handler could not reach the push service ({describe(e)})"
         if status in (404, 410):  # the subscription is gone (the phone unsubscribed)
-            device.push_endpoint = None
+            device.push = None
             self.save_devices()
-        elif status >= 400:
+            return "the push service no longer knows this device: turn notifications off and on"
+        if status >= 400:
             log.info("remote: push to %s: HTTP %s", device.id, status)
+            return f"the push service refused it (HTTP {status})"
+        return None
+
+    async def push_test(self, device: Device, _params: dict[str, Any]) -> PushTest:
+        """`_handler/remote/push_test`: one push now, to the asking device only."""
+        problem = await self.push(device)
+        log.info("remote: test push to %s: %s", device.id, problem or "taken by its push service")
+        return PushTest(sent=problem is None, problem=problem)
 
     # ── queued calls (A5) ───────────────────────────────────────────────
 
@@ -847,10 +858,8 @@ class Connector:
         kept)."""
         self.queue_checked = time.monotonic()
         r = await self.http.get(f"{self.base}/v1/host/queue", headers=self.headers())
-        if r.status_code == 404:
-            return  # a gateway without a queue
         r.raise_for_status()
-        for envelope in r.json().get("envelopes", []):
+        for envelope in r.json()["envelopes"]:
             await self.take_queued(envelope)
             await self.http.delete(
                 f"{self.base}/v1/host/queue/{envelope.get('id')}", headers=self.headers()
@@ -872,12 +881,12 @@ class Connector:
                 continue
             await self.app_call(link, s, m)
         self.schedule_flush(link)
-        if link.device.push_endpoint:
+        if link.device.push:
             self.push_to(link.device)
 
     def queueable(self, name: str, m: Message) -> bool:
         """Only `_handler/app/http` calls to a route the installed version declares queued."""
-        if m.get("method") != "_handler/app/http" or self.apps is None:
+        if m.get("method") != "_handler/app/http":
             return False
         try:
             params = AppHttpParams.model_validate(m.get("params"))

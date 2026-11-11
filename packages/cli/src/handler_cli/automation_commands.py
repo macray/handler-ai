@@ -1,6 +1,6 @@
-"""`handler automation …` — automations (docs/user/automations.md): when a
+"""`handler automation …` — automations (docs/automations.md): when a
 session stops or at a time you set, handler runs your script in a sandbox (it may call the models
-you chose, what it writes is added to a knowledge note), one of your agents (its result goes to your
+you chose, what it writes is added to a note), one of your agents (its result goes to your
 inbox: `handler inbox`), or a route of one of your apps. Each is a folder of
 ~/.config/handler-ai/automations/<name>/: edit its files in your editor.
 

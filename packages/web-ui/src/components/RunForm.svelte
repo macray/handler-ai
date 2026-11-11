@@ -1,9 +1,11 @@
 <script lang="ts">
   // Start a session of an agent with an interface (D.18): its form (the interface's `fields`;
   // `skill` fills its skill field, from a skill's page), and which of the agent's models it runs
-  // with when it has several. A job's run is unattended: its result is read on its page; a
+  // with when it has several (`ondefault`: the one picked made the agent's own; `chips`: what it
+  // gets and may do, beside it). A job's run is unattended: its result is read on its page; a
   // brief's session goes on as a chat.
   import Play from "@lucide/svelte/icons/play";
+  import type { Snippet } from "svelte";
   import { Button } from "$lib/components/ui/button";
   import { api } from "../lib/api";
   import type { Agent, ModelAccess, Session } from "../lib/contracts.gen";
@@ -11,7 +13,13 @@
   import ModelChoice from "./ModelChoice.svelte";
   import RunFields from "./RunFields.svelte";
 
-  let { agent, skill = "", onstarted }: { agent: Agent; skill?: string; onstarted: (run: Session) => void } = $props();
+  let {
+    agent,
+    skill = "",
+    onstarted,
+    ondefault,
+    chips,
+  }: { agent: Agent; skill?: string; onstarted: (run: Session) => void; ondefault?: (model: ModelAccess) => Promise<void>; chips?: Snippet } = $props();
 
   const iface = $derived(agent.interface);
   const fields = $derived(fieldsOf(iface?.fields as Schema | undefined));
@@ -44,7 +52,8 @@
 <form class="space-y-4" onsubmit={start} data-testid="run-form">
   <RunFields {fields} bind:values />
   <div class="flex flex-wrap items-center gap-3 border-t pt-3">
-    <ModelChoice {agent} bind:value={model} />
+    <ModelChoice {agent} bind:value={model} {ondefault} />
+    {@render chips?.()}
     <Button type="submit" class="ml-auto" disabled={busy || missing} data-testid="run-start"><Play />{iface?.result ? "Start the run" : "Start"}</Button>
   </div>
   {#if iface?.result}

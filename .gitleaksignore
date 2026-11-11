@@ -2,5 +2,9 @@
 # the bytes 0..31, the gateway token is derived from it, the host token is a fake.
 tests/fixtures/remote-vectors.json:generic-api-key:3
 tests/fixtures/remote-vectors.json:generic-api-key:9
-tests/remote/test_remote.py:generic-api-key:229
+tests/remote/test_remote.py:generic-api-key:277
 
+# Apple container's recorded output: GPG_KEY is the Python image's public release-signing key
+# fingerprint, not a secret.
+packages/sandbox-apple/tests/recorded/1.7.1/list.json:generic-api-key:38
+packages/sandbox-apple/tests/recorded/1.7.1/inspect-filter-running.json:generic-api-key:38

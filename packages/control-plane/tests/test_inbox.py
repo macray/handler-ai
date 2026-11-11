@@ -11,6 +11,7 @@ from handler_control.inbox import Inbox
 from handler_control.settings import Settings
 
 
+@pytest.mark.rule("inbox.keeps-the-last-200")
 def test_messages_marked_read_at_once_are_all_kept_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

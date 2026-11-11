@@ -3,8 +3,8 @@
 // each comes from: "from Handler" for the official source, else the source's name. Discover
 // lists them all, by kind; an item's page says what it does before it is installed.
 import { api } from "./api";
-import type { Source, SourceItem, SourceItemDetail } from "./contracts.gen";
-import { mayDo } from "./setup";
+import type { AddonInfo, Source, SourceItem, SourceItemDetail } from "./contracts.gen";
+import { mayDo, toolNeeds, weakens } from "./setup";
 import { navigate } from "./router.svelte";
 
 /** Where something comes from, as its card says it. */
@@ -25,11 +25,14 @@ export function offered(sources: Source[], kind: SourceItem["kind"]): { source: 
 }
 
 export type KindPath = "apps" | "agents" | "addons";
-export const KIND_PATH: Record<SourceItem["kind"], KindPath> = { app: "apps", agents: "agents", addon: "addons" };
+/** What Discover offers: a source's system packages are installed with the addons needing them
+ *  (B.7), never on a card or a page of their own. */
+export type OfferedKind = Exclude<SourceItem["kind"], "system-package">;
+export const KIND_PATH: Record<OfferedKind, KindPath> = { app: "apps", agents: "agents", addon: "addons" };
 
 /** The page of one item, in Discover. */
 export const itemRoute = (source: Source | string, item: SourceItem) =>
-  ({ view: "discover-item", source: typeof source === "string" ? source : source.id, kind: KIND_PATH[item.kind], name: item.name }) as const;
+  ({ view: "discover-item", source: typeof source === "string" ? source : source.id, kind: KIND_PATH[item.kind as OfferedKind], name: item.name }) as const;
 
 /** Its button's words: what pressing it does. */
 export function actionWords(item: SourceItem): string | null {
@@ -40,22 +43,24 @@ export function actionWords(item: SourceItem): string | null {
 
 /** Installing it goes to its kind's own page (D.26): an app's code taken, then its install page
  *  (its own page for the next version of one you have); agents read, then their set-up page (where
- *  they go is asked there); an addon's preview, in Library → Addons. */
-export async function takeItem(source: string, item: SourceItem): Promise<void> {
+ *  they go is asked there, `project` chosen if given); a tool's preview, in Library → Tools → Get
+ *  more. */
+export async function takeItem(source: string, item: SourceItem, project?: string): Promise<void> {
   if (item.kind === "app") {
     const { app, added } = await api.appFromSource(source, item.name);
     navigate(added ? { view: "install-app", name: app.name } : { view: "apps", app: app.name });
   } else if (item.kind === "agents") {
     const read = await api.agentsFromSource(source, item.name);
-    navigate({ view: "setup", file: read.name });
+    navigate({ view: "setup", file: read.name, ...(project ? { project } : {}) });
   } else {
-    navigate({ view: "addons", install: `source:${source}/${item.name}` });
+    navigate({ view: "library", shelf: "tools", more: true, install: `source:${source}/${item.name}` });
   }
 }
 
 /** What an item may do and what it needs from you, in sentences, from its kind's manifest:
- *  its page says them before anything is installed. */
-export function itemFacts(d: SourceItemDetail): { mayDo: { text: string; weakens?: boolean }[]; needs: string[] } {
+ *  its page says them before anything is installed (`addons`: the tools installed, so that its
+ *  agents' tools are asked only for what is left to do). */
+export function itemFacts(d: SourceItemDetail, addons: AddonInfo[]): { mayDo: { text: string; weakens?: boolean }[]; needs: string[] } {
   if (d.app) {
     const n = d.app.needs ?? {};
     const files = Object.values(n.files ?? {});
@@ -80,14 +85,14 @@ export function itemFacts(d: SourceItemDetail): { mayDo: { text: string; weakens
       mayDo: d.agents.agents.flatMap((a) =>
         mayDo(a.definition, "the project's folder").map((t) => ({
           text: several ? `${a.definition.agentName}: ${t}` : t,
-          weakens: /any host|never asks|containers|privileged|screen/.test(t),
+          weakens: weakens(t),
         })),
       ),
       needs: [
         "a project to set them up in",
         several ? "a model for each agent" : "a model",
-        ...[...new Set(d.agents.agents.flatMap((a) => a.definition.addons ?? []))].map((x) => `a configuration of ${x}`),
-        ...[...new Set(d.agents.agents.flatMap((a) => a.definition.knowledge ?? []))].map((k) => `a knowledge folder: ${k}`),
+        ...toolNeeds([...new Set(d.agents.agents.flatMap((a) => a.definition.addons ?? []))], addons),
+        ...[...new Set(d.agents.agents.flatMap((a) => a.definition.knowledge ?? []))].map((k) => `a notes folder: ${k}`),
       ],
     };
   }

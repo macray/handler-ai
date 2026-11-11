@@ -13,14 +13,14 @@
   import { Button } from "$lib/components/ui/button";
   import type { Source, SourceItem } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
-  import { actionWords, fromWords, itemRoute } from "../lib/sources";
+  import { actionWords, fromWords, itemRoute, type OfferedKind } from "../lib/sources";
 
   let { source, item, busy, ontake }: { source: Source; item: SourceItem; busy: boolean; ontake: () => void } = $props();
 
   const KIND = { app: { icon: AppWindow, tile: "bg-primary/10 text-primary" }, agents: { icon: Bot, tile: "bg-sky-500/10 text-sky-700 dark:text-sky-300" }, addon: { icon: Puzzle, tile: "bg-muted text-muted-foreground" } };
-  const kind = $derived(KIND[item.kind]);
+  const kind = $derived(KIND[item.kind as OfferedKind]);
   const action = $derived(actionWords(item));
-  const label = $derived(item.kind === "app" ? `App · ${item.version}` : item.kind === "agents" ? `Agents · version ${item.version}` : "Tool for agents");
+  const label = $derived(item.kind === "app" ? `App · ${item.version}` : item.kind === "agents" ? `Agents · version ${item.version}` : "Tool");
 </script>
 
 <li class="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-panel" data-testid="discover-item">

@@ -17,7 +17,7 @@ import uvicorn
 from handler_contracts import DEFAULT_MAX_MESSAGE_BYTES
 from handler_harness import catalog
 
-from . import migrations, sandbox_process
+from . import addon_folders, migrations, runtime, sandbox_process
 from .api import create_app
 from .settings import Settings
 
@@ -40,13 +40,19 @@ def main() -> int:
     except migrations.MigrationError as e:
         log.error("cannot start: %s", e)
         return 1
+    try:
+        log.info("sandbox runtime: %s", runtime.load(settings))
+    except runtime.RuntimeChoiceError as e:
+        log.error("cannot start: %s", e)
+        return 1
     app = create_app(settings)
     log.info("token file: %s", settings.token_file)
     log.info("accounts:   %s", settings.accounts_dir)
     if catalog.seed_toolbox():
-        log.info("toolbox:    %s (copied from the default: yours to edit)", catalog.toolbox_dir())
+        log.info("toolbox:    %s (the default toolbox.toml written)", catalog.toolbox_dir())
     try:
         sweep()
+        addon_folders.sweep(settings)  # the addon folders no sandbox mounts any more
     except (OSError, subprocess.SubprocessError) as e:
         log.warning("sweep failed: %s", e)
     uvicorn.run(

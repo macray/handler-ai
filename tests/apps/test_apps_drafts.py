@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ..support.daemon import Daemon
 from .conftest import add_app, api, copy_fixture
 
@@ -17,6 +19,7 @@ def folderless(daemon: Daemon, **body: Any) -> dict[str, Any]:
     return r.json()
 
 
+@pytest.mark.rule("app.one-name-one-app", "draft.one-at-a-time-on-a-copy")
 def test_a_draft_of_an_apps_code_becomes_its_next_version(daemon: Daemon, data_root: Path) -> None:
     source = copy_fixture("app", data_root)
     assert add_app(daemon, source).status_code == 201
@@ -57,6 +60,7 @@ def test_a_draft_of_an_apps_code_becomes_its_next_version(daemon: Daemon, data_r
     assert api(daemon, "DELETE", f"/v1/sessions/{other.json()['id']}").status_code == 204
 
 
+@pytest.mark.rule("draft.one-at-a-time-on-a-copy")
 def test_a_draft_of_a_new_app(daemon: Daemon, data_root: Path) -> None:
     agent = folderless(daemon, name="new-drafter")
     r = api(daemon, "POST", "/v1/sessions", {"agentId": agent["id"], "appDraft": {}})
@@ -77,11 +81,12 @@ def test_a_draft_of_a_new_app(daemon: Daemon, data_root: Path) -> None:
     assert api(daemon, "POST", "/v1/sessions", missing).status_code == 404
 
 
+@pytest.mark.rule("draft.one-at-a-time-on-a-copy")
 def test_the_app_creator_has_no_folder(daemon: Daemon) -> None:
     """One App creator, given as any helper is; one set up for its need fits only with no
     folder (each session works on a draft)."""
     origin = {"kind": "handler-need", "name": "app-creator", "version": 1}
-    loose = folderless(daemon, name="App creator", origin=origin, bindings=[])
+    loose = folderless(daemon, name="App creator", origin=origin, addons=[])
     scoped = daemon.create_ad_hoc("fake", daemon.make_scope(), name="creator", origin=origin)
     needs = api(daemon, "GET", "/v1/handler-needs").json()
     need = next(n for n in needs if n["name"] == "app-creator")

@@ -139,7 +139,7 @@
       <div class="mt-6 flex flex-wrap items-center gap-2 sm:pl-14">
         <Button size="sm" disabled={busy} onclick={() => void starters()} data-testid="area-starters">Add Work and Personal</Button>
         <Button variant="outline" size="sm" onclick={() => open({ kind: "new" })} data-testid="area-new"><Plus />Another area</Button>
-        <span class="text-xs text-muted-foreground">Knowledge folders, addons and skills stay shared by every area.</span>
+        <span class="text-xs text-muted-foreground">Notes, tools and skills stay shared by every area.</span>
       </div>
       {#if error && !panel}<p class="mt-4 text-sm text-danger sm:pl-14" data-testid="area-error">{error}</p>{/if}
     </div>
@@ -148,7 +148,7 @@
       <div class="flex flex-wrap items-end justify-between gap-3">
         <p class="max-w-2xl text-sm text-muted-foreground">
           A project in an area runs only the accounts and providers made for it (set in
-          <a class="text-link hover:underline" href={href({ view: "settings", section: "models" })}>Model access</a>). Knowledge, addons and skills stay
+          <a class="text-link hover:underline" href={href({ view: "settings", section: "models" })}>Model access</a>). Notes, tools and skills stay
           shared.
         </p>
         <Button variant="outline" size="sm" onclick={() => open({ kind: "new" })} data-testid="area-new"><Plus />Add an area</Button>

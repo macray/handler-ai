@@ -2,7 +2,7 @@
 
 **Implements:** contract A (sandbox), isolation `container`, on rootless podman, and its images
 (A.7): the only block that calls podman (`tests/architecture`).
-**Depends on:** `handler_contracts`; podman at runtime.
+**Depends on:** `handler_contracts`, `handler_sandbox_kit` (the executable, the launch, the network filter); podman at runtime.
 **Used by:** the control plane, **through the executable only** (never imported); the CLI runs
 `attach`, the command handlerd gives it (D.16).
 
@@ -18,15 +18,13 @@ handler-sandbox-podman cache size|clear …                      # A.9: cache fo
 
 | File | Role |
 |---|---|
-| `cli.py` | command line, reads the SandboxSpec from fd 3 |
-| `launch.py` | the lifecycle: refuse (A1) → network → create → attach (with `tty`: wait for the client's `attach`) → clean up (A4) |
-| `egress.py` | the proxy's settings (allow-list, enforcement) and arguments, its events → `handler-egress` lines |
+| `cli.py` | the executable: the kit's `runtime_cli.main` given `Podman`, `images`, `caches` and `check.check` |
+| `launch.py` | `Podman`, the kit's `Runtime` (`sweep` too: podman's leftovers of dead launchers): each need its podman way (one method each), and podman's verbs; the launch itself (refuse, create, run, clean up) is the kit's |
 | `images.py` | the `image` verbs (A.7): build (id to a file), inspect, read a file without running the image, tag, remove (refused while a container mounts it), pull |
 | `caches.py` | the `cache` verbs (A.9): sizes and emptying through `podman unshare` (inner podman's files are of subordinate ids); emptying refused while a sandbox mounts the folder or one inside it, or when it is a mount point here |
-| `check.py` | the host check (A.8): rootless, subordinate ids, network backend, cgroups v2, /dev/fuse |
+| `check.py` | the host check (A.8): rootless, subordinate ids, network backend, cgroups v2, /dev/fuse, WSL |
 | `podman.py` | thin podman CLI helpers, labels, user namespace (keep-id) |
-| `proxy/Containerfile` | the egress proxy image (`localhost/handler-ai-proxy:2`: mitmproxy), built by `image build-proxy` (A.7), never by a launch |
-| `proxy/addon.py` | what the proxy decides (mounted into it, self-contained: the image has no Handler): allowed, denied or unlisted per target, settings read again when they change |
+| (the filter) | in `handler_sandbox_kit` (`egress/`): this runtime runs it as a container on the sandbox's network, its image `localhost/handler-ai-proxy:2` built by `image build-proxy` (A.7), never by a launch |
 
-Conformance: `tests/sandbox/test_podman.py`, `tests/sandbox/test_images.py`,
-`tests/sandbox/test_caches.py`.
+Conformance: `tests/sandbox/conformance/` (what every runtime must do, run against this one as
+`[podman]`); this runtime's own choices: `tests/sandbox/podman/`.

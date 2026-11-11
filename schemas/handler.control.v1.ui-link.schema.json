@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/ui-link",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A one-time link that opens the web UI in a browser and signs it in there (valid 2\nminutes): the browser keeps its cookie, so the UI opens from a bookmark afterwards.",
+  "properties": {
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "UiLink",
+  "type": "object"
+}

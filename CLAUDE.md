@@ -9,17 +9,19 @@ Handler runs AI agent harnesses (Claude Code, Codex, Mistral Vibe, pi) in
 rootless Podman sandboxes and drives them over ACP (Agent Client Protocol) from a web UI, the `handler`
 CLI, editors (`handler acp`), a scheduler, or a paired phone. Single user, local machine.
 
-Read first: `docs/dev/code-map.md` (where each block lives, "where to look for…" table, which test
-suite answers which question). Normative specs: `docs/dev/contracts.md` (sections A–H are referenced
-throughout code and commits, e.g. "D.8", "§E"). Every concept and its rules: `docs/dev/model.md`
-(as users see them, shorter: `docs/user/concepts.md`).
+Read first: the README of the package you work in (what it implements, what it may import) and
+its tests (what it promises); the concepts as users see them: `docs/concepts.md`. Code and
+commits cite the contracts by letter and section (`contract D.8`, `A.3`: A sandbox, B harness,
+C ACP endpoint and policy, D Control API, E accounts and providers, F sessions, G addons, H apps,
+I automations), each one's models in `packages/contracts`.
 
 ## Commands
 
 The checkout may be shared between the host and sandboxes/containers: `.venv` points at the host's
 Python, and a plain `uv run` elsewhere recreates it and breaks the host's venv. Outside the host,
 set `UV_PROJECT_ENVIRONMENT` to a separate location (also `HANDLER_VENV_PY312`, `HANDLER_GATEWAY_VENV` for
-`ci.sh`).
+`ci.sh`). In a Handler sandbox, uv's own folders may be read-only: `UV_TOOL_DIR`,
+`UV_TOOL_BIN_DIR` and `UV_PYTHON_INSTALL_DIR` under `/tmp` too (the docs site, Python 3.12).
 
 ```bash
 uv sync
@@ -34,7 +36,7 @@ uv run python -m handler_contracts.schemas    # regenerate schemas/ after changi
 scripts/build-web-ui.sh [--quick]             # bun workspace: gen types from schemas, svelte-check, vitest, build
 (cd packages/web-ui && bun run test)          # web UI unit tests only
 (cd remote-gateway && uv run pytest)          # independent project, own lockfile/venv
-handler image rebuild toolbox                 # (handlerd running) toolbox image then every harness image
+handler image rebuild toolbox                 # (handlerd running) toolbox image then the harness images already built
 scripts/build-wheel.sh                        # the `handler-ai` wheel users install (packaging/), web UI inside
 scripts/smoke-install.sh                      # that wheel via scripts/install.sh in a bare container
 scripts/build-docs-site.py [serve]            # documentation website (Zensical), stops on a broken link
@@ -44,7 +46,8 @@ Many conformance/e2e tests need built images or real credentials and skip otherw
 tests are opt-in via `HANDLER_TEST_CLAUDE_CONFIG_DIR` (+ `_JSON`), `HANDLER_TEST_MISTRAL_API_KEY`,
 `HANDLER_TEST_OPENAI_API_KEY`, `HANDLER_TEST_SHOPIFY_STORE` + `HANDLER_TEST_SHOPIFY_THEME_TOKEN`. The tests
 read a made-up source (`tests/fixtures/source/`) as the official one; those of Handler's real registry items
-(Planner, shopify) are opt-in via `HANDLER_TEST_REGISTRY` (a checkout of the registry). When running
+are opt-in via `HANDLER_TEST_REGISTRY` (a checkout of a registry; Planner and shopify are in the
+private one only, and their tests skip on a registry without them). When running
 as root (dev container with nested rootful podman), `tests/support/dev_env.py` drops keep-id and runs
 sandboxes as uid 1000 with scopes under `/var/tmp/handler-tests`.
 
@@ -57,10 +60,21 @@ images, and the few needing a direct connection (`requires_internet`). The egres
 own (`HANDLER_SANDBOX_DEV_UPSTREAM_PROXY`, never on a real host). A skip there is the environment; a
 failure is not.
 
+What the sandbox tests can prove depends on where they run (`tests/support/place.py`); the end of
+a run that includes `tests/sandbox` prints "where the sandbox tests ran": the place, and what each
+runtime was tested for. On macOS, the Mac's runtimes (Apple container, Docker Desktop, OrbStack);
+on a Linux host, Podman and Docker when installed, strict, nested and privileged; in a Linux
+container (a Handler sandbox), Podman or Docker, strict and nested, never privileged. A skip of
+what that summary does not list is the place. To prove one runtime: `HANDLER_TEST_STRICT=1
+HANDLER_TEST_RUNTIMES=podman uv run pytest tests/sandbox`, which fails, instead of skipping,
+when that runtime or a confinement it declares cannot run where it should (as CI does,
+`.github/workflows/tests.yml`; macOS CI runs no sandbox: its runners have no nested
+virtualization).
+
 Changing a contract model means also: regenerating `schemas/`, then the TypeScript types with
 `bun run gen:types` (repo root: `packages/web-ui/src/lib/contracts.gen.ts` from `handler.control.v1.*`,
 `packages/remote-client/src/lib/remote.gen.ts` from `handler.remote.v1.*`; commit them, CI fails on
-diff), and updating `docs/dev/contracts.md` (and `docs/dev/design/remote.md` for the device channel).
+diff).
 
 ## Architecture
 
@@ -73,19 +87,20 @@ or lower ones, and a new module gets a layer in `CONTROL_LAYERS`, see its README
   library. JSON Schemas in `schemas/` are generated from it; TypeScript types are generated from those.
 - `packages/sandbox-podman` (contract A): reached **only as an executable** (`handler-sandbox-podman`,
   `SandboxSpec` on fd 3, stdio = the agent's ACP stream; `image …` verbs for images, A.7), never
-  imported; the only block that calls podman. Container isolation,
-  confinement levels and the egress allow-list proxy live here.
+  imported; the only block that calls podman. Container isolation and
+  confinement levels live here; the egress allow-list proxy (the network filter) in
+  `packages/sandbox-kit` (`handler_sandbox_kit`), shared by sandbox runtimes only, by import.
 - `packages/harness-adapters` (`handler_harness`, contract B): pure `render(descriptor, AgentSpec…) → HarnessLaunch`,
   plus `handler-harness` CLI. Harness-specific knowledge lives only here and in data dirs
   `handler_harness/data/`: `harnesses/<name>/` (`harness.toml` + Containerfile), the built-in
-  `addons/<name>/` (`app-builder`), the `catalog/` of installable addons (G.5: shopify, playwright),
-  the default `toolbox/` (copied to the user's `~/.config/handler-ai/toolbox/` on
-  handlerd's first start: the shared base image; the user's addons are in `~/.config/handler-ai/addons/`).
+  `tools/<name>/` (`app-builder`; tools are `addons` in the code), the default `toolbox/` (copied
+  to the user's `~/.config/handler-ai/toolbox/` on handlerd's first start: the shared base image;
+  the user's tools are in `~/.config/handler-ai/tools/`, those Handler offers in its sources, G.5).
   Per-harness provider config writers: `handler_harness/providers.py`.
 - `packages/control-plane` (`handler_control`, daemon `handlerd`): the only block composing others. Control
   API (HTTP, contract D, `api/`: one module per contract section, routes only translate HTTP; the
   rules an agent or a project must pass before it is saved: `save_rules.py`), ACP WebSocket endpoint
-  with the P1–P8 policy pipeline (`policy.py`, `relay.py`),
+  with the P1–P9 policy pipeline (`policy.py`, `relay.py`),
   `compose.py` combines the render output + the agent's sandbox settings + its addons into a
   `SandboxSpec`.
   Also sessions, projects, apps, remote control, builds.
@@ -100,15 +115,15 @@ rw at the **same absolute path**) × its settings. A **project** groups a folder
 **ad-hoc agent** has no project (made by `handler run`/`acp`/`terminal` outside projects). Plain agent
 ACP connections get one ephemeral sandbox each; daemon-held **sessions** (contract F) own a sandbox
 that outlives WebSocket attachments and are what the web UI, `handler run/start/attach`, runs and
-phones use. Configuration is TOML in `~/.config/handler-ai/`: `accounts/`, `providers/`, `bindings/`
-(addon × credentials), `skills/`, `folders.toml`; examples in `examples/`. Agents and projects
+phones use. Configuration is TOML in `~/.config/handler-ai/`: `accounts/`, `providers/`, `connections/`
+(tool × credentials; `bindings` in the code), `skills/`, `folders.toml`; examples in `examples/`. Agents and projects
 are daemon state (`~/.local/state/handler-ai/agents.json`, `projects.json`).
 
 ## Design principles
 
 - Hard rule: no sandbox ever reaches Handler's own files (the token, `secrets.json`, accounts,
   providers, bindings, automations, agents and projects state), read or write, whatever the
-  feature: only a subfolder made for it (`docs/dev/contracts.md` §2, invariant 6). A feature that
+  feature: only a subfolder made for it. A feature that
   seems to need it (an agent drafting an automation, say) goes through the Control API on the
   owner's request instead.
 
@@ -133,16 +148,18 @@ are daemon state (`~/.local/state/handler-ai/agents.json`, `projects.json`).
 
 ## Conventions
 
-- Frontend tasks (web UI, phone client, acp-view, CLI output and help, `docs/user/`): read
-  `docs/dev/ui-ux.md` first and follow it, including what it says about the vendors' terms.
-- Docs live in `docs/`, split by reader: `docs/user/` for people using Handler (no source code
-  needed; the words of the UI and the CLI, `docs/dev/ui-ux.md`), `docs/dev/` for contributors and
-  agents (`docs/dev/design/`: why each feature is built the way it is, and what is not built).
-- Docs are kept in sync with code: `docs/dev/code-map.md` for new blocks/locations,
-  `docs/dev/contracts.md` for behavior/format changes, `docs/dev/development.md` for what still
-  needs a real host, `docs/user/` for what users see (`README.md` is the front page: update it
+- Frontend tasks (web UI, phone client, acp-view, CLI output and help, `docs/`): the words
+  are the person's, the same in the UI, the CLI and the docs; never the code's shorthand.
+- Vendors' terms: Handler runs the vendors' own harnesses on the person's own subscriptions. The
+  sign-in is the vendor's (Handler shows the command, never runs a token sign-in nor reads its
+  output); an account is for the person's own use; an agent that runs unattended (a job, an
+  automation, a plan's steps) is recommended an API key, and a Claude subscription is for sessions
+  the person starts and follows, or a plan they approved to run; Handler's own names and logos
+  never use a vendor's name.
+- Docs in `docs/` are for people using Handler: no source code needed, the words of the UI
+  and the CLI. They are kept in sync with what users see (`README.md` is the front page: update it
   when what Handler does or how it is installed changes).
 - Python ≥ 3.12 (CI also runs 3.12), ruff line length 100.
 - A bug found but not fixed now (unrelated to the task at hand, or left for any other reason) is
   written down, never left only in a conversation: what goes wrong, where, how to reproduce it.
-- Commit messages explain the change in prose and cite contract sections / phases.
+- Commit messages explain the change in prose and cite the contract sections it changes.

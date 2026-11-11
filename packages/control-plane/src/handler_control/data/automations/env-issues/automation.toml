@@ -1,4 +1,4 @@
-# An automation (docs/user/automations.md): when a session stops, `run` runs in a
+# An automation (docs/automations.md): when a session stops, `run` runs in a
 # sandbox (no network) on its conversation; what it writes to `$HANDLER_OUTPUT/note.md` is appended to
 # the note below once it succeeded. Edit any file here; a change of the models, the note, `when`,
 # `only` or `run` turns it off until you turn it on again.

@@ -11,7 +11,6 @@ import { api } from "./api";
 import type { Agent, AgentOrigin, Connection, ModelAccess } from "./contracts.gen";
 import { harnesses } from "./harnesses.svelte";
 
-export type NetworkMode = Agent["network"];
 export type PermissionMode = Agent["permissions"];
 
 /** The permission modes as handler names them: in the agent form and in a session's mode selector. */
@@ -25,6 +24,23 @@ export const PERMISSION_LABEL: Record<PermissionMode, string> = {
 export async function permissionModes(harness: string): Promise<Record<string, PermissionMode>> {
   const modes = (await harnesses.load()).find((h) => h.name === harness)?.sessionModes ?? {};
   return Object.fromEntries(Object.entries(modes).map(([mode, id]) => [id, mode as PermissionMode]));
+}
+
+/** What a session mode lets the agent do, as its colour says it: plan mode (teal), edits without
+ *  asking (violet), everything without asking (amber: it weakens what the sandbox asks), asking
+ *  first (neutral). `kind`: the permission mode it is, when it is one of handler's. */
+export function modeTone(id: string, kind?: PermissionMode): "plan" | "edits" | "bypass" | "ask" {
+  if (kind === "bypass") return "bypass";
+  if (kind === "accept-edits") return "edits";
+  if (kind === "ask") return "ask";
+  return /plan/i.test(id) ? "plan" : "ask";
+}
+
+/** The mode after `current`, in the harness's order (Shift+Tab), back to the first after the last. */
+export function nextMode(modes: { id: string }[], current: string | null): string | null {
+  if (!modes.length) return null;
+  const at = modes.findIndex((m) => m.id === current);
+  return modes[(at + 1) % modes.length]!.id;
 }
 
 /** The agents' terminals (`handler terminal`, D.16) handlerd knows, newest first. */
@@ -96,13 +112,17 @@ export function exactTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** The day a time falls on, as a timeline heads it: "today", "yesterday", else the date. */
+/** The day a time falls on, as a timeline or the inbox heads it: "Today", "Yesterday", a weekday
+ *  this week, else its date (with its year, another year's). */
 export function dayOf(iso: string, now = new Date()): string {
-  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((day(now) - day(new Date(iso))) / 86_400_000);
-  if (days === 0) return "today";
-  if (days === 1) return "yesterday";
-  return new Date(iso).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const d = new Date(iso);
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((start(now) - start(d)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  const year = d.getFullYear() === now.getFullYear() ? undefined : "numeric";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year });
 }
 
 /** The time of day, as a timeline shows it: "14:02". */

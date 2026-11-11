@@ -7,14 +7,14 @@
   import { Button } from "$lib/components/ui/button";
   import AgentEditor from "../components/AgentEditor.svelte";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
   import { api } from "../lib/api";
   import { deletionStops } from "../lib/apps";
   import { appOf, isChat, setUpFrom } from "../lib/agents";
-  import type { AddonInfo, Agent, AgentDefinition, App, AppAgentNeed } from "../lib/contracts.gen";
+  import type { AddonInfo, AddonUse, Agent, AgentDefinition, App, AppAgentNeed } from "../lib/contracts.gen";
   import { agentLabel } from "../lib/projects.svelte";
   import { href, navigate, type Route } from "../lib/router.svelte";
   import { definitionSpec } from "../lib/runs";
+  import { toolsAsked } from "../lib/setup";
   import { sessions } from "../lib/sessions.svelte";
 
   let { id, app: appName, need: needName }: { id?: string; app?: string; need?: string } = $props();
@@ -26,30 +26,28 @@
   let error = $state<string | null>(null);
   const definition = $derived<AgentDefinition | null>(need?.definition ?? null);
   const origin = $derived(setUpFrom(agent?.origin));
-  // the configurations of the addons the definition needs (G.2), chosen for it; null: not read yet
-  let chosen = $state<string[] | null>(null);
-  let lacking = $state<AddonInfo[]>([]); // addons it needs with no configuration yet
+  // the addons the definition needs (G.3), with a configuration of those with settings (G.2);
+  // null: not read yet
+  let chosen = $state<AddonUse[] | null>(null);
+  let lacking = $state<AddonInfo[]>([]); // addons with settings it needs, with no configuration yet
+  let uninstalled = $state<string[]>([]); // addons it needs that are not installed
   const ready = $derived(
     (id ? agent !== null : appName ? need !== null : true) && (!definition?.addons?.length || chosen !== null),
   );
-  const start = $derived(definition ? { ...definitionSpec(definition), bindings: chosen ?? [] } : undefined);
+  const start = $derived(definition ? { ...definitionSpec(definition), addons: chosen ?? [] } : undefined);
 
   async function readAddons(names: string[]): Promise<void> {
     const [bindings, addons] = await Promise.all([api.bindings(), api.addons()]);
     const valid = bindings.filter((b) => !b.error);
-    chosen = names.flatMap((n) => valid.find((b) => b.addon === n)?.name ?? []);
-    lacking = addons.filter((a) => names.includes(a.name) && !valid.some((b) => b.addon === a.name));
-  }
-
-  /** A configuration of an addon that needs no setting (the app-builder addon): its name, the addon's. */
-  async function makeConfiguration(addon: AddonInfo): Promise<void> {
-    try {
-      await api.createBinding({ name: addon.name, addon: addon.name, settings: {}, secrets: {} });
-      chosen = null;
-      await readAddons(definition?.addons ?? []);
-    } catch (e) {
-      error = (e as Error).message;
-    }
+    const { install, connect } = toolsAsked(names, addons);
+    chosen = names.flatMap((addon): AddonUse[] => {
+      if (install.includes(addon)) return [];
+      if (!connect.includes(addon)) return [{ addon }];
+      const binding = valid.find((b) => b.addon === addon)?.name;
+      return binding ? [{ addon, binding }] : [];
+    });
+    lacking = addons.filter((a) => connect.includes(a.name) && !valid.some((b) => b.addon === a.name));
+    uninstalled = install;
   }
 
   $effect(() => {
@@ -118,14 +116,13 @@
   const title = $derived(agent ? agentLabel(agent) : definition ? `Set up the ${definition.agentName}` : "New agent");
 </script>
 
-<PageHeader
+<PageHeader width="max-w-3xl"
   {title}
   parent={partOf
     ? { label: partOf, href: href({ view: "apps", app: partOf }) }
     : chat
       ? { label: "Chat", href: href({ view: "chat" }) }
-      : { label: "Other folders", href: href({ view: "agents" }) }}
-  titled
+      : { label: "Agents outside projects", href: href({ view: "agents" }) }}
 >
   {#snippet actions()}
     {#if agent}
@@ -135,15 +132,16 @@
 </PageHeader>
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-3xl space-y-8 px-8 pt-10">
-    <PageTitle {title} description={need?.description ?? "What it is for, what it runs as and where, what it is given and what it may do."} />
-    {#each lacking as addon (addon.name)}
+        {#each uninstalled as addon (addon)}
+      <p class="text-sm text-warn" data-testid="setup-addon-missing">
+        It needs the {addon} tool, not installed: install it from
+        <a class="text-link hover:underline" href={href({ view: "library", shelf: "tools", more: true })}>Library → Tools</a>, then come back.
+      </p>
+    {/each}
+        {#each lacking as addon (addon.name)}
       <p class="text-sm text-warn" data-testid="setup-addon-lacking">
-        It needs a configuration of the addon {addon.name} ({addon.description ?? ""}).
-        {#if !addon.settings?.length && !addon.secretSlots?.length}
-          <button type="button" class="text-link hover:underline" onclick={() => makeConfiguration(addon)} data-testid="setup-addon-make">Make one</button> (it needs no setting).
-        {:else}
-          Make one in <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Addons</a>, then come back.
-        {/if}
+        It needs a connection to the {addon.name} tool ({addon.description ?? ""}). Make one in
+        <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Tools</a>, then come back.
       </p>
     {/each}
     {#if app && need && !agent}

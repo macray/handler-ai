@@ -51,6 +51,7 @@ def test_open_objects_are_found() -> None:
     assert services.open_objects({"type": "object", "additionalProperties": True}) == []
 
 
+@pytest.mark.rule("llm.only-the-models-it-names")
 def test_openai_chat_text(settings: Settings, stub: Stub) -> None:
     stub.answers = ["Hello."]
     done = complete(settings, model="chat/m", system="Be brief.", prompt="Hi", input="data")
@@ -65,6 +66,7 @@ def test_openai_chat_text(settings: Settings, stub: Stub) -> None:
     assert body["messages"][1]["content"] == "Hi\n\n<input>\ndata\n</input>"
 
 
+@pytest.mark.rule("llm.only-the-models-it-names", "llm.an-answer-fits-its-schema")
 def test_anthropic_schema_repaired_once(settings: Settings, stub: Stub) -> None:
     stub.answers = ['Sure: {"findings": [1]}', 'Here:\n```json\n{"findings": ["npm"]}\n```']
     done = complete(settings, model="claude/m", prompt="List", schema=SCHEMA)
@@ -78,6 +80,7 @@ def test_anthropic_schema_repaired_once(settings: Settings, stub: Stub) -> None:
     assert repair[1]["role"] == "assistant" and "could not be used" in repair[2]["content"]
 
 
+@pytest.mark.rule("llm.an-answer-fits-its-schema")
 def test_still_invalid_after_the_repair(settings: Settings, stub: Stub) -> None:
     stub.answers = ["no json here", '{"other": 1}']
     done = complete(settings, model="chat/m", prompt="List", schema=SCHEMA)
@@ -86,6 +89,7 @@ def test_still_invalid_after_the_repair(settings: Settings, stub: Stub) -> None:
     assert done.response.text == '{"other": 1}'
 
 
+@pytest.mark.rule("llm.only-the-models-it-names")
 def test_provider_errors(settings: Settings, stub: Stub) -> None:
     stub.answers = [503]
     with pytest.raises(ServiceError) as failed:
@@ -101,6 +105,7 @@ def test_provider_errors(settings: Settings, stub: Stub) -> None:
         complete(settings, model="chat/m", prompt="x", schema={"type": 3})
 
 
+@pytest.mark.rule("llm.an-answer-fits-its-schema")
 @pytest.mark.parametrize(
     ("answer", "value"),
     [
@@ -147,6 +152,7 @@ def call(rid: int, **arguments: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rid, "method": "tools/call", "params": params}
 
 
+@pytest.mark.rule("llm.only-the-models-it-names", "llm.an-answer-fits-its-schema")
 def test_router_serves_llm_complete(settings: Settings, stub: Stub, tmp_path: Path) -> None:
     stub.answers = ['{"findings": []}', "x"]
     grant = service_router.Grant(
@@ -190,9 +196,22 @@ def test_router_serves_llm_complete(settings: Settings, stub: Stub, tmp_path: Pa
     assert "List" not in grant.log.read_text()  # never the payload
 
 
+@pytest.mark.rule("llm.only-the-models-it-names")
 def test_router_without_models_lists_no_tools(settings: Settings, tmp_path: Path) -> None:
     grant = service_router.Grant(llm=frozenset(), log=tmp_path / "services.ndjson")
     listed, called = asyncio.run(
         session(settings, grant, [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, call(2)])
     )
     assert listed["result"]["tools"] == [] and called["error"]["code"] == -32602
+
+
+@pytest.mark.rule("voice.handlerd-calls-it-alone")
+def test_router_never_offers_speech_to_text(settings: Settings, tmp_path: Path) -> None:
+    grant = service_router.Grant(llm=frozenset({"chat/m"}), log=tmp_path / "services.ndjson")
+    params = {"name": "transcribe_audio", "arguments": {"model": "chat/m", "audio": "AA=="}}
+    asked = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params}
+    listed, called = asyncio.run(
+        session(settings, grant, [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, asked])
+    )
+    assert "transcribe_audio" not in [t["name"] for t in listed["result"]["tools"]]
+    assert called["error"] == {"code": -32602, "message": "unknown tool transcribe_audio"}

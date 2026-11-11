@@ -1,15 +1,20 @@
 """Provider routes: providers and their templates (D.12)."""
 
+from urllib.parse import urlparse
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
 
 from handler_contracts import (
+    Protocol,
     ProviderInfo,
     ProviderRequest,
+    ProviderTestRequest,
 )
 
 from .. import (
     llm,
+    provider_reach,
     providers,
     secrets,
 )
@@ -33,7 +38,7 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.get("/v1/provider-templates", dependencies=authed)
     def list_provider_templates() -> Response:
-        return dump(providers.templates(settings.templates_dir))
+        return dump(providers.templates())
 
     @app.post("/v1/providers", dependencies=authed)
     async def create_provider(request: Request) -> Response:
@@ -45,6 +50,17 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
             raise ProblemError(409, "cannot create the provider", str(e)) from None
         log.info("provider %s created", body.name)
         return dump(info(body.name), status=201)
+
+    @app.post("/v1/providers/test", dependencies=authed)
+    async def test_provider(request: Request) -> Response:
+        """Ask its server for its models from where a sandbox would (D.12): the endpoints typed,
+        or a saved provider's. A saved key goes to its own endpoints' hosts only (E3)."""
+        body = parse_body(ProviderTestRequest, await request.body())
+        endpoints, key = what_to_test(ctx, store, body)
+        reach = await provider_reach.test(endpoints, key)
+        ctx.reaches.keep(reach)
+        log.info("provider test %s: %s", ", ".join(reach.urls), reach.error or "answered")
+        return dump(reach)
 
     @app.put("/v1/providers/{name}", dependencies=authed)
     async def replace_provider(name: str, request: Request) -> Response:
@@ -73,6 +89,31 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
         providers.delete(settings.providers_dir, store, name)
         log.info("provider %s deleted", name)
         return Response(status_code=204)
+
+
+def what_to_test(
+    ctx: Context, store: secrets.SecretStore, body: ProviderTestRequest
+) -> tuple[dict[Protocol, str], str | None]:
+    """The endpoints to ask and the key to send (D.12): those typed, else the saved provider's;
+    its key only to its own endpoints' hosts (E3)."""
+    endpoints = body.endpoints
+    key = body.key
+    if body.provider is not None:
+        saved = providers.get(ctx.settings.providers_dir, body.provider)
+        if not saved.path.is_file():
+            raise ProblemError(404, "provider not found", body.provider)
+        if saved.provider is None:
+            raise ProblemError(409, "the provider is invalid", saved.error)
+        own = {urlparse(url).hostname for url in saved.provider.endpoints.values()}
+        endpoints = endpoints or dict(saved.provider.endpoints)
+        hosts = {urlparse(url).hostname for url in endpoints.values()}
+        if key is None and saved.provider.api_key is not None and hosts <= own:
+            try:
+                key = secrets.resolve(saved.provider.api_key, store)
+            except secrets.SecretError as e:
+                raise ProblemError(409, "its key cannot be read", str(e)) from None
+    assert endpoints is not None  # the request names endpoints or a provider
+    return endpoints, key
 
 
 def provider_infos(ctx: Context) -> list[ProviderInfo]:
@@ -104,6 +145,8 @@ def provider_infos(ctx: Context) -> list[ProviderInfo]:
                 model_alone=spec.endpoint_for(llm.PROTOCOLS) is not None,
                 files=sorted(spec.files or {}),
                 areas=spec.areas,
+                local=provider_reach.local(spec.endpoints),
+                reached=ctx.reaches.of(spec.endpoints),
             )
         )
     return infos

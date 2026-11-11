@@ -79,6 +79,13 @@ def wait_run_end(daemon: Daemon, agent: dict[str, Any]) -> dict[str, Any]:
     raise AssertionError("the check run did not end")
 
 
+@pytest.mark.rule(
+    "check.kept-from-a-real-run",
+    "check.free-text-is-never-compared",
+    "check.passes-when-what-it-compares-comes-back",
+    "check.runs-only-when-asked",
+    "check.a-check-run-is-a-run",
+)
 def test_a_run_kept_as_a_check_passes_then_fails(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "tone")
@@ -111,6 +118,7 @@ def test_a_run_kept_as_a_check_passes_then_fails(daemon: Daemon, stub: StubLlm) 
     assert session["origin"] == "check"
 
 
+@pytest.mark.rule("check.says-what-changed-since", "check.the-agent-s-not-its-settings")
 def test_what_changed_since_and_a_check_that_no_longer_fits(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "fits")
@@ -139,6 +147,7 @@ def test_what_changed_since_and_a_check_that_no_longer_fits(daemon: Daemon, stub
     assert r.status_code == 400 and "no check it can run" in r.text
 
 
+@pytest.mark.rule("check.the-agent-s-not-its-settings")
 def test_checks_go_with_their_agent(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "gone")
@@ -157,6 +166,7 @@ def test_checks_go_with_their_agent(daemon: Daemon, stub: StubLlm) -> None:
     ).exists()
 
 
+@pytest.mark.rule("check.kept-from-a-real-run")
 def test_only_a_job_with_a_valid_result_is_kept(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = "no result block at all"
     agent = job(daemon, "bad")
@@ -168,6 +178,7 @@ def test_only_a_job_with_a_valid_result_is_kept(daemon: Daemon, stub: StubLlm) -
     assert r.status_code == 400 and "valid result" in r.text
 
 
+@pytest.mark.rule("check.passes-when-what-it-compares-comes-back", "check.runs-only-when-asked")
 def test_the_cli_runs_them_and_says_when_one_fails(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "cli")

@@ -1,0 +1,288 @@
+[
+  {
+    "configuration": {
+      "creationDate": "2024-12-11T08:31:20Z",
+      "descriptor": {
+        "digest": "sha256:2db4e6a8fd6a0e4d0db5828b2722cf6db15c3005178a4c65588b903e4784ba11",
+        "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+        "size": 953
+      },
+      "name": "quay.io/curl/curl:8.11.1"
+    },
+    "id": "2db4e6a8fd6a0e4d0db5828b2722cf6db15c3005178a4c65588b903e4784ba11",
+    "variants": [
+      {
+        "config": {
+          "architecture": "386",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-386:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T08:31:20.882080519Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-x86.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T08:31:20.439747897Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-386:8.11.1",
+              "created": "2024-12-11T08:31:20.882616188Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:c6a070ed96419f6c9d1fb77cb468e6ed2f956e7b363c66a20d9ab03a26ea2a29",
+              "sha256:85910ef3e48ee266b07a76d3b32bb78fabea44d861c6a3d282be248c715943f2",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:4ba0ab590a4a67c21355f27c1ee8edf0f669233eaa21bcd8f299e516561fe470",
+        "platform": {
+          "architecture": "386",
+          "os": "linux"
+        },
+        "size": 9783210
+      },
+      {
+        "config": {
+          "architecture": "amd64",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-amd64:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T08:46:58.23132687Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-x86_64.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T08:46:57.652382891Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-amd64:8.11.1",
+              "created": "2024-12-11T08:46:58.231941011Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:3e01818d79cd3467f1d60e54224f3f6ce5170eceb54e265d96bb82344b8c24e7",
+              "sha256:47f700d46e8a78ec5278107460349b8392e454014ed0bb48a1cd04fe1781f69d",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:d3080967fe7b6292998cb7adcc66b0b5c30724ee56cc8645d497f2dc814ecdb9",
+        "platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "size": 9684142
+      },
+      {
+        "config": {
+          "architecture": "arm64",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-arm64:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T09:02:00.343897135Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-aarch64.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T09:01:59.880989323Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-arm64:8.11.1",
+              "created": "2024-12-11T09:02:00.344415155Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:977340364f395522c48194db0cf2a81b7643d1bd1378a4c16dc848095a39de7d",
+              "sha256:61b0f675ffd666bf7020ca0529727631decac429228607ab9663c78f589d2dbd",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:47a920a1f2730a71a70e21477df52c7d4063ed36be90a09363c641f829562228",
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        },
+        "size": 9934060
+      },
+      {
+        "config": {
+          "architecture": "ppc64le",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-ppc64le:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T09:16:53.686284749Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-ppc64le.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T09:16:53.215767337Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-ppc64le:8.11.1",
+              "created": "2024-12-11T09:16:53.686830846Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:2e5e498a11b35313940e50e6e3de47f98cb5541106005921937affb2f43ec3ab",
+              "sha256:ce54960548c14f8bc34b36ccdf957c275486f960479ecbd656f10f6599d88414",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:8573dc4114b95b0f7dedc51b8572352f54b31e8c08d5977020abd392b1b4054d",
+        "platform": {
+          "architecture": "ppc64le",
+          "os": "linux"
+        },
+        "size": 9921598
+      }
+    ]
+  }
+]

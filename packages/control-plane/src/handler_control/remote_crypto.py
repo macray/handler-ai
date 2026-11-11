@@ -1,4 +1,4 @@
-"""Envelopes of the remote connector (docs/dev/design/remote.md §4): what a device and the host
+"""Envelopes of the remote connector (remote design §4): what a device and the host
 exchange through the gateway, sealed with a key the gateway never has.
 
     K        32 random bytes per device, made at pairing, given to the device by QR code

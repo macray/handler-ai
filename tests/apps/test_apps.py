@@ -1,4 +1,5 @@
-"""Contract H conformance: a real handlerd runs the test app (tests/fixtures/app) in podman.
+"""Contract H conformance: a real handlerd runs the test app (tests/fixtures/app) in a real
+sandbox (Podman; Apple container on a Mac).
 
 Install its file, deploy (tests, health check on a copy of the data), open with a one-time link,
 the app's origin (cookie, same-origin rule, static files, the backend), a new version keeping the
@@ -22,13 +23,13 @@ from .conftest import (
     add_app,
     api,
     copy_fixture,
-    requires_podman,
+    requires_app_runtime,
     set_version,
 )
 
 FIXTURE = "app"
 
-pytestmark = requires_podman
+pytestmark = requires_app_runtime
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +37,7 @@ def source(data_root: Path) -> Path:
     return copy_fixture(FIXTURE, data_root)
 
 
+@pytest.mark.rule("app.its-code-is-kept-by-handler", "app.nothing-is-read-through-a-link-out")
 def test_register(daemon: Daemon, source: Path) -> None:
     r = add_app(daemon, source)
     assert r.status_code == 201, r.text
@@ -67,6 +69,7 @@ def test_register(daemon: Daemon, source: Path) -> None:
     assert api(daemon, "POST", "/v1/apps/counter/open").status_code == 409
 
 
+@pytest.mark.rule("deploy.a-failure-changes-nothing", "backend.runs-only-while-used")
 def test_deploy(daemon: Daemon) -> None:
     r = api(daemon, "POST", "/v1/apps/counter/deploy")
     assert r.status_code == 200, api(daemon, "GET", "/v1/apps/counter/log").json()["text"]
@@ -77,6 +80,14 @@ def test_deploy(daemon: Daemon) -> None:
     assert "1 pass" in log  # the backend's tests ran
 
 
+@pytest.mark.rule(
+    "backend.runs-only-while-used",
+    "origin.its-own-never-handler-s",
+    "origin.opened-by-a-one-time-link",
+    "origin.its-api-from-its-own-pages-only",
+    "origin.its-pages-reach-only-it",
+    "origin.handlerd-says-who-asks",
+)
 def test_open_and_use(daemon: Daemon) -> None:
     browser = AppClient(daemon, "counter")
     assert browser.request("GET", "/").status_code == 401
@@ -113,6 +124,7 @@ def test_open_and_use(daemon: Daemon) -> None:
     assert browser.request("GET", "/v1/apps", Authorization=bearer).status_code == 401
 
 
+@pytest.mark.rule("app.its-code-is-kept-by-handler", "deploy.a-failure-changes-nothing")
 def test_new_version_keeps_data(daemon: Daemon, source: Path) -> None:
     set_version(source, "1.1.0")
     (source / "server" / "migrations" / "002_label.sql").write_text(
@@ -130,6 +142,7 @@ def test_new_version_keeps_data(daemon: Daemon, source: Path) -> None:
     assert browser.request("POST", "/api/count", Origin=browser.origin).json() == {"n": 2}
 
 
+@pytest.mark.rule("deploy.a-failure-changes-nothing")
 def test_failed_deploy_changes_nothing(daemon: Daemon, source: Path) -> None:
     test_file = source / "server" / "main_test.ts"
     good = test_file.read_text()
@@ -152,6 +165,7 @@ def test_failed_deploy_changes_nothing(daemon: Daemon, source: Path) -> None:
     assert browser.request("GET", "/api/count").json() == {"n": 2}
 
 
+@pytest.mark.rule("deploy.a-rollback-takes-its-data-back")
 def test_rollback(daemon: Daemon) -> None:
     r = api(daemon, "POST", "/v1/apps/counter/rollback")
     assert r.status_code == 200, r.text
@@ -164,6 +178,7 @@ def test_rollback(daemon: Daemon) -> None:
     assert api(daemon, "POST", "/v1/apps/counter/rollback").status_code == 409
 
 
+@pytest.mark.rule("app.its-code-is-kept-by-handler")
 def test_export(daemon: Daemon, source: Path) -> None:
     """Its code as one file: what was installed, nothing of its data."""
     with daemon.http() as c:
@@ -176,6 +191,7 @@ def test_export(daemon: Daemon, source: Path) -> None:
     assert api(daemon, "GET", "/v1/apps/nothing/export").status_code == 404
 
 
+@pytest.mark.rule("backend.runs-only-while-used")
 def test_idle_stop(daemon: Daemon) -> None:
     assert api(daemon, "GET", "/v1/apps/counter").json()["state"] == "running"
     deadline = time.monotonic() + IDLE_TIMEOUT + 15
@@ -185,6 +201,7 @@ def test_idle_stop(daemon: Daemon) -> None:
     assert "idle for" in api(daemon, "GET", "/v1/apps/counter/log").json()["text"]
 
 
+@pytest.mark.rule("app.uninstalled-leaves-nothing-of-it")
 def test_uninstall_deletes_its_data(daemon: Daemon, data_root: Path) -> None:
     """Uninstalled, nothing of it is left (H.6): another app of that name never finds its data."""
     assert (data_root / "apps" / "counter" / "data" / "app.db").exists()
@@ -193,5 +210,6 @@ def test_uninstall_deletes_its_data(daemon: Daemon, data_root: Path) -> None:
     assert not (data_root / "apps" / "counter").exists()
 
 
+@pytest.mark.rule("backend.in-a-strict-sandbox")
 def test_runtime_image_is_pinned() -> None:
     assert re.fullmatch(r"docker\.io/oven/bun:\d+\.\d+\.\d+-distroless", RUNTIME_IMAGE)

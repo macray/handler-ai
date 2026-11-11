@@ -4,15 +4,15 @@
   "$defs": {
     "CacheDeclaration": {
       "additionalProperties": false,
-      "description": "A cache of the toolbox (B.6): the home path it is mounted at, what it holds, and whether\nit is a general folder any tool writes to (`~/.cache`) rather than one tool's (`~/.cargo`).",
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
       "properties": {
         "target": {
           "title": "Target",
           "type": "string"
         },
         "about": {
-          "default": "",
           "maxLength": 200,
+          "minLength": 1,
           "title": "About",
           "type": "string"
         },
@@ -20,25 +20,36 @@
           "default": false,
           "title": "General",
           "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
         }
       },
       "required": [
-        "target"
+        "target",
+        "about"
       ],
       "title": "CacheDeclaration",
       "type": "object"
     }
   },
-  "description": "PUT /v1/caches: the toolbox's caches by name, written to its toolbox.toml (B.6). Applies\nto new sessions.",
+  "description": "PUT /v1/caches: the user's own caches, for what their own lines install, written to\ntoolbox.toml (B.7). Applies to new sessions.",
   "properties": {
     "caches": {
-      "patternProperties": {
-        "^[a-z0-9][a-z0-9_-]*$": {
-          "$ref": "#/$defs/CacheDeclaration"
-        }
+      "items": {
+        "$ref": "#/$defs/CacheDeclaration"
       },
       "title": "Caches",
-      "type": "object"
+      "type": "array"
     }
   },
   "required": [

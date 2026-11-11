@@ -1,0 +1,14 @@
+{
+  "$id": "urn:handler.control/v1/toolbox-rebuild-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "POST /v1/toolbox/rebuild: apply what changed (with the build cache: only the layers from\nthe first changed one run), or `update`: pull the base and run every layer again (system\nupdates).",
+  "properties": {
+    "update": {
+      "default": false,
+      "title": "Update",
+      "type": "boolean"
+    }
+  },
+  "title": "ToolboxRebuildRequest",
+  "type": "object"
+}

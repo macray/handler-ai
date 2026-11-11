@@ -1,5 +1,5 @@
 """Remote control for tests: a real gateway (subprocess) and a paired device speaking the envelope
-protocol (docs/dev/design/remote.md §4) — what the phone's remote client does, in Python.
+protocol (remote design §4) — what the phone's remote client does, in Python.
 
 The gateway is an independent project (remote-gateway/): it is run from its sources, with the
 test environment's Starlette and uvicorn, never imported.
@@ -37,9 +37,6 @@ class Gateway:
     host_token: str
     process: subprocess.Popen[bytes]
     env: dict[str, str]
-
-    def add_host(self, name: str) -> str:
-        return gateway_cli(self.env, "add-host", name)
 
 
 def gateway_cli(env: dict[str, str], *args: str) -> str:
@@ -142,9 +139,6 @@ class Device:
         r = self.http.post("/v1/device/queue", json=envelope)
         assert r.status_code == 202, r.text
         return envelope
-
-    def notify(self, s: str | None, method: str, params: dict[str, Any] | None = None) -> None:
-        self.send([{"s": s, "m": {"jsonrpc": "2.0", "method": method, "params": params or {}}}])
 
     def call(self, s: str | None, method: str, params: dict[str, Any] | None = None) -> int:
         self.ids += 1

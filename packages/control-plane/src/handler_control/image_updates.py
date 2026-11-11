@@ -6,10 +6,12 @@ the build store, as a user's rebuild would be. A failed check keeps the image ag
 The network filter is part of handler and most agents need it: when it is missing (a first start, an
 handler upgrade naming a new image), handlerd builds it as it starts, whatever the schedule.
 
-An addon is in use when a saved agent has one of its bindings (G.3): its image, when it has one, is
-built if it is not (a first build), as handlerd starts and when an agent starts using it (its
-set-up, its editor). A launch never builds one (A.7): until it is built, the agent's sessions do
-not start (`missingImage`, F.1).
+An addon is in use when a saved agent uses it, or its project gives it (G.3): its image, when it
+has one, is built if it is not (a first build), as handlerd starts, when an agent starts using
+it (its set-up, its editor, its project's) and when a toolbox build switches; so is an addon
+installed while the toolbox lacked what it needs (the build store's `waiting`). Not before the
+toolbox gives what it needs (B.6): its check would fail. A launch never builds one (A.7): until
+it is built, the agent's sessions do not start (`missingImage`, F.1).
 
 When: on a schedule (weekly by default, daily or off), and once after a handler upgrade (handlerd's
 version differs from the one that last ran them: a release may change the recipes). Not the
@@ -24,16 +26,23 @@ import contextlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
-from handler_contracts import ImageUpdates
+from handler_contracts import Build, ImageUpdates
 from handler_contracts.control import UpdateSchedule
-from handler_harness import catalog, images
+from handler_harness import addons, images
 
-from . import __version__, bindings, runtime
-from .agents import AgentRegistry
-from .builds import ADDON_PREFIX, NETWORK_FILTER_TARGET, BuildBusyError, BuildStore, built_addons
+from . import __version__, addon_folders, runtime, toolbox
+from .agents import AgentRegistry, addons_in_use
+from .builds import (
+    ADDON_PREFIX,
+    NETWORK_FILTER_TARGET,
+    TOOLBOX_TARGET,
+    BuildBusyError,
+    BuildStore,
+    built_addons,
+    built_harnesses,
+)
 from .files import write_private
 from .settings import Settings
 
@@ -44,45 +53,47 @@ TICK = 3600.0  # seconds between two looks at whether a run is due
 BUSY_WAIT = 5.0  # seconds between two looks at whether another build ended
 
 
-def targets() -> list[str]:
-    """The images to update: the network filter, the harnesses and addons whose image is built."""
-    harnesses = [
-        h.name
-        for h in catalog.all_harnesses()
-        if runtime.exists(images.ref(h.descriptor.image, images.LATEST))
+def targets(settings: Settings) -> list[str]:
+    """The images to update: the network filter, the harnesses and addons already built."""
+    harnesses = [h.name for h in built_harnesses()]
+    return [NETWORK_FILTER_TARGET, *harnesses] + [
+        f"{ADDON_PREFIX}{a.name}" for a in built_addons(settings)
     ]
-    return [NETWORK_FILTER_TARGET, *harnesses] + [f"{ADDON_PREFIX}{a.name}" for a in built_addons()]
 
 
-def missing_addons(registry: AgentRegistry, bindings_dir: Path) -> list[str]:
-    """The addons in use (a saved agent has one of their bindings) whose image is not built, as
-    build targets. Not with the toolbox missing: they are built on it (`handler setup` first)."""
+def missing_addons(
+    settings: Settings, registry: AgentRegistry, waiting: set[str] | None = None
+) -> list[str]:
+    """The addons in use (and those `waiting`) with an image not built yet and their needs in
+    the toolbox, as build targets. Not with the toolbox missing: they are built on it (`handler
+    setup` first)."""
     if not runtime.exists(images.ref(images.TOOLBOX, images.LATEST)):
         return []
-    used = {name for agent in list(registry.agents.values()) for name in agent.bindings}
-    found: dict[str, str] = {}  # its addon's name → its image
-    for name in sorted(used):
-        loaded = bindings.get(bindings_dir, name)  # an invalid one: the agent's checks say so
-        if loaded.addon is not None and loaded.addon.manifest.image is not None:
-            found[loaded.addon.name] = loaded.addon.manifest.image
-    return [
-        f"{ADDON_PREFIX}{addon}"
-        for addon, image in sorted(found.items())
-        if not runtime.exists(images.ref(image, images.LATEST))
-    ]
+    record = toolbox.read_record(settings)
+    commands = record.commands if record else {}
+    found = []
+    for name in sorted(set(addons_in_use(list(registry.agents.values()))) | (waiting or set())):
+        with contextlib.suppress(addons.UnknownAddonError, addons.InvalidAddonError):
+            manifest = addons.get(name).manifest
+            # no image: its checks say so; a need missing: built once the toolbox gives it
+            if manifest.image is not None and all(c in commands for c in manifest.needs):
+                found.append(name)
+    return [f"{ADDON_PREFIX}{n}" for n in found if not addon_folders.built(settings, n)]
 
 
 class ImageUpdater:
     def __init__(self, settings: Settings, builds: BuildStore, registry: AgentRegistry) -> None:
+        self.settings = settings
         self.path = settings.state_dir / "image-updates.json"
-        self.bindings_dir = settings.bindings_dir
         self.builds = builds
         self.registry = registry
         self.run_task: asyncio.Task[None] | None = None
         self.loop_task: asyncio.Task[None] | None = None
         self.addons_task: asyncio.Task[None] | None = None  # building the missing addon images
+        # building a missing network filter, after another runtime was chosen
+        self.filter_task: asyncio.Task[None] | None = None
         self.addons_again = False  # agents changed meanwhile: look again once it ends
-        self.used: set[str] = set()  # the bindings the saved agents have, as last seen
+        self.used: set[str] = set()  # the addons the saved agents use, as last seen
         self.loop: asyncio.AbstractEventLoop | None = None
         state = self._load()
         self.schedule: UpdateSchedule = state.get("schedule", "weekly")
@@ -138,12 +149,26 @@ class ImageUpdater:
         self.loop = asyncio.get_running_loop()
         self.loop_task = asyncio.create_task(self._loop())
         self.registry.listeners.append(self.agents_saved)
+        self.builds.listeners.append(self.build_ended)
         self.agents_saved()
 
+    def runtime_chosen(self) -> None:
+        """Another runtime is used (D.2): its images are its own, so what handlerd builds when
+        missing at its start (the network filter, the tool images in use) is looked for again."""
+        if self.filter_task is None:
+            self.filter_task = asyncio.create_task(self._build_missing_network_filter())
+            self.filter_task.add_done_callback(lambda _: setattr(self, "filter_task", None))
+        self._build_missing_addons()
+
+    def build_ended(self, build: Build) -> None:
+        """A toolbox switched: the addons waiting for what it gives are looked for."""
+        if build.target == TOOLBOX_TARGET and build.state == "succeeded":
+            self._build_missing_addons()
+
     def agents_saved(self) -> None:
-        """Told by the registry (from any thread): when the agents have a binding they had not,
+        """Told by the registry (from any thread): when the agents use an addon they did not,
         the missing addon images are looked for."""
-        used = {name for agent in list(self.registry.agents.values()) for name in agent.bindings}
+        used = set(addons_in_use(list(self.registry.agents.values())))
         new, self.used = used - self.used, used
         if new and self.loop is not None:
             self.loop.call_soon_threadsafe(self._build_missing_addons)
@@ -160,9 +185,11 @@ class ImageUpdater:
         while self.addons_again:
             self.addons_again = False
             try:
-                missing = await asyncio.to_thread(missing_addons, self.registry, self.bindings_dir)
+                missing = await asyncio.to_thread(
+                    missing_addons, self.settings, self.registry, set(self.builds.waiting)
+                )
             except (OSError, ValueError) as e:  # no runtime: the host check (A.8) says so
-                log.warning("cannot tell which addon images are built: %s", e)
+                log.warning("cannot tell which tool images are built: %s", e)
                 return
             for target in missing:
                 log.info("%s is used by an agent and not built: building it", target)
@@ -170,7 +197,7 @@ class ImageUpdater:
                 await self.builds.wait(build)
 
     async def close(self) -> None:
-        for task in (self.loop_task, self.run_task, self.addons_task):
+        for task in (self.loop_task, self.run_task, self.addons_task, self.filter_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -196,7 +223,7 @@ class ImageUpdater:
 
     async def _run(self) -> None:
         failed = []
-        for target in await asyncio.to_thread(targets):
+        for target in await asyncio.to_thread(targets, self.settings):
             build = await self._start(target)
             await self.builds.wait(build)
             ended = self.builds.get(build)

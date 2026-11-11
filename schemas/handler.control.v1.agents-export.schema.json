@@ -187,7 +187,7 @@
       "type": "object"
     },
     "AgentsFile": {
-      "description": "Agents written so they can be set up again in another project (D.23): their definitions\nwithout what is yours (the models they run as, their folder, the addon configurations and\nknowledge folders they were given), with what they need instead.",
+      "description": "Agents written so they can be set up again in another project (D.23): their definitions\nwithout what is yours (the models they run as, their folder, the connections and notes\nfolders they were given), with what they need instead.",
       "properties": {
         "name": {
           "maxLength": 64,

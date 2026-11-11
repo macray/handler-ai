@@ -1,0 +1,133 @@
+{
+  "$id": "urn:handler.control/v1/sandbox-runtime",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "RuntimeCheck": {
+      "description": "What `handler-sandbox-<impl> check` prints (A.8): can this host run sandboxes.",
+      "properties": {
+        "runtime": {
+          "title": "Runtime",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/RuntimeCheckItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "supports": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeSupports"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "runtime",
+        "ok",
+        "items"
+      ],
+      "title": "RuntimeCheck",
+      "type": "object"
+    },
+    "RuntimeCheckItem": {
+      "description": "One thing the runtime needs from the host (A.8), and what was found.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "ok",
+        "required",
+        "detail"
+      ],
+      "title": "RuntimeCheckItem",
+      "type": "object"
+    },
+    "RuntimeSupports": {
+      "description": "What a runtime gives on this host (A.8): a spec needing an ability it lacks is refused\n(A1), and an agent needing one is refused when it is saved (D.2).",
+      "properties": {
+        "isolation": {
+          "title": "Isolation",
+          "type": "string"
+        },
+        "abilities": {
+          "items": {
+            "enum": [
+              "nested",
+              "privileged",
+              "display"
+            ],
+            "type": "string"
+          },
+          "title": "Abilities",
+          "type": "array"
+        },
+        "limits": {
+          "title": "Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isolation",
+        "abilities",
+        "limits"
+      ],
+      "title": "RuntimeSupports",
+      "type": "object"
+    }
+  },
+  "description": "A sandbox runtime installed here (A, D.2): its executable is `handler-sandbox-<name>`.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "current": {
+      "title": "Current",
+      "type": "boolean"
+    },
+    "check": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeCheck"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "name",
+    "current"
+  ],
+  "title": "SandboxRuntime",
+  "type": "object"
+}

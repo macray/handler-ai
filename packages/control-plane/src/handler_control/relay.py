@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Any
 
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket
 
 from handler_contracts import AcpCloseCode
 
@@ -62,7 +62,7 @@ class Relay:
             else:
                 await self.to_client(action.msg)
 
-    # ── the three pumps ─────────────────────────────────────────────────
+    # ── the two pumps ─────────────────────────────────────────────────
 
     async def client_to_agent(self) -> None:
         while True:
@@ -118,16 +118,10 @@ class Relay:
         )
         try:
             await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
-        except WebSocketDisconnect:
-            pass
         finally:
             for task in pumps:
                 task.cancel()
-            await self.stop_agent()
+            await stop(self.proc)  # closing the connection stops the sandbox (C.3)
             stderr.cancel()
             with contextlib.suppress(Exception):
                 await self.ws.close(code=self.close_code, reason=self.close_reason[:120])
-
-    async def stop_agent(self) -> None:
-        """Closing the connection stops the sandbox (C.3)."""
-        await stop(self.proc)

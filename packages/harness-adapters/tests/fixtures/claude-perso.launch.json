@@ -12,28 +12,33 @@
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
   },
-  "files": [],
-  "mounts": [
+  "folders": [
     {
       "source": "/data/agent-state/a1b2c3/config_dir",
       "target": "/home/agent/.claude",
-      "readOnly": false,
-      "kind": "state"
-    },
-    {
-      "source": "/data/agent-state/a1b2c3/config_json",
-      "target": "/home/agent/.claude.json",
-      "readOnly": false,
-      "kind": "state"
-    },
-    {
-      "source": "/home/you/.cache/handler-ai/cargo",
-      "target": "/home/agent/.cargo",
-      "readOnly": false,
-      "kind": "cache"
+      "writable": true
     }
   ],
-  "writablePaths": [],
+  "skills": [],
+  "caches": [
+    {
+      "source": "/home/you/.cache/handler-ai/cargo",
+      "target": "/home/agent/.cargo"
+    }
+  ],
+  "keptFiles": [
+    {
+      "source": "/data/agent-state/a1b2c3/config_json/config_json",
+      "target": "/home/agent/.claude.json"
+    }
+  ],
+  "files": [],
+  "tools": [
+    {
+      "target": "/opt/handler/bin/handler-sandbox-env",
+      "content": "#!/usr/bin/python3\n\"\"\"handler-sandbox-env [--drop NAME …] -- COMMAND [ARG …]\n\nRun COMMAND with the sandbox's environment, whatever environment its caller gave it (contract A8:\nthe outermost process of the sandbox its user can read holds the spec's env: PID 1, the init, on\nPodman and Docker; on Apple container, whose PID 1 is root's, the relay's child). For harnesses\nthat start MCP servers with a reduced environment (vibe gives only HOME and PATH) or with their own\nsecrets (pi), descriptor `mcpEnv = \"sandbox\"`: `render` wraps their stdio MCP servers with it, so a\nserver gets the proxy, display, its addon's settings and secrets like any other process of the\nsandbox. `--drop` leaves out the harness's own secrets. Variables the caller set win (e.g. the MCP\nentry's own `env`).\n\"\"\"\n\nimport os\nimport sys\n\n\ndef parent(pid: int) -> int:\n    with open(f\"/proc/{pid}/status\") as f:\n        return next(int(line.split()[1]) for line in f if line.startswith(\"PPid:\"))\n\n\ndef outermost_environ() -> bytes:\n    \"\"\"The environment of the last readable process, from this one up its parents.\"\"\"\n    pid, found = os.getpid(), b\"\"\n    while pid > 0:\n        try:\n            with open(f\"/proc/{pid}/environ\", \"rb\") as f:\n                found = f.read()\n            pid = parent(pid)\n        except OSError:\n            break\n    return found\n\n\nargs = sys.argv[1:]\ndrop = set()\nwhile args and args[0] == \"--drop\" and len(args) > 1:\n    drop.add(args[1])\n    args = args[2:]\nif args[:1] == [\"--\"]:\n    args = args[1:]\nif not args:\n    sys.exit(__doc__)\nentries = [e for e in outermost_environ().split(b\"\\0\") if b\"=\" in e]\nenv = dict(os.fsdecode(e).split(\"=\", 1) for e in entries)\nenv.update(os.environ)\nfor name in drop:\n    env.pop(name, None)\nos.execvpe(args[0], args, env)\n"
+    }
+  ],
   "egress": [
     "api.anthropic.com:443",
     "platform.claude.com:443",

@@ -594,21 +594,6 @@
       "default": null,
       "title": "Env"
     },
-    "writablePaths": {
-      "anyOf": [
-        {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Writablepaths"
-    },
     "accountConnectors": {
       "anyOf": [
         {
@@ -630,6 +615,15 @@
         }
       ],
       "default": null
+    },
+    "needs": {
+      "default": [],
+      "items": {
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+        "type": "string"
+      },
+      "title": "Needs",
+      "type": "array"
     }
   },
   "required": [

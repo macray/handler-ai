@@ -54,6 +54,7 @@ from . import (
     compose,
     interfaces,
     knowledge,
+    refusals,
     runtime,
     sandbox_process,
     save_rules,
@@ -171,7 +172,6 @@ class Automations:
         self.wake = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.lock = threading.Lock()  # state.json: read, changed, written by one at a time
-        self.schedule_tick = SCHEDULE_TICK
         self._load()
         sessions.stop_listeners.append(self.on_stop)
 
@@ -187,8 +187,7 @@ class Automations:
                     ended = record.model_copy(update={"state": "interrupted", "ended_at": now()})
                     self.write_record(ended)
                 if record.created_at.date().isoformat() == today:
-                    key = (loaded.name, today)
-                    self.started_today[key] = self.started_today.get(key, 0) + 1
+                    self.count_start(loaded.name)
 
     def start(self) -> None:
         self.stopped |= set(self.sessions.records)  # the catch-up scan (I.2)
@@ -220,7 +219,7 @@ class Automations:
             if item is None:
                 self.wake.clear()
                 with contextlib.suppress(TimeoutError):  # a schedule, a capped one tomorrow
-                    await asyncio.wait_for(self.wake.wait(), self.schedule_tick)
+                    await asyncio.wait_for(self.wake.wait(), SCHEDULE_TICK)
                 continue
             try:
                 await self.run(item)
@@ -453,8 +452,8 @@ class Automations:
             elif login.unattended == "check-terms":
                 warnings.append(
                     f"Runs on your subscription (account {runs.account}). Check your "
-                    f"{login.subscription} plan's terms: automated or unattended use may not be "
-                    f"allowed ({login.terms}). An API key (a provider) is recommended."
+                    f"{login.subscription} subscription's terms: automated or unattended use may "
+                    f"not be allowed ({login.terms}). An API key (a provider) is recommended."
                 )
         return found, warnings
 
@@ -606,7 +605,7 @@ class Automations:
     def enable(self, name: str) -> AutomationView:
         """Turned on: the owner's only approval (I.7). Stops and slots before are not read."""
         loaded = self.get(name)
-        if loaded.definition is None or (found := self.problems(loaded)):
+        if found := self.problems(loaded):  # a file that does not parse is one
             raise AutomationConflictError(f"{name} has problems: {'; '.join(found)}")
 
         def on(state: config.State) -> None:
@@ -732,6 +731,18 @@ class Automations:
                 found.append(AutomationRun.model_validate_json(path.read_text()))
         return sorted(found, key=lambda r: r.created_at, reverse=True)
 
+    def with_answers(self, name: str, records: list[AutomationRun]) -> list[AutomationRun]:
+        """Its runs' hosts refused, with your answer as its agent's lists say now."""
+        loaded = self.get(name)
+        run = loaded.definition.agent_run if loaded.definition else None
+        agent = None
+        if run is not None:
+            with contextlib.suppress(AutomationError):
+                agent = self.find_agent(loaded, run)
+        return [
+            r.model_copy(update={"refused": refusals.decided(r.refused, agent)}) for r in records
+        ]
+
     def runs_of_session(self, session_id: str) -> list[AutomationRun]:
         found = [
             r
@@ -765,8 +776,9 @@ class Automations:
     def try_run(self, name: str, session_id: str | None) -> AutomationRun:
         """I.8: now, on or off; on a stop's whole log; appends nothing."""
         loaded = self.get(name)
-        if loaded.definition is None or (found := self.problems(loaded)):
+        if found := self.problems(loaded):  # a file that does not parse is one
             raise AutomationConflictError(f"{name} has problems: {'; '.join(found)}")
+        assert loaded.definition is not None
         on_stop = loaded.definition.when == "session.stopped"
         if on_stop and session_id is None:
             raise AutomationConflictError(f"{name} runs on a session that stopped: give one")
@@ -790,6 +802,20 @@ class Automations:
         self.queue[item.key] = item
         self.wake.set()
         return record
+
+    async def allow(self, name: str, hosts: list[str]) -> None:
+        """*Allow and run again*: hosts refused to one of its runs kept, allowed for its agent and
+        applied to its running sandboxes, before the run (rule automation.a-refused-host-is-reported)."""
+        loaded = self.get(name)
+        refused = {h.host for r in self.runs(name) for h in r.refused}
+        if others := [h for h in hosts if h not in refused]:
+            raise AutomationConflictError(f"not refused to a run of {name}: {', '.join(others)}")
+        run = loaded.definition.agent_run if loaded.definition else None
+        if run is None:
+            raise AutomationConflictError(f"{name} runs no agent")
+        agent = self.find_agent(loaded, run)
+        if failures := await refusals.decide(self.registry, agent, hosts, "allowed"):
+            log.warning("automation %s: allowed, not applied: %s", name, "; ".join(failures))
 
     async def cancel(self, name: str, run_id: str) -> AutomationRun:
         record = self.get_run(name, run_id)
@@ -924,14 +950,19 @@ class Automations:
             busy = session.id in self.sessions.live or session.id in self.sessions.starting
             if rec.state in ("stopped", "failed") and not busy:
                 break
-        running.record = running.record.model_copy(
-            update={"ms": int((loop.time() - started) * 1000)}
-        )
         output = SessionOutput.model_validate(rec.output) if rec.output else None
+        valid = output is not None and output.valid and isinstance(output.value, dict)
+        value: dict[str, Any] = output.value if output is not None and valid else {}
+        # hosts its filter refused, neither allowed nor kept blocked (rule
+        # automation.a-refused-host-is-reported): said in Handler's words, not the agent's guess
+        hosts = refusals.refused(self.sessions.event_log(session.id), agent)
+        said = refusals.said_about(hosts, rec.answer, value.get("summary")) if hosts else None
+        running.record = running.record.model_copy(
+            update={"ms": int((loop.time() - started) * 1000), "refused": hosts, "said": said}
+        )
         if running.cancelled:
             self.end(running.record, "cancelled")
-        elif output is not None and output.valid and isinstance(output.value, dict):
-            value: dict[str, Any] = output.value
+        elif valid:
             self.end(running.record, "succeeded", result=value)
         else:
             why = (
@@ -939,7 +970,8 @@ class Automations:
                 or rec.error
                 or f"its turn ended: {rec.last_stop_reason or 'no result'}"
             )
-            self.end(running.record, "failed", error=f"no valid result: {why}")
+            error = refusals.reason(hosts) if hosts else f"no valid result: {why}"
+            self.end(running.record, "failed", error=error)
 
     async def execute_script(
         self,
@@ -1008,7 +1040,7 @@ class Automations:
             definition=str(folder / "definition"),
             input_dir=str(folder / "input"),
             output=str(folder / "output"),
-            bin_dir=str(BIN),
+            commands={p.name: p.read_text() for p in BIN.iterdir()},
             services=str(socket_dir / "services.sock") if socket_dir else None,
             trial=record.trial,
         )
@@ -1052,6 +1084,7 @@ class Automations:
         )
         (folder / "output").mkdir(exist_ok=True)
         (folder / "input").mkdir(exist_ok=True)
+        sandbox_process.give_dev_agent(folder / "output")  # the only one the run writes
         return folder
 
     def prepare_scheduled(self, loaded: config.Loaded, record: AutomationRun) -> None:
@@ -1096,7 +1129,7 @@ class Automations:
             settings |= agent.settings.model_dump(
                 mode="json",
                 by_alias=True,
-                include={"network", "allow", "confinement", "permissions", "bindings", "knowledge"},
+                include={"network", "allow", "confinement", "permissions", "addons", "knowledge"},
             )
         session["agent"] = settings
         model = " · ".join(x for x in (rec.harness, rec.account or rec.provider, rec.model) if x)
@@ -1108,7 +1141,7 @@ class Automations:
             ("Network", f"{settings.get('network')} {' '.join(settings.get('allow') or [])}"),
             ("Confinement", str(settings.get("confinement"))),
             ("Permissions", str(settings.get("permissions"))),
-            ("Addons", ", ".join(settings.get("bindings") or []) or "none"),
+            ("Addons", ", ".join(u["addon"] for u in settings.get("addons") or []) or "none"),
             ("Knowledge", ", ".join(settings.get("knowledge") or []) or "none"),
             ("Events", f"{record.seq_from} to {record.seq_to}"),
         ]
@@ -1200,18 +1233,28 @@ class Automations:
         agent = None
         if loaded is not None and run is not None:
             with contextlib.suppress(AutomationError):
-                agent = self.find_agent(loaded, run).name
+                agent = self.find_agent(loaded, run)
         fields: dict[str, Any] = {
             "source": "automation",
             "name": record.automation,
-            "agent": (agent or run.agent) if run else None,
+            "agent": ((agent.name if agent else None) or run.agent) if run else None,
+            "agent_id": agent.id if agent else None,
+            "refused": record.refused,
+            "said": record.said,
             "app": call.app if call else definition.app if definition else None,
             "person": "owner",
             "title": title,
             "run_id": record.id,
             "session_id": record.agent_session_id,
         }
-        if result is not None:
+        if result is not None and record.refused:  # it did without them: needs a look
+            told = told_result(result)
+            if told["status"] == "failed":
+                told["summary"] = refusals.reason(record.refused)
+            elif told["status"] == "ok":
+                told["status"] = "attention"
+            self.inbox.add(**fields, **told)
+        elif result is not None:
             self.inbox.add(**fields, **told_result(result))
         elif record.state == "failed" and (run is not None or not record.trial):
             self.inbox.add(**fields, status="failed", summary=record.error)

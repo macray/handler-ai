@@ -66,12 +66,20 @@
       "title": "Versions",
       "type": "object"
     },
-    "warnings": {
+    "addons": {
       "default": [],
       "items": {
         "type": "string"
       },
-      "title": "Warnings",
+      "title": "Addons",
+      "type": "array"
+    },
+    "harnesses": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Harnesses",
       "type": "array"
     },
     "error": {

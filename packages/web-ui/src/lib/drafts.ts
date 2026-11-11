@@ -8,17 +8,16 @@ import { api } from "./api";
 import type { App, DraftCopy, Session } from "./contracts.gen";
 import { navigate } from "./router.svelte";
 import { sessions } from "./sessions.svelte";
+import { formatBytes } from "./text";
 
-/** A session of the App creator on a draft of `app` (none: a new app). Without one set up yet,
- *  its set-up page first. */
-export async function startDraft(app?: string): Promise<void> {
+/** A session of the App creator on a draft of `app` (none: a new app). False, nothing done,
+ *  when none is set up yet: the caller shows its set-up card. */
+export async function startDraft(app?: string): Promise<boolean> {
   const creator = (await api.handlerNeeds()).find((r) => r.name === "app-creator");
-  if (!creator?.agentId) {
-    navigate({ view: "set-up-helper", need: "app-creator" });
-    return;
-  }
+  if (!creator?.agentId) return false;
   const agent = await api.agent(creator.agentId);
   navigate({ view: "session", key: sessions.open(await api.createAppDraft(agent.id, app), agent).key });
+  return true;
 }
 
 /** The draft waiting for `app` (none: those of new apps), from a list of sessions. */
@@ -65,7 +64,7 @@ export async function openDraft(sessionId: string): Promise<DraftCopy[]> {
 
 /** What an opened draft works on, in words: "its data: a copy (12 KB)". */
 export function copyLabel(c: DraftCopy): string {
-  const size = c.size == null ? "" : c.size < 1024 ? ` (${c.size} B)` : c.size < 2 ** 20 ? ` (${Math.round(c.size / 1024)} KB)` : ` (${Math.round(c.size / 2 ** 20)} MB)`;
+  const size = c.size == null ? "" : ` (${formatBytes(c.size)})`;
   const how = c.how === "copy" ? `a copy${size}` : c.how === "read-only" ? "read only (too large to copy)" : "empty";
   return `${c.what}${c.path ? ` ${c.path}` : ""}: ${how}`;
 }

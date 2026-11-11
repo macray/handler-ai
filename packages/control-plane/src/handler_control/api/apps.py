@@ -99,13 +99,6 @@ def add_app_code_routes(app: FastAPI, ctx: Context) -> None:
             )
         return dump(opened)
 
-    @app.delete("/v1/apps/from-draft/{session_id}/open", dependencies=authed)
-    async def close_app_draft(session_id: str) -> Response:
-        ctx.get_session(session_id)
-        if (opened := ctx.apps.preview_of(session_id)) is not None:
-            await ctx.apps.close_draft(opened)
-        return Response(status_code=204)
-
     @app.get("/v1/apps/{name}/export", dependencies=authed)
     def export_app(name: str) -> Response:
         with app_problems("cannot export"):

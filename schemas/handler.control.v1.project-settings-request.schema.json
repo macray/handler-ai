@@ -1,6 +1,36 @@
 {
   "$id": "urn:handler.control/v1/project-settings-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AddonUse": {
+      "description": "An addon an agent or a project uses (G.3): by its name, with the binding filling its\nslots when it has some (G.2); one without slots has no binding.",
+      "properties": {
+        "addon": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Addon",
+          "type": "string"
+        },
+        "binding": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Binding"
+        }
+      },
+      "required": [
+        "addon"
+      ],
+      "title": "AddonUse",
+      "type": "object"
+    }
+  },
   "description": "A project's own settings: the body of a full update (PUT). Nothing in it is an agent's.",
   "properties": {
     "name": {
@@ -77,6 +107,23 @@
         "type": "string"
       },
       "title": "Skills",
+      "type": "array"
+    },
+    "addons": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AddonUse"
+      },
+      "title": "Addons",
+      "type": "array"
+    },
+    "toolboxAdds": {
+      "default": [],
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "type": "string"
+      },
+      "title": "Toolboxadds",
       "type": "array"
     }
   },

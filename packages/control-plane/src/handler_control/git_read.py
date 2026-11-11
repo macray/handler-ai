@@ -4,8 +4,8 @@
 
 The repository is the agent's: dulwich reads it and runs nothing from it (no hooks, filters,
 fsmonitor, diff drivers, unlike git), and this process, not handlerd, bears what a malformed one
-does (a link to a device, a huge file): memory is capped and handlerd stops waiting after a
-while."""
+does (a link to a device, a huge file): memory is capped (but on macOS, which refuses to lower
+RLIMIT_AS) and handlerd stops waiting after a while."""
 
 import resource
 import sys
@@ -18,7 +18,8 @@ MEMORY = 1 << 30
 
 
 def main(args: list[str]) -> int:
-    resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
+    if sys.platform != "darwin":
+        resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
     try:
         with Repo(args[1]) as repo:
             if args[0] == "head":

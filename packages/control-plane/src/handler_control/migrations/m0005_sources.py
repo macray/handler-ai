@@ -7,9 +7,9 @@ catalog was installed from it, and so was one of Handler's apps.
 """
 
 import json
+import os
 import re
-
-from handler_harness import addons
+from pathlib import Path
 
 from ..files import write_private
 from ..settings import Settings
@@ -18,7 +18,9 @@ CATALOG = re.compile(r'^(\s*source\s*=\s*)"catalog:([^"]*)"', re.M)
 
 
 def migrate(settings: Settings) -> None:
-    lock = addons.user_dir().parent / "addons.lock.toml"
+    # the folders of this migration's time: the lock next to `addons/`
+    own = Path(os.environ.get("HANDLER_ADDONS_DIR", settings.config_dir / "addons"))
+    lock = own.parent / "addons.lock.toml"
     if lock.exists():
         text = lock.read_text()
         new = CATALOG.sub(r'\1"source:official/\2"', text)

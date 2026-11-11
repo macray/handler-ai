@@ -2,7 +2,6 @@
   // A terminal of an agent (`handler terminal`, D.16): the harness's own program runs in the terminal
   // that started it, not here; what is here is its network, changed live (A.4). handlerd knows it
   // until it ends, or until handlerd restarts (the program goes on, unknown to the new one).
-  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import NetworkPanel from "../components/NetworkPanel.svelte";
   import PageHeader from "../components/PageHeader.svelte";
   import When from "../components/When.svelte";
@@ -36,13 +35,12 @@
   );
 </script>
 
-<PageHeader title={agent ? `Terminal · ${agentLabel(agent)}` : "Terminal"} {parent} titled />
+<PageHeader width="max-w-2xl" title={agent ? `Terminal · ${agentLabel(agent)}` : "Terminal"} {parent} />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-2xl space-y-6 px-8 py-10">
     {#if error}<p class="text-sm text-danger">{error}</p>{/if}
     {#if agent && conn?.terminal}
       <div class="space-y-1.5" data-testid="terminal-info">
-        <h1 class="flex items-center gap-2 text-lg font-semibold"><SquareTerminal class="size-5" />{agentLabel(agent)}</h1>
         <p class="text-xs text-muted-foreground">{accessLabel(conn.terminal)} · started <When at={conn.since} /></p>
         <p class="text-sm text-muted-foreground">
           It runs in the terminal where <code>handler terminal</code> started it: you talk to it there, and closing that

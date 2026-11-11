@@ -1,5 +1,5 @@
-// Remote control (docs/dev/design/remote.md, contract D.7) as the web UI sees it: the connector's
-// status light, polled while the page is open, and the actions of Settings → Remote and of the
+// Remote control (remote design, contract D.7) as the web UI sees it: the connector's
+// status light, polled while the page is open, and the actions of Settings → Your phone and of the
 // session view's Remote switch. Views use only this module's interface (`remote`).
 import { api } from "./api";
 import type { RemotePairing, RemoteStatus } from "./contracts.gen";

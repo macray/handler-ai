@@ -1,0 +1,10 @@
+# Handler's plan builder (for its need: need.toml): one, with no folder; each of its sessions
+# works on a plan draft kept by Handler, the project seen read-only (D.27), from Plans or a
+# project's page (New plan). Only its model's sites (the defaults), no tool: it writes a markdown file and
+# needs no secret but its model's; Handler refuses a builder given more. Its instructions:
+# instructions.md (each session adds the project, the draft and the agents that may run steps);
+# skills/handler-plan: how a plan is written (also installed in the library at handlerd's start).
+
+[agent]
+name = "Plan builder"
+description = "Writes a plan with you for a project, on a draft Handler keeps"

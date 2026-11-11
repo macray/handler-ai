@@ -229,7 +229,7 @@ class AppOrigins:
         ]
         if cookies := without_handler_cookie(request.headers.get("cookie", "")):
             headers.append(("cookie", cookies))
-        # H.4: only the owner is local (docs/dev/design/apps.md)
+        # H.4: only the owner is local (apps design)
         headers.append((PERSON_HEADER, "owner"))
         token = self.store.issue_start(name, "owner") if start else None  # H.11: until answered
         if token is not None:

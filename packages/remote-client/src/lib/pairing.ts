@@ -1,4 +1,4 @@
-// Pairing (docs/dev/design/remote.md §3): handler shows a QR code for
+// Pairing (remote design §3): handler shows a QR code for
 // `https://<gateway>/#pair=<base64url JSON>`. The fragment never reaches a server; it is read here,
 // turned into non-extractable keys, stored in IndexedDB, and removed from the address bar.
 import { directionKey, gatewayToken, importDeviceKey, unb64, type Address } from "./crypto";

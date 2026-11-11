@@ -11,8 +11,10 @@ from handler_contracts import (
     AcpCloseCode,
     ModelAccess,
 )
+from handler_harness import starting_instructions
 
 from .. import (
+    addon_folders,
     auth,
     launcher,
     save_rules,
@@ -62,7 +64,7 @@ def add_acp_endpoint(app: FastAPI, ctx: Context) -> None:
             scope=started.spec.workdir,
             network=started.spec.network,
             session_defaults=started.launch.session_defaults,
-            instructions=record.instructions,  # P9
+            instructions=starting_instructions(record.instructions, record.network),  # P9
             on_event=lambda text: log.info("[%s] policy: %s", conn.id, text),
         )
         record.connections[conn.id] = conn
@@ -71,6 +73,7 @@ def add_acp_endpoint(app: FastAPI, ctx: Context) -> None:
             await Relay(ws, started, policy, record, ctx.registry).serve()
         finally:
             record.connections.pop(conn.id, None)
+            addon_folders.sweep_soon(ctx.settings)  # a folder it mounted may be free
 
     @app.websocket("/v1/sessions/{session_id}/acp")
     async def session_acp(ws: WebSocket, session_id: str) -> None:
@@ -105,11 +108,12 @@ def connection_model(ctx: Context, record: AgentRecord, ws: WebSocket) -> RunsAs
 def websocket_denial(
     ctx: Context, ws: WebSocket, protocols: list[str], known: bool, what: str
 ) -> Response | None:
-    """C.1: Origin (403), token via subprotocol (401), known agent/session (404), before
-    accepting."""
+    """C.1: Origin (403), the token via subprotocol or the web UI's cookie (401), known
+    agent/session (404), before accepting."""
     if not auth.origin_allowed(ws.headers.get("origin"), ctx.settings.allowed_origins):
         return Response("origin not allowed", status_code=403)
-    if not auth.token_matches(auth.bearer_from_subprotocols(protocols), ctx.token):
+    bearer = auth.bearer_from_subprotocols(protocols)
+    if not ctx.authenticated(ws.headers, ws.cookies.get(auth.UI_COOKIE), bearer):
         return Response("missing or invalid token", status_code=401)
     if not known:
         return Response(f"{what} not found", status_code=404)

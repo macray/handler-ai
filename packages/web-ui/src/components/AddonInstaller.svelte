@@ -5,18 +5,17 @@
   // code when built); the install takes exactly the previewed content (its digest). In a dialog:
   // each source's addons not installed yet (Handler's first, saying where each comes from), a
   // folder or an archive below them, then the preview. Installed, the page goes on to its first
-  // configuration (`oninstalled`).
+  // configuration (`oninstalled`); updated, it keeps the ones it has.
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { api } from "../lib/api";
   import type { AddonPreview, Source } from "../lib/contracts.gen";
-  import { href } from "../lib/router.svelte";
   import { fromWords, offered } from "../lib/sources";
   import Dialog from "./Dialog.svelte";
 
-  let { oninstalled }: { oninstalled: (message: string, addon: string) => void } = $props();
+  let { oninstalled }: { oninstalled: (message: string, addon: string, updated: boolean) => void } = $props();
 
   let sources = $state<Source[]>([]);
   let source = $state(""); // a folder or an archive URL typed by the user
@@ -27,8 +26,6 @@
 
   const available = $derived(offered(sources, "addon").filter((o) => !o.item.installed));
   const unread = $derived(sources.filter((s) => s.error && !s.commit)); // never read: nothing offered
-  /** How many the sources offer that are not installed: the page's button says it. */
-  export const count = () => available.length;
 
   /** The dialog, on its list. */
   export function open(): void {
@@ -68,13 +65,20 @@
     busy = true;
     error = null;
     try {
-      const done = await api.installAddon(preview.source, preview.digest);
-      const built = done.build ? " (its image is being built: Settings → Images)" : "";
+      const adds = (preview.toolbox?.adds ?? []).map((a) => a.name);
+      const updated = preview.replaces === "installed";
+      const done = await api.installAddon(preview.source, preview.digest, adds);
+      const built =
+        done.build?.target === "toolbox"
+          ? ` (the toolbox is being rebuilt with ${adds.join(", ")}, then its tools are prepared: Settings → Sandboxes)`
+          : done.build
+            ? " (its image is being built: Settings → Sandboxes)"
+            : "";
       preview = null;
       source = "";
       shown = false;
       await loadSources();
-      oninstalled(`${done.addon.name} installed${built}. Next, configure it:`, done.addon.name);
+      oninstalled(updated ? `${done.addon.name} updated${built}.` : `${done.addon.name} installed${built}. Next, connect it:`, done.addon.name, updated);
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -83,9 +87,9 @@
   }
 
   const replaced: Record<string, string> = {
-    builtin: "the built-in addon of that name (yours wins)",
+    builtin: "the built-in tool of that name (yours wins)",
     installed: "the installed one (an update)",
-    own: "your own addon of that name: move its folder away first",
+    own: "your own tool of that name: move its folder away first",
   };
 </script>
 
@@ -98,7 +102,7 @@
 
 <Dialog
   bind:open={shown}
-  title={preview ? `Install ${preview.name}?` : "Install an addon"}
+  title={preview ? `Install ${preview.name}?` : "Install a tool"}
   description={preview ? (preview.description ?? undefined) : "Nothing is installed before you see what it brings."}
   wide={Boolean(preview)}
   testid="addon-installer"
@@ -121,12 +125,40 @@
           <span>Its Containerfile runs code on this computer when its image <span class="font-mono text-xs">{preview.image}</span> is built.</span>
         </p>
       {/if}
+      {#if preview.toolbox?.has?.length}<p class="text-muted-foreground">From the toolbox it uses <span class="font-mono text-xs">{preview.toolbox.has.join(", ")}</span>.</p>{/if}
+      {#if preview.toolbox?.adds?.length}
+        <div class="space-y-2 rounded-[10px] border border-warn/40 bg-warn/5 p-3" data-testid="addon-toolbox-adds">
+          <p class="flex items-start gap-2.5 text-warn">
+            <TriangleAlert class="mt-0.5 size-4 shrink-0" />
+            <span>Installing it adds to the toolbox, the system every agent works in, then rebuilds it:</span>
+          </p>
+          <ul class="space-y-2 pl-6">
+            {#each preview.toolbox.adds as add (add.name)}
+              <li>
+                <span class="font-mono text-xs">{add.name}</span>, for <span class="font-mono text-xs">{(add.provides ?? []).join(", ")}</span>
+                <span class="text-muted-foreground">· {add.source ? `from ${add.source.replace(/^source:/, "")}, installed with it` : (add.description ?? "")}</span>
+                {#if add.script}
+                  <details class="mt-1">
+                    <summary class="cursor-pointer text-xs text-muted-foreground">Its install script, run as root while the toolbox is built</summary>
+                    <pre class="mt-1 max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">{add.script}</pre>
+                  </details>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      {#if preview.toolbox?.lacking?.length}
+        <p data-testid="addon-toolbox-lacking">
+          It needs <span class="font-mono text-xs">{preview.toolbox.lacking.join(", ")}</span>, which no system package provides: add it to your own lines of the toolbox (Settings → Sandboxes). Until then it is installed, not ready.
+        </p>
+      {/if}
       {#if preview.replaces}<p>Replaces {replaced[preview.replaces]}.</p>{/if}
       {#if error}<p class="text-danger" data-testid="addon-install-error">{error}</p>{/if}
       <div class="flex flex-wrap items-center gap-2 border-t pt-4">
         <Button variant="ghost" size="sm" onclick={() => (preview = null)}>Back</Button>
         <span class="flex-1"></span>
-        <Button size="sm" disabled={busy || preview.replaces === "own"} onclick={install} data-testid="addon-install">Install</Button>
+        <Button size="sm" disabled={busy || preview.replaces === "own"} onclick={install} data-testid="addon-install">{preview.toolbox?.adds?.length ? "Install and add to the toolbox" : "Install"}</Button>
       </div>
     </div>
   {:else}
@@ -155,9 +187,8 @@
             {/each}
           </div>
         {:else}
-          <p class="rounded-[10px] border border-dashed px-4 py-4 text-center text-muted-foreground">Every addon the sources offer is installed.</p>
+          <p class="rounded-[10px] border border-dashed px-4 py-4 text-center text-muted-foreground">Every tool the sources offer is installed.</p>
         {/if}
-        <p class="text-xs"><a href={href({ view: "discover" })} onclick={() => (shown = false)} data-testid="addon-discover">See all in Discover</a>, with what each one does.</p>
       </div>
       <form class="space-y-2" onsubmit={(e) => (e.preventDefault(), source.trim() && look(source.trim()))}>
         <label for="addon-source" class="block font-medium">From a folder or an archive</label>
@@ -165,7 +196,7 @@
           <Input id="addon-source" bind:value={source} placeholder="/path/to/addon or https://…/addon.tar.gz" class="font-mono text-xs" data-testid="addon-source" />
           <Button type="submit" size="sm" variant="outline" disabled={busy || !source.trim()} data-testid="addon-source-look">See it</Button>
         </div>
-        <p class="text-xs text-muted-foreground">A folder with an <span class="font-mono">addon.toml</span>, or an https:// .tar.gz of one.</p>
+        <p class="text-xs text-muted-foreground">A folder with a <span class="font-mono">tool.toml</span>, or an https:// .tar.gz of one.</p>
       </form>
       {#if error}<p class="text-danger" data-testid="addon-install-error">{error}</p>{/if}
     </div>

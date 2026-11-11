@@ -41,6 +41,8 @@ handler-ai = "handler_cli.cli:main"  # the same CLI: `uvx handler-ai` runs it
 handlerd = "handler_control.daemon:main"
 handler-harness = "handler_harness.cli:main"
 handler-sandbox-podman = "handler_sandbox_podman.cli:main"
+handler-sandbox-apple = "handler_sandbox_apple.cli:main"
+handler-sandbox-docker = "handler_sandbox_docker.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/macray/handler-ai"
@@ -60,7 +62,10 @@ bypass-selection = true  # everything comes from force-include
 
 [tool.hatch.build.targets.wheel.force-include]
 "../packages/contracts/src/handler_contracts" = "handler_contracts"
+"../packages/sandbox-kit/src/handler_sandbox_kit" = "handler_sandbox_kit"
 "../packages/sandbox-podman/src/handler_sandbox_podman" = "handler_sandbox_podman"
+"../packages/sandbox-apple/src/handler_sandbox_apple" = "handler_sandbox_apple"
+"../packages/sandbox-docker/src/handler_sandbox_docker" = "handler_sandbox_docker"
 "../packages/harness-adapters/src/handler_harness" = "handler_harness"
 "../packages/control-plane/src/handler_control" = "handler_control"
 "../packages/cli/src/handler_cli" = "handler_cli"

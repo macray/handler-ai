@@ -1,0 +1,298 @@
+{
+  "$id": "urn:handler.control/v1/plan-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "PlanStepView": {
+      "properties": {
+        "n": {
+          "minimum": 1,
+          "title": "N",
+          "type": "integer"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "doneWhen": {
+          "title": "Donewhen",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startedat"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        },
+        "refused": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RefusedHost"
+          },
+          "title": "Refused",
+          "type": "array"
+        },
+        "said": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Said"
+        }
+      },
+      "required": [
+        "n",
+        "title",
+        "goal",
+        "doneWhen",
+        "state"
+      ],
+      "title": "PlanStepView",
+      "type": "object"
+    },
+    "RefusedHost": {
+      "description": "A host the network filter refused to a run, or to a session while nobody could answer, and\nthe agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your\nanswer (as the agent's lists say now).",
+      "properties": {
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowed",
+                "kept blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision"
+        }
+      },
+      "required": [
+        "host",
+        "count"
+      ],
+      "title": "RefusedHost",
+      "type": "object"
+    }
+  },
+  "description": "A plan you approved (D.27): Handler's own copy, run one step after another, each a fresh\nsession of its agent, stopped at the first step not done.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source"
+    },
+    "draftId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Draftid"
+    },
+    "folder": {
+      "title": "Folder",
+      "type": "string"
+    },
+    "digest": {
+      "title": "Digest",
+      "type": "string"
+    },
+    "agentId": {
+      "title": "Agentid",
+      "type": "string"
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent"
+    },
+    "context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context"
+    },
+    "stepTimeoutSec": {
+      "title": "Steptimeoutsec",
+      "type": "integer"
+    },
+    "approvedAt": {
+      "format": "date-time",
+      "title": "Approvedat",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "done",
+        "stopped"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "stoppedBecause": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stoppedbecause"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/PlanStepView"
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "folder",
+    "digest",
+    "agentId",
+    "stepTimeoutSec",
+    "approvedAt",
+    "state",
+    "steps"
+  ],
+  "title": "PlanView",
+  "type": "object"
+}

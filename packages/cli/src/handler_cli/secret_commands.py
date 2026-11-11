@@ -1,5 +1,5 @@
 """`handler secret …` — handler's secret store (contract D.14). A value is named by a path after
-what owns it (`providers/openrouter/apiKey`) and referenced from an account, a provider or a binding
+what owns it (`providers/openrouter/apiKey`) and referenced from an account, a provider or a connection
 with `{ secret = "<path>" }`. Values are written, never read back. An app's secrets are set with
 `handler app secret`.
 

@@ -1,19 +1,57 @@
 {
   "$id": "urn:handler.remote/v1/push-subscribe-params",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "`_handler/remote/push_subscribe` \u2192 PushSubscription. No endpoint: push off.",
+  "$defs": {
+    "PushKeys": {
+      "description": "A browser's push subscription keys (RFC 8291), base64url as `PushSubscription.toJSON()`.",
+      "properties": {
+        "p256dh": {
+          "title": "P256Dh",
+          "type": "string"
+        },
+        "auth": {
+          "title": "Auth",
+          "type": "string"
+        }
+      },
+      "required": [
+        "p256dh",
+        "auth"
+      ],
+      "title": "PushKeys",
+      "type": "object"
+    },
+    "WebPush": {
+      "description": "A device's Web Push subscription: where handlerd posts, and the keys it encrypts to.",
+      "properties": {
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "keys": {
+          "$ref": "#/$defs/PushKeys"
+        }
+      },
+      "required": [
+        "endpoint",
+        "keys"
+      ],
+      "title": "WebPush",
+      "type": "object"
+    }
+  },
+  "description": "`_handler/remote/push_subscribe` \u2192 PushSubscription. No subscription: push off.",
   "properties": {
-    "endpoint": {
+    "subscription": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/WebPush"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Endpoint"
+      "default": null
     }
   },
   "title": "PushSubscribeParams",

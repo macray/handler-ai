@@ -1,4 +1,4 @@
-"""Apps (contract H, docs/dev/design/apps.md): registry, deploy and rollback, backends
+"""Apps (contract H, apps design): registry, deploy and rollback, backends
 started on demand and stopped when idle. Serving them over HTTP is app_http.py.
 
     <state>/apps.json                  registry: each app's deployments, the source its code came
@@ -70,12 +70,12 @@ from handler_contracts import (
     is_within,
 )
 
-from . import compose, definitions, files, interfaces, runtime, sandbox_process
+from . import compose, definitions, files, interfaces, pins, runtime, sandbox_process
 from .agents import AgentRecord
 from .app_api import AppApi
 from .app_runs import AppRunError, AppRuns
 from .inbox import Inbox, told_result
-from .launcher import NETWORK_FILTER_MISSING
+from .launcher import NETWORK_FILTER, missing
 from .secrets import SecretStore
 from .settings import Settings
 
@@ -156,7 +156,6 @@ class Backend:
 
     process: asyncio.subprocess.Process
     client: httpx.AsyncClient
-    seq: int
     pump: asyncio.Task[None]  # copies its output to the log
     api: AppApi | None = None  # handler's side for the backend (H.9, H.11)
     last_used: float = field(default_factory=time.monotonic)
@@ -250,25 +249,36 @@ def folder_size(folder: Path) -> int:
     return sum(p.lstat().st_size for p in folder.rglob("*") if p.is_file() or p.is_symlink())
 
 
-def give_dev_agent(*folders: Path) -> None:
-    """Dev containers (handlerd as root, the sandbox's user HANDLER_SANDBOX_DEV_UID, A3): the
-    folders a backend writes become that uid's, as they are the host user's elsewhere."""
-    dev = os.environ.get("HANDLER_SANDBOX_DEV_UID")
-    if not dev:
-        return
-    for folder in folders:
-        os.chown(folder, int(dev), int(dev), follow_symlinks=False)
-        for parent, dirs, names in os.walk(folder):
-            for entry in (*dirs, *names):
-                os.chown(Path(parent) / entry, int(dev), int(dev), follow_symlinks=False)
-
-
 def _answer_error(r: httpx.Response) -> str:
     """What a backend's answer that is no success says: its `error`, else its status."""
     with contextlib.suppress(ValueError, AttributeError):
         if isinstance(error := r.json().get("error"), str):
             return error[:300]
     return f"answered {r.status_code}"
+
+
+async def healthy(
+    proc: asyncio.subprocess.Process, client: httpx.AsyncClient, socket: Path
+) -> None:
+    """Until the backend answers its health check (H.3); its exit, another answer or
+    START_TIMEOUT: an AppError saying which. A connection refused or closed: not listening yet
+    (on Apple container the launcher's socket answers first, A.10)."""
+    deadline = time.monotonic() + START_TIMEOUT
+    while True:
+        if proc.returncode is not None:
+            raise AppError(f"the backend exited ({proc.returncode}); see the log")
+        if time.monotonic() > deadline:
+            raise AppError(f"the backend did not answer {HEALTH_PATH} in time")
+        if socket.exists():
+            try:
+                r = await client.get(HEALTH_PATH, timeout=2.0)
+            except httpx.TransportError:
+                pass
+            else:
+                if r.status_code == 200:
+                    return
+                raise AppError(f"{HEALTH_PATH} answered {r.status_code}")
+        await asyncio.sleep(0.2)
 
 
 class AppStore:
@@ -301,20 +311,20 @@ class AppStore:
             raw = json.loads(self.file.read_text())
         except FileNotFoundError:
             return
-        for name, r in raw.get("apps", {}).items():
+        for name, r in raw["apps"].items():
             self.records[name] = AppRecord(
                 name=name,
-                from_source=r.get("fromSource"),
+                from_source=r["fromSource"],
                 deployments=[
                     Deployment(d["seq"], d["version"], datetime.fromisoformat(d["deployedAt"]))
-                    for d in r.get("deployments", [])
+                    for d in r["deployments"]
                 ],
-                next_seq=r.get("nextSeq", 1),
-                last_used_at=datetime.fromisoformat(u) if (u := r.get("lastUsedAt")) else None,
-                persons=list(r.get("persons", [])),
-                files=dict(r["files"]),
-                agents=dict(r["agents"]),
-                askable=r.get("askable", True),
+                next_seq=r["nextSeq"],
+                last_used_at=datetime.fromisoformat(u) if (u := r["lastUsedAt"]) else None,
+                persons=r["persons"],
+                files=r["files"],
+                agents=r["agents"],
+                askable=r["askable"],
             )
 
     def _save(self) -> None:
@@ -443,9 +453,9 @@ class AppStore:
         return f"{name}-{version}.zip", files.zipped(folder)
 
     async def remove(self, name: str) -> None:
-        """Uninstall it (H.6): its code, versions, backups and its own data deleted (the folders
-        given to it are the person's: they stay), so nothing of it is found by an app installed
-        later under its name."""
+        """Uninstall it (H.6): its code, versions, backups, its own data and its pin deleted (the
+        folders given to it are the person's: they stay), so nothing of it is found by an app
+        installed later under its name."""
         self.get(name)
         async with self.lock(name):
             await self._stop(name)
@@ -454,6 +464,7 @@ class AppStore:
             self.changed()
             self.secrets.delete(f"apps/{name}")
             self.runs.forget(name)
+            pins.forget(self.settings.state_dir, "app", name)
             shutil.rmtree(self.app_dir(name), ignore_errors=True)
 
     def manifest(self, name: str, seq: int) -> AppManifest:
@@ -463,16 +474,7 @@ class AppStore:
 
     def declared_secrets(self, name: str) -> list[str]:
         """What the installed version and the source folder declare."""
-        record = self.get(name)
-        declared: set[str] = set()
-        if record.current:
-            with contextlib.suppress(AppError):
-                declared |= set(self.manifest(name, record.current.seq).needs.secrets)
-        with contextlib.suppress(AppError):
-            source = read_manifest(self.source(name))
-            if source.name == name:
-                declared |= set(source.needs.secrets)
-        return sorted(declared)
+        return sorted({s for m, _ in self.declared(name) for s in m.needs.secrets})
 
     async def set_secret(self, name: str, secret: str, value: str | None) -> App:
         """Set (or, with None, forget) a secret's value. A running backend is stopped: it starts
@@ -514,12 +516,10 @@ class AppStore:
                 continue
             if person is not None and person not in record.persons:
                 continue
-            description = None
+            description, queued = None, []
             with contextlib.suppress(AppError):
-                description = self.manifest(record.name, record.current.seq).description
-            queued: list[str] = []
-            with contextlib.suppress(AppError):
-                queued = self.manifest(record.name, record.current.seq).queued_routes
+                manifest = self.manifest(record.name, record.current.seq)
+                description, queued = manifest.description, manifest.queued_routes
             out.append(
                 SharedApp(
                     name=record.name,
@@ -760,7 +760,7 @@ class AppStore:
         data.mkdir(parents=True)
         run = self.run_root / f"{name}-test"
         run.mkdir(parents=True, exist_ok=True)
-        give_dev_agent(data, run)
+        sandbox_process.give_dev_agent(data, run)
         spec = compose.app_sandbox_spec(
             name=f"handler-app-{name}-test-{secrets.token_hex(3)}",
             manifest=manifest,
@@ -771,7 +771,7 @@ class AppStore:
         )
         self._log(name, "running the backend's tests")
         if await asyncio.to_thread(runtime.missing_proxy, spec):
-            raise DeployError(NETWORK_FILTER_MISSING)
+            raise DeployError(str(missing(NETWORK_FILTER)))
         try:
             proc = await sandbox_process.start_piped(spec, line_limit=LINE_LIMIT)
             pump = asyncio.get_running_loop().create_task(self._pump(name, proc, {}))
@@ -853,7 +853,7 @@ class AppStore:
         if manifest.needs.handler_api:  # a trial run's notifications go nowhere, starts nothing
             api = AppApi(name, run / "handler.sock", self.trial if check else self.from_app)
             await api.start()
-        give_dev_agent(data, run)  # with its socket
+        sandbox_process.give_dev_agent(data, run)  # with its socket
         version = f"{manifest.version} (#{seq})"
         where = " on a copy of the data" if check else ""
         self._log(name, f"{'trying' if check else 'starting'} {version}{where}")
@@ -866,23 +866,12 @@ class AppStore:
         backend: Backend | None = None
         try:
             if await asyncio.to_thread(runtime.missing_proxy, spec):
-                raise AppError(NETWORK_FILTER_MISSING)
+                raise AppError(str(missing(NETWORK_FILTER)))
             proc = await sandbox_process.start_piped(spec, line_limit=LINE_LIMIT)
             pump = asyncio.get_running_loop().create_task(self._pump(name, proc, app_secrets))
-            backend = Backend(proc, client, seq, pump, api)
-            deadline = time.monotonic() + START_TIMEOUT
-            while True:
-                if proc.returncode is not None:
-                    raise AppError(f"the backend exited ({proc.returncode}); see the log")
-                if time.monotonic() > deadline:
-                    raise AppError(f"the backend did not answer {HEALTH_PATH} in time")
-                if socket.exists():
-                    with contextlib.suppress(httpx.TransportError):
-                        r = await client.get(HEALTH_PATH, timeout=2.0)
-                        if r.status_code == 200:
-                            return backend
-                        raise AppError(f"{HEALTH_PATH} answered {r.status_code}")
-                await asyncio.sleep(0.2)
+            backend = Backend(proc, client, pump, api)
+            await healthy(proc, client, socket)
+            return backend
         except BaseException:
             if backend is not None:
                 await self._stop_backend(backend)
@@ -1008,7 +997,9 @@ class AppStore:
             else:
                 copies.append(DraftCopy(what=f"folder {need}", path=path, how="read-only"))
                 files.append((need, path, False))
-        give_dev_agent(data, *(Path(p) for _, p, rw in files if rw and is_within(p, str(root))))
+        sandbox_process.give_dev_agent(
+            data, *(Path(p) for _, p, rw in files if rw and is_within(p, str(root)))
+        )
         return copies, files
 
     def preview_link(self, name: str) -> str:
@@ -1228,7 +1219,8 @@ class AppStore:
                         name=need,
                         description=f.description,
                         mode=f.mode,
-                        path=record.files.get(need),
+                        path=(path := record.files.get(need)),
+                        file=path is not None and Path(path).is_file(),
                     ),
                 )
             for need, a in manifest.needs.agents.items():
@@ -1492,15 +1484,11 @@ class AppStore:
         if len(recent) >= NOTIFY_PER_HOUR:
             return 429, {"error": f"at most {NOTIFY_PER_HOUR} notifications an hour"}
         self.sent[name] = [*recent, now]
-        return 200, {"id": self.notify(name, person, title, body)}
-
-    def notify(self, name: str, person: str, title: str, body: str | None) -> str:
-        """Into the person's inbox (H.9); its id."""
-        self._log(name, f"notification for {person}: {title}")
+        self._log(name, f"notification for {person}: {title}")  # into the person's inbox (H.9)
         message = self.inbox.add(
             source="app", name=name, person=person, title=title, summary=body, app=name
         )
-        return message.id
+        return 200, {"id": message.id}
 
     # ── calls of automations (I.3) ──────────────────────────────────────
 

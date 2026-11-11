@@ -1,7 +1,7 @@
 """Harness and addon images: their names, how each is built, where it records its version.
 
-Image layering (docs/dev/code-map.md):
-    images/toolbox/Containerfile    → localhost/handler-ai-toolbox:<tag>  (dev tools)
+Image layering (code map):
+    toolbox (generated, toolbox.py) → localhost/handler-ai-toolbox:<tag>  (the system)
     harnesses/<name>/Containerfile  → <descriptor.image>:<tag>  (the agent, FROM the toolbox)
     addons/<name>/Containerfile     → <manifest.image>:<tag>    (a tool, built in the toolbox,
                                                                  shipped FROM scratch, G.1)
@@ -20,7 +20,7 @@ from pathlib import Path
 from handler_contracts import ADDON_VERSION_FILE, IMAGE_VERSION_FILE
 
 from .addons import Addon
-from .catalog import Harness, toolbox_dir
+from .catalog import Harness
 
 TOOLBOX = "localhost/handler-ai-toolbox"
 LATEST = "latest"
@@ -41,8 +41,10 @@ class Recipe:
     no_intermediate: bool  # keep only the final image (an addon's build stage would stay behind)
 
 
-def toolbox_recipe() -> Recipe:
-    return Recipe(toolbox_dir(), {}, pull=True, no_cache=True, no_intermediate=False)
+def toolbox_recipe(context: Path, update: bool) -> Recipe:
+    """The toolbox from its generated build context (toolbox.write_context): a change applied
+    with the build cache, or `update`d (pull + no cache: system updates)."""
+    return Recipe(context, {}, pull=update, no_cache=update, no_intermediate=False)
 
 
 def recipe(unit: Harness | Addon, toolbox: str) -> Recipe:

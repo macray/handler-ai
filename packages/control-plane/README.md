@@ -16,9 +16,9 @@ A module imports only from its own layer or the ones below (checked by
 |---|---|---|
 | surface | `api/`, `auth`, `webui`, `daemon` | HTTP and WebSocket translated into calls to the layers below |
 | remote | `remote`, `remote_crypto`, `webpush`, `app_remote` | paired devices reach sessions and apps through the gateway (D.7) |
-| features | runtime: `sessions`, `relay`, `policy`, `terminals` · `agent_service`, `save_rules` · `agent_checks`, `improvements` · `uses` · images: `builds`, `image_check`, `image_updates` · apps: `apps`, `app_http`, `app_api`, `app_runs` · `automations`, `schedules`, `inbox` · Ask: `assistant`, `voice` | what the daemon does with agents, apps and automations |
+| features | runtime: `sessions`, `relay`, `policy`, `terminals` · `agent_service`, `save_rules` · `agent_checks`, `improvements` · `uses` · `plans` · images: `builds`, `image_check`, `image_updates` · apps: `apps`, `app_http`, `app_api`, `app_runs` · `automations`, `schedules`, `inbox` · Ask: `assistant`, `voice` | what the daemon does with agents, apps and automations |
 | launch | `launcher`, `access`, `compose`, `addons` · services: `llm`, `transcribe`, `service_router` · `model_agent` | an agent turned into a running sandbox; the services a sandbox reaches; the model alone, with no sandbox |
-| data | config: `accounts`, `providers`, `bindings`, `secrets`, `skills`, `skill_sources`, `interfaces`, `definitions`, `agents_files`, `handler_needs`, `folders`, `knowledge`, `config_files`, `automation_config`, `services` · `session_files`, `git_read` · registries: `agents`, `projects`, `agent_state`, `caches` · `transcript` | what is configured and what is registered |
+| data | config: `accounts`, `providers`, `bindings`, `secrets`, `skills`, `skill_sources`, `interfaces`, `definitions`, `agents_files`, `handler_needs`, `folders`, `knowledge`, `config_files`, `automation_config`, `services` · `session_files`, `git_read` · registries: `agents`, `projects`, `agent_state`, `caches`, `toolbox` · `transcript` | what is configured and what is registered |
 | host | `sandbox_process`, `runtime`, `display`, `desktop`, `terminal` | the machine: the sandbox's executable (sandboxes and images), the display, the desktop |
 | migrations | `migrations/` | the user's files from an older format to the current one, before handlerd reads them: the only code that knows an older format |
 | base | `settings`, `files` | where things live, how the daemon writes its own files |
@@ -44,7 +44,8 @@ the launch pipeline knows neither sessions nor apps.
 | `auth.py` | token file (0600), bearer header / `bearer.<token>` subprotocol, Origin allow-list |
 | `agents.py` | agent registry (persisted; each with its home: a project, an app or Chat, none), live connections and their network changes (A.4), recent egress events |
 | `projects.py`, `accounts.py` | projects and their agents (D.8), accounts and their login (D.9) |
-| `caches.py` | the toolbox's caches (D.8): each project's mounts (shared, its own, none), the list as Settings → Caches shows and saves it, emptying them through `runtime` |
+| `caches.py` | the caches (D.8), from who declares them (the base, system packages, the user): each project's mounts (shared, its own, none), the list as Settings → Caches shows it and saves the user's own, emptying them through `runtime` |
+| `toolbox.py` | the toolbox as handlerd keeps it (B.6, B.7): its record (`<state>/toolbox.json`, what `:latest` gives), the needs in use (Handler, harnesses, saved agents' abilities) and what provides each, turning system packages on or off (refused while one alone gives a need in use) |
 | `policy.py` | **P1–P9** as a pure state machine (message in → actions out), transport-free |
 | `relay.py` | WebSocket ↔ agent stdio around the policy; framing, sizes, lifecycle (C.1, C.3) |
 | `terminals.py` | a harness's own terminal program (D.16): its sandbox started out of handlerd's reach, the client attaching to it directly |
@@ -54,10 +55,12 @@ the launch pipeline knows neither sessions nor apps.
 | `handler_needs.py` | Handler's **needs** (D.18, `data/handler-needs/<name>/`: `need.toml` and the definition): its features that need an agent (the UI's helpers), the one given for each (`<state>/handler-needs.json`), which agents fit |
 | `skill_sources.py` | skills from a URL (D.17): a GitHub repository's folder or a skill's archive, downloaded and unpacked with `skills` |
 | `addon_install.py` | installing addons (G.5): sources (catalog, folder, archive), the staged preview and its digest, the lock, removing |
-| `builds.py` | **image rebuilds** (D.4): one at a time, build → check → tag `:latest`, log on disk |
+| `builds.py` | **image rebuilds** (D.4): one at a time, build → check → tag `:latest`, log on disk; the toolbox generated from its parts (B.7), applied with the build cache or updated, its needs in use checked, its record written when it switches |
 | `image_updates.py` | automatic updates (D.4): every built harness and addon image rebuilt on a schedule and after a Handler upgrade, through `builds`; not the toolbox |
-| `image_check.py` | starts a new harness image through the real pipeline and checks `session/new` against the descriptor |
+| `image_check.py` | starts a new harness image through the real pipeline and checks `session/new` against the descriptor; a new toolbox's system package checks and the commands it gives |
 | `sessions.py` | **daemon-held sessions** (F): one sandbox each (none on the model alone: `model_agent`, behind the same `AgentLink`), outliving the WebSocket; attach = replay of the event log; several attachments; idle stop; per-session folder (a folderless agent's works there, D.18); unattended runs of agents with an interface, their output; runs of one agent take turns (one at a time, the others wait) |
+| `plans.py` | **plans** (D.27): a plan file of an agent's folder read (no link followed) and parsed, approved by the digest read, its copy kept in `<state>/plans/<id>/` (never in a sandbox); the runner, one step after another, each a fresh unattended session of the plan's agent; the skill `handler-plan` (shipped with the plan builder, `data/handler-needs/plan-builder/`) installed in the library once |
+| `plan_drafts.py` | **plan drafts** (D.27): plans being written, kept in `<state>/plan-drafts/<id>/` (`draft.json` apart, `draft/` the plan builder session's folder), saved by hand over the text read (never through a link); what the plan builder may have (no addon, a network reaching only its model's sites) and its session's brief |
 | `session_files.py`, `git_read.py` | a session's folder (F.8): its files read without following links nor leaving it, what changed since the session started (the baseline); git's earlier versions read with dulwich in a child process |
 | `automation_config.py` | automations as configured (I.1, I.7): the folders of `<config>/automations/`, their problems read from the folder alone, `state.json`, the shipped examples (`data/automations/`) |
 | `transcript.py` | a session's event log slice as markdown (I.4), pure |
@@ -77,7 +80,7 @@ the launch pipeline knows neither sessions nor apps.
 | `agent_checks.py` | **checks** (D.20): runs of a job kept with their right answer, run again when the person asks (one check run at a time, each check a run with origin `check`), what came back compared (never free text), what changed in the agent since |
 | `improvements.py` | **improvements** (D.21): a job's instructions rewritten by the prompt writer (the agent given for one of Handler's needs), each attempt judged by its checks run with the attempt's instructions, until they all pass or the budget is spent; an attempt kept |
 | `uses.py` | **what uses what** (D.22): every link between agents, skills, knowledge folders, addon configurations, accounts, providers, projects, automations, apps and Handler's needs, computed each time; a thing's uses and used-by |
-| `api/` | FastAPI app, one module per contract section (catalog, accounts, providers, bindings, skills, folders, caches, secrets, images, projects, agents, sessions, remote, apps, automations, inbox, ACP endpoints); `common.py`: problems, Context; routes parse, call the domain and map its errors |
+| `api/` | FastAPI app, one module per contract section (catalog, accounts, providers, bindings, skills, folders, caches, secrets, toolbox, images, projects, agents, sessions, remote, apps, automations, inbox, ACP endpoints); `common.py`: problems, Context; routes parse, call the domain and map its errors |
 | `daemon.py` | `handlerd` entry point: token, sweep, serve |
 
 One ACP connection to an agent (C), the agent lives as long as the WebSocket:

@@ -1,0 +1,161 @@
+{
+  "$id": "urn:handler.system-package/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CacheDeclaration": {
+      "additionalProperties": false,
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
+        }
+      },
+      "required": [
+        "target",
+        "about"
+      ],
+      "title": "CacheDeclaration",
+      "type": "object"
+    },
+    "SystemPackageDaemon": {
+      "additionalProperties": false,
+      "description": "A daemon a system package installs, started in the background before the agent's program\nin the sandboxes having one of `abilities` (A.8), until the sandbox ends (B.7): Docker's, in\nthose that run containers.",
+      "properties": {
+        "command": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+          "title": "Command",
+          "type": "string"
+        },
+        "abilities": {
+          "items": {
+            "enum": [
+              "nested",
+              "privileged",
+              "display"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Abilities",
+          "type": "array"
+        },
+        "env": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        }
+      },
+      "required": [
+        "command",
+        "abilities"
+      ],
+      "title": "SystemPackageDaemon",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`package.toml` of a system package (B.7): a piece of the system, what only root or the\npackage manager can put in the toolbox. Installed by its `install-<distro>.sh` at the toolbox's\nbuild, checked by its `check.sh` in the built toolbox.",
+  "properties": {
+    "apiVersion": {
+      "const": "handler.system-package/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "description": {
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "provides": {
+      "items": {
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Provides",
+      "type": "array"
+    },
+    "dependsOn": {
+      "default": [],
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "type": "string"
+      },
+      "title": "Dependson",
+      "type": "array"
+    },
+    "installsAfter": {
+      "default": [],
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "type": "string"
+      },
+      "title": "Installsafter",
+      "type": "array"
+    },
+    "caches": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CacheDeclaration"
+      },
+      "title": "Caches",
+      "type": "array"
+    },
+    "daemons": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SystemPackageDaemon"
+      },
+      "title": "Daemons",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name",
+    "version",
+    "description",
+    "provides"
+  ],
+  "title": "SystemPackageManifest",
+  "type": "object"
+}

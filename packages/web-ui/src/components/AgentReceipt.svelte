@@ -52,13 +52,14 @@
   ]);
 
   const skills = $derived([...(agent.skills ?? []), ...(agent.projectSkills ?? [])]);
+  const addons = $derived([...(agent.addons ?? []), ...(agent.projectAddons ?? [])].map((u) => (u.binding ? `${u.addon}: ${u.binding}` : u.addon)));
   const given = $derived<Line[]>(
     alone
       ? [
           knowledgeLine("put into each call"),
           { icon: Folder, title: "No folder", note: "it reads what its form and the conversation give it", tone: "off" },
           { icon: Sparkles, title: "No skills", note: "a skill can run scripts: it needs an agent program", tone: "off" },
-          { icon: Puzzle, title: "No addons", note: "an addon is a tool: it needs an agent program", tone: "off" },
+          { icon: Puzzle, title: "No tools", note: "a tool needs an agent program", tone: "off" },
         ]
       : [
           { icon: Folder, title: folder ?? "A new folder each session", note: folder ? "reads and writes" : "kept with its session" },
@@ -66,15 +67,15 @@
             ? { icon: Sparkles, title: `${skills.length} skill${skills.length === 1 ? "" : "s"}`, note: list(skills) }
             : { icon: Sparkles, title: "No skills", note: "", tone: "off" },
           knowledgeLine("reads only"),
-          agent.bindings?.length
-            ? { icon: Puzzle, title: list(agent.bindings), note: "its addons" }
-            : { icon: Puzzle, title: "No addons", note: "", tone: "off" },
+          addons.length
+            ? { icon: Puzzle, title: list(addons), note: "its tools" }
+            : { icon: Puzzle, title: "No tools", note: "", tone: "off" },
         ],
   );
 
   function knowledgeLine(how: string): Line {
     const names = agent.knowledge ?? [];
-    return names.length ? { icon: BookOpen, title: `Knowledge: ${list(names)}`, note: how } : { icon: BookOpen, title: "No knowledge", note: "", tone: "off" };
+    return names.length ? { icon: BookOpen, title: `Notes: ${list(names)}`, note: how } : { icon: BookOpen, title: "No notes", note: "", tone: "off" };
   }
 
   const hosts = $derived([...(agent.allow ?? []), ...(m.requiredHosts ?? []).map((r) => r.host)]);
@@ -93,20 +94,20 @@
           agent.network === "none"
             ? { icon: Globe, title: "No network", note: "no model API either, unless a local one" }
             : agent.network === "open"
-              ? { icon: Globe, title: "Any host", note: "anything on the internet and your LAN", tone: "warn" }
+              ? { icon: Globe, title: "Any site", note: "anything on the internet and your network", tone: "warn" }
               : agent.egress === "log-only"
-                ? { icon: Globe, title: "Every host, logged", note: "log only: learning its hosts", tone: "warn" }
-                : { icon: Globe, title: `${hosts.length} host${hosts.length === 1 ? "" : "s"}`, note: hosts.length ? `${list(hosts)} · nothing else` : "nothing else" },
+                ? { icon: Globe, title: "Learning the sites", note: "every site let through and listed", tone: "warn" }
+                : { icon: Globe, title: `${hosts.length} site${hosts.length === 1 ? "" : "s"}`, note: hosts.length ? `${list(hosts)} · nothing else` : "nothing else" },
           agent.confinement === "strict"
             ? { icon: Lock, title: "Only its folder", note: "nothing else on your computer; never Handler's own files" }
             : agent.confinement === "nested"
-              ? { icon: Lock, title: "Runs containers", note: "podman inside its sandbox: a weaker confinement", tone: "warn" }
+              ? { icon: Lock, title: "Runs containers", note: "Podman or Docker inside its sandbox: a weaker confinement", tone: "warn" }
               : { icon: Lock, title: "Privileged", note: "about as safe as no sandbox", tone: "danger" },
           ...(agent.display ? [{ icon: Monitor, title: "Your screen and clipboard", note: "it opens windows and reads what you copy", tone: "warn" as Tone }] : []),
         ],
   );
   const sent = $derived(
-    `${m.provider ?? "its provider"}: the conversation${use === "chat" ? "" : " (its form's values first)"}${agent.knowledge?.length ? " and its knowledge's notes" : ""}, at each call`,
+    `${m.provider ?? "its provider"}: the conversation${use === "chat" ? "" : " (its form's values first)"}${agent.knowledge?.length ? " and its notes" : ""}, at each call`,
   );
 
   const TONE: Record<Tone, string> = { "": "", off: "text-muted-foreground", warn: "text-warn", danger: "text-danger" };

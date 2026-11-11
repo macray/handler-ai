@@ -126,6 +126,7 @@ def f(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fixture:
     return Fixture(tmp_path, monkeypatch)
 
 
+@pytest.mark.rule("origin.handlerd-says-who-asks", "run.only-while-it-answers-the-owner")
 def test_a_run_starts_only_while_answering_the_owner(f: Fixture) -> None:
     strict: dict[str, Any] = {"fields": FIELDS, "result": RESULT}  # the app always sends a request
     f.deployed(interface=strict, given=f.agent(fields=FIELDS, result=RESULT))
@@ -152,6 +153,7 @@ def test_a_run_starts_only_while_answering_the_owner(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("run.of-a-need-it-declares")
 def test_a_run_is_of_a_need_with_a_valid_input(f: Fixture) -> None:
     strict: dict[str, Any] = {"fields": FIELDS, "result": RESULT}  # the app always sends a request
     f.deployed(interface=strict, given=f.agent(fields=FIELDS, result=RESULT))
@@ -171,6 +173,7 @@ def test_a_run_is_of_a_need_with_a_valid_input(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("need.an-agent-that-fits")
 def test_a_run_needs_an_agent_given_that_still_fits(f: Fixture) -> None:
     f.deployed()
     planner = f.agent(result=RESULT)
@@ -187,6 +190,7 @@ def test_a_run_needs_an_agent_given_that_still_fits(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("run.of-a-need-it-declares")
 def test_runs_need_agents_in_the_manifest(f: Fixture) -> None:
     f.deployed(MANIFEST.split("[needs.agents.planner]", maxsplit=1)[0] + "[needs]\nnotify = true\n")
 
@@ -198,6 +202,7 @@ def test_runs_need_agents_in_the_manifest(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("run.its-end-reaches-the-inbox")
 def test_its_end_goes_to_the_inbox_opening_the_app(f: Fixture) -> None:
     f.deployed(given=f.agent("My planner", fields=OPTIONAL, result=RESULT))
 
@@ -228,6 +233,7 @@ def test_its_end_goes_to_the_inbox_opening_the_app(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("run.its-end-reaches-the-inbox")
 def test_a_cancelled_run_tells_nothing(f: Fixture) -> None:
     f.deployed(given=f.agent(fields=OPTIONAL, result=RESULT))
 
@@ -245,6 +251,7 @@ def test_a_cancelled_run_tells_nothing(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("deploy.only-with-all-it-needs", "need.an-agent-that-fits")
 def test_deploy_checks_the_agent_given(f: Fixture) -> None:
     version = f.deployed()
     manifest = AppManifest.from_toml(MANIFEST)
@@ -263,6 +270,7 @@ def test_deploy_checks_the_agent_given(f: Fixture) -> None:
     f.store.check_agents("planner", manifest, version)
 
 
+@pytest.mark.rule("need.an-agent-that-fits")
 def test_deploy_checks_the_definition_is_a_job(f: Fixture) -> None:
     version = f.deployed(interface={"fields": FIELDS})
     manifest = AppManifest.from_toml(MANIFEST)
@@ -273,6 +281,7 @@ def test_deploy_checks_the_definition_is_a_job(f: Fixture) -> None:
         f.store.check_agents("planner", manifest, version)
 
 
+@pytest.mark.rule("need.an-agent-that-fits")
 def test_the_agents_that_fit_are_offered(f: Fixture) -> None:
     f.deployed(MANIFEST + 'worksIn = "tasks"\n[needs.files.tasks]\nmode = "rw"\n')
     here = f.agent(fields=OPTIONAL, result=RESULT)
@@ -293,6 +302,7 @@ def test_the_agents_that_fit_are_offered(f: Fixture) -> None:
         f.store.set_agent("planner", "other", here.id)
 
 
+@pytest.mark.rule("need.a-folder-in-your-home-never-handler-s", "need.a-file-given-is-that-file")
 def test_a_folder_given_is_checked_made_and_set_up(f: Fixture) -> None:
     source = f.store.source("planner")
     (source / "agent").mkdir(parents=True)
@@ -308,7 +318,7 @@ def test_a_folder_given_is_checked_made_and_set_up(f: Fixture) -> None:
         with pytest.raises(AppError, match="does not exist"):
             await f.store.set_file("planner", "tasks", str(folder), create=False)
         app = await f.store.set_file("planner", "tasks", str(folder), create=True)
-        assert app.files[0].path == str(folder)
+        assert app.files[0].path == str(folder) and not app.files[0].file
         assert (folder / "README.md").read_text() == "The folder's format.\n"
         (folder / "README.md").write_text("Mine.\n")
         await f.store.set_file("planner", "tasks", str(folder), create=False)
@@ -322,10 +332,14 @@ def test_a_folder_given_is_checked_made_and_set_up(f: Fixture) -> None:
                 await f.store.set_file("planner", "tasks", bad, create=True)
         with pytest.raises(AppError, match="needs no folder notes"):
             await f.store.set_file("planner", "notes", str(folder), create=False)
+        # a file: said (the app's page tells how an editor's save reaches it, a restart)
+        app = await f.store.set_file("planner", "tasks", str(folder / "README.md"), create=False)
+        assert app.files[0].file
 
     asyncio.run(go())
 
 
+@pytest.mark.rule("part.its-app-s-only")
 def test_an_agent_is_set_up_from_the_source_definition(f: Fixture) -> None:
     source = f.store.source("planner")
     (source / "agent").mkdir(parents=True)
@@ -345,12 +359,14 @@ def test_an_agent_is_set_up_from_the_source_definition(f: Fixture) -> None:
         )
 
 
+@pytest.mark.rule("deploy.what-it-adds-is-said-first")
 def test_added_agents_are_shown() -> None:
     manifest = AppManifest.from_toml(MANIFEST)
     assert manifest.added_needs(None) == ["agent planner"]
     assert manifest.added_needs(manifest.needs) == []
 
 
+@pytest.mark.rule("app.its-manifest-is-strict")
 def test_a_need_names_one_need() -> None:
     with pytest.raises(ValueError, match="names one need: planner"):
         AppManifest.from_toml(MANIFEST + "[needs.files.planner]\n")
@@ -358,6 +374,7 @@ def test_a_need_names_one_need() -> None:
         AppManifest.from_toml(MANIFEST + 'worksIn = "tasks"\n')
 
 
+@pytest.mark.rule("need.an-agent-that-fits")
 def test_misfit_compares_properties_types_and_required() -> None:
     wanted = AgentInterface.model_validate({"fields": OPTIONAL, "result": RESULT})
 
@@ -375,6 +392,7 @@ def test_misfit_compares_properties_types_and_required() -> None:
     assert interfaces.misfit(wanted, None) == "it is not a job"
 
 
+@pytest.mark.rule("app.nothing-is-read-through-a-link-out")
 def test_links_out_of_the_app_are_never_read(f: Fixture) -> None:
     """An agent writes the app's folder: a link there to a file of the person's must not make
     handler read it for the agent (into a definition, into the folder given)."""
@@ -407,6 +425,7 @@ def test_links_out_of_the_app_are_never_read(f: Fixture) -> None:
     asyncio.run(go())
 
 
+@pytest.mark.rule("need.yours-kept-by-handler")
 def test_only_the_next_version_s_needs_are_asked_for(f: Fixture) -> None:
     """A need the installed version has and the source dropped (a migrated `file-1`) is not
     asked for: the next deploy drops it."""

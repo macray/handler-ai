@@ -1,0 +1,80 @@
+[
+  {
+    "configuration": {
+      "capAdd": [],
+      "capDrop": [],
+      "creationDate": "2026-11-09T12:56:35Z",
+      "dns": {
+        "nameservers": [],
+        "options": [],
+        "searchDomains": []
+      },
+      "id": "c10-rec",
+      "image": {
+        "descriptor": {
+          "digest": "sha256:2db4e6a8fd6a0e4d0db5828b2722cf6db15c3005178a4c65588b903e4784ba11",
+          "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+          "size": 953
+        },
+        "reference": "quay.io/curl/curl:8.11.1"
+      },
+      "initProcess": {
+        "arguments": [
+          "sh",
+          "-c",
+          "exit 3"
+        ],
+        "environment": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "CURL_CA_BUNDLE=/cacert.pem"
+        ],
+        "executable": "/entrypoint.sh",
+        "rlimits": [],
+        "supplementalGroups": [],
+        "terminal": false,
+        "user": {
+          "raw": {
+            "userString": "curl_user"
+          }
+        },
+        "workingDirectory": "/home/curl_user"
+      },
+      "labels": {
+        "handler.managed": "1"
+      },
+      "mounts": [],
+      "networks": [
+        {
+          "network": "default",
+          "options": {
+            "hostname": "c10-rec",
+            "mtu": 1280
+          }
+        }
+      ],
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      "publishedPorts": [],
+      "publishedSockets": [],
+      "readOnly": false,
+      "resources": {
+        "cpuOverhead": 1,
+        "cpus": 4,
+        "memoryInBytes": 1073741824
+      },
+      "rosetta": false,
+      "runtimeHandler": "container-runtime-linux",
+      "ssh": false,
+      "sysctls": {},
+      "useInit": false,
+      "virtualization": false
+    },
+    "id": "c10-rec",
+    "status": {
+      "networks": [],
+      "state": "stopped"
+    }
+  }
+]

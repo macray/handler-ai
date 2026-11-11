@@ -1,52 +1,78 @@
 // Agents set up from definitions: those of an agents file (D.23: a project's agents exported,
 // read again to be set up elsewhere), the one of Handler's needs (D.18: its helpers), an app's
-// (H.2). Set up on one page that asks each agent for what it needs (its model, a configuration
-// of each addon, a knowledge folder for each it reads), then creates its agents with the origin
-// of what they were set up from.
+// (H.2). Set up on one page that asks each agent for what it needs (its tools installed, its model,
+// a configuration of each tool with settings, a knowledge folder for each it reads), then creates
+// its agents with the origin of what they were set up from.
 import { chosen, noAccess, type ModelAccess } from "./access";
-import type { AgentDefinition, AgentOrigin, AgentRequest, AgentsFile, BindingInfo, HandlerNeed } from "./contracts.gen";
+import type { AddonInfo, AddonPreview, AddonUse, AgentDefinition, AgentOrigin, AgentRequest, AgentsFile, BindingInfo, HandlerNeed } from "./contracts.gen";
 import { agentBody, type AgentSpec } from "./projects.svelte";
 import { definitionSpec } from "./runs";
+import { slug } from "./text";
 
 /** An agent's name in an agents file, as handlerd makes it (agents_files.slug): "Order triage" →
  *  "order-triage". */
-export function slug(name: string): string {
-  return (name.toLowerCase().match(/[a-z0-9]+/g) ?? []).join("-").slice(0, 60) || "agent";
+export function partName(name: string): string {
+  return slug(name).slice(0, 60) || "agent";
 }
 
-/** What one agent set up from a definition needs from you, in words. */
-export function needsOf(d: AgentDefinition): string[] {
-  return [
-    d.modelAlone ? "a provider" : "its model",
-    ...(d.addons ?? []).map((a) => `a configuration of ${a}`),
-    ...(d.knowledge ?? []).map((k) => `a knowledge folder: ${k}`),
-  ];
+/** Whether an agent uses the tool through a connection filling its settings (G.2). */
+export function hasSlots(addon: AddonInfo): boolean {
+  return !!addon.settings?.length || !!addon.secretSlots?.length;
+}
+
+/** What the tools a definition names ask of you (G.3): those not installed, to install first;
+ *  those installed that have settings, a connection to each. One installed without settings
+ *  asks nothing: it is used by its name. */
+export function toolsAsked(names: string[], addons: AddonInfo[]): { install: string[]; connect: string[] } {
+  const installed = (n: string): AddonInfo | undefined => addons.find((a) => a.name === n);
+  return {
+    install: names.filter((n) => !installed(n)),
+    connect: names.filter((n) => {
+      const tool = installed(n);
+      return tool !== undefined && hasSlots(tool);
+    }),
+  };
+}
+
+/** The tool a definition names that is not installed, in words. */
+export function toolToInstall(name: string): string {
+  return `the ${name} tool, from Library → Tools`;
+}
+
+/** What those tools ask of you, in words. */
+export function toolNeeds(names: string[], addons: AddonInfo[]): string[] {
+  const { install, connect } = toolsAsked(names, addons);
+  return [...install.map(toolToInstall), ...connect.map((n) => `a connection to ${n}`)];
 }
 
 /** What you choose for one agent when setting it up. */
 export type Choice = {
   model: ModelAccess;
-  bindings: Record<string, string>; // addon → the configuration given ("": none yet)
+  bindings: Record<string, string>; // addon with settings → the configuration given ("": none yet)
   knowledge: Record<string, string>; // the name it reads → the folder given ("": none yet)
 };
 
-/** Its first choices: a configuration of each addon when you have one, the knowledge folder of
- *  the same name when you have it; its model is always yours to choose. */
-export function firstChoice(d: AgentDefinition, bindings: BindingInfo[], folders: string[]): Choice {
+/** Its first choices: a configuration of each addon with settings when you have one, the
+ *  knowledge folder of the same name when you have it; its model is always yours to choose. */
+export function firstChoice(d: AgentDefinition, bindings: BindingInfo[], addons: AddonInfo[], folders: string[]): Choice {
   const valid = bindings.filter((b) => !b.error);
+  const { connect } = toolsAsked(d.addons ?? [], addons);
   return {
     model: noAccess(),
-    bindings: Object.fromEntries((d.addons ?? []).map((a) => [a, valid.find((b) => b.addon === a)?.name ?? ""])),
+    bindings: Object.fromEntries(connect.map((a) => [a, valid.find((b) => b.addon === a)?.name ?? ""])),
     knowledge: Object.fromEntries((d.knowledge ?? []).map((k) => [k, folders.includes(k) ? k : ""])),
   };
 }
 
-/** What is still to choose before it can be set up, in words (none: ready). */
-export function missing(d: AgentDefinition, c: Choice): string[] {
+/** What is still to do before it can be set up, in words (none: ready): its tools not
+ *  installed (`addons`: those that are; `coming`: those installed with it, G.5), then what is
+ *  left to choose. */
+export function missing(d: AgentDefinition, c: Choice, addons: AddonInfo[], coming: string[] = []): string[] {
   return [
+    ...toolsAsked(d.addons ?? [], addons).install.filter((n) => !coming.includes(n)).map(toolToInstall),
     ...(chosen(c.model, d.modelAlone ?? false) ? [] : [d.modelAlone ? "a provider" : "its model"]),
-    ...Object.entries(c.bindings).flatMap(([addon, b]) => (b ? [] : [`a configuration of ${addon}`])),
-    ...Object.entries(c.knowledge).flatMap(([name, k]) => (k ? [] : [`a knowledge folder for ${name}`])),
+    ...Object.entries(c.bindings).flatMap(([addon, b]) => (b ? [] : [`a connection to ${addon}`])),
+    ...Object.entries(c.knowledge).flatMap(([name, k]) => (k ? [] : [`a notes folder for ${name}`])),
   ];
 }
 
@@ -56,9 +82,15 @@ export function chosenSpec(d: AgentDefinition, c: Choice): AgentSpec {
   return {
     ...definitionSpec(d),
     model: { ...c.model },
-    bindings: Object.values(c.bindings).filter(Boolean),
+    addons: addonUses(d.addons ?? [], c.bindings),
     knowledge: Object.values(c.knowledge).filter(Boolean),
   };
+}
+
+/** The addons an agent uses (G.3): each by its name, with the configuration chosen for those
+ *  with settings. */
+export function addonUses(names: string[], bindings: Record<string, string>): AddonUse[] {
+  return names.map((addon) => (bindings[addon] ? { addon, binding: bindings[addon] } : { addon }));
 }
 
 /** The origin of an agent set up from an agents file's agent (D.23). */
@@ -86,7 +118,7 @@ export function outsideAgentBody(origin: AgentOrigin, d: AgentDefinition, c: Cho
 /** What an agent set up from a definition may do, in one line each: what the set-up page shows beside its
  *  button. */
 export function mayDo(d: AgentDefinition, folder: string | null): string[] {
-  if (d.modelAlone) return [`nothing outside its call${d.knowledge?.length ? `; its knowledge is sent to its provider` : ""}`];
+  if (d.modelAlone) return [`nothing outside its call${d.knowledge?.length ? `; its notes are sent to its provider` : ""}`];
   const hosts = d.allow ?? [];
   return [
     folder ? `read and write ${folder}` : "a new folder each session",
@@ -94,17 +126,21 @@ export function mayDo(d: AgentDefinition, folder: string | null): string[] {
       ? "no network"
       : d.network === "open"
         ? "reach any host"
-        : `reach its model${d.addons?.length ? ", its addons' hosts" : ""}${hosts.length ? `, ${hosts.join(", ")}` : ""}${d.egress === "log-only" ? " (every host, logged)" : ""}`,
+        : `reach its model${d.addons?.length ? ", its tools' hosts" : ""}${hosts.length ? `, ${hosts.join(", ")}` : ""}${d.egress === "log-only" ? " (every host, logged)" : ""}`,
     d.permissions === "bypass" ? "never asks before acting" : "asks before it acts",
     ...(d.confinement === "nested" ? ["run containers (a weaker sandbox)"] : d.confinement === "privileged" ? ["run privileged (about as safe as no sandbox)"] : []),
     ...(d.display ? ["use your screen and clipboard"] : []),
   ];
 }
 
-/** A name not taken there (names compared without case): "Skill reviewer", else "Skill reviewer 2"… */
-export function freeName(name: string, taken: string[]): string {
-  const used = new Set(taken.map((t) => t.toLowerCase()));
-  let found = name;
-  for (let n = 2; used.has(found.toLowerCase()); n++) found = `${name} ${n}`;
-  return found;
+/** Whether a line of what it may do weakens its sandbox: said in amber, the others not. */
+export function weakens(may: string): boolean {
+  return /any host|never asks|containers|privileged|screen/.test(may);
 }
+
+/** Whether a tool a source offers can be installed with the agents needing it (G.5): one with
+ *  settings or secrets is used through a connection, made in Library → Tools first. */
+export function comesAlong(tool: Pick<AddonPreview, "settings" | "secretSlots">): boolean {
+  return !tool.settings?.length && !tool.secretSlots?.length;
+}
+

@@ -1,4 +1,4 @@
-"""The gateway's HTTP API (docs/dev/design/remote.md §6) — two mailboxes per paired device, nothing
+"""The gateway's HTTP API (remote design §6) — two mailboxes per paired device, nothing
 more.
 
     host   (Authorization: Bearer <hostId>.<secret>)
@@ -346,7 +346,7 @@ CSP = (
     "img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; "
     "base-uri 'none'; form-action 'none'"
 )
-# The frame an app runs in, on the phone (handler's docs/dev/design/apps.md §5.2): loaded
+# The frame an app runs in, on the phone (handler's apps design §5.2): loaded
 # sandboxed (an opaque origin) by the client, it runs the app's inlined page and reaches nothing:
 # no connection, no fetch, only postMessage to the client, which carries the app's calls. Its own
 # `sandbox` makes it an opaque origin however it is opened (alone in a tab too): never the

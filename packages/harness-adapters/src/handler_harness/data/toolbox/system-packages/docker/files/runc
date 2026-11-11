@@ -1,0 +1,19 @@
+#!/bin/sh
+# handler: the sandbox's dockerd runs its containers and its builds' steps with `runc` from its
+# PATH: crun, with containers in the sandbox's UTS namespace (the docker system package, B.7).
+# runc fails to mount /sys where the sandbox hides parts of it (crun falls back to a bind mount);
+# the sandbox's seccomp profile refuses sethostname, so a container of its own UTS namespace
+# cannot start, and Docker has no setting for it (Podman's is utsns = "host").
+bundle=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in --bundle|-b) bundle=$arg ;; esac
+  case "$arg" in --bundle=*) bundle=${arg#--bundle=} ;; esac
+  prev=$arg
+done
+if [ -n "$bundle" ] && [ -f "$bundle/config.json" ]; then
+  jq 'del(.hostname) | .linux.namespaces |= map(select(.type != "uts"))' \
+    "$bundle/config.json" > "$bundle/config.json.handler" \
+    && mv "$bundle/config.json.handler" "$bundle/config.json"
+fi
+exec /usr/bin/crun "$@"

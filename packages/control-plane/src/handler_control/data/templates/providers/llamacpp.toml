@@ -4,21 +4,10 @@ apiVersion = "handler.provider/v1"
 description = "llama.cpp on this machine"
 
 [endpoints]
-openai-chat = "http://host.containers.internal:3000/v1"
-responses = "http://host.containers.internal:3000/v1"
+openai-chat = "http://host.containers.internal:8080/v1"
+responses = "http://host.containers.internal:8080/v1"
 
-[[models]]
-id = "qwen3.8-27B"
-name = "Qwen3.8 27B (local)"
-contextWindow = 200000
-maxOutput = 32768
-reasoning = true
-temperature = 0.2
-
-# What only pi knows about the model: the thinking level turns Qwen's thinking on or off.
-[models.native.pi.compat]
-thinkingFormat = "qwen-chat-template"
-maxTokensField = "max_tokens"
+# no model: Test in the form (or `handler provider test NAME`) lists what the server serves
 
 # How Codex talks to this model: its system prompt (Codex has none for a model it does not know).
 [files.codex]

@@ -12,13 +12,15 @@
     root,
     onopen,
     scroll = true,
+    limit,
   }: {
     path?: string;
     oldText?: string | null;
     newText: string;
     root?: string | null;
     onopen?: (path: string) => void;
-    scroll?: boolean; // in a box of its own height (in the conversation); false: the page scrolls
+    scroll?: boolean; // in a box of its own height; false: the page scrolls
+    limit?: number; // the first rows only, then "… +N lines" opens the rest (in place of a box that scrolls)
   } = $props();
 
   const all = $derived(lines(oldText, newText));
@@ -26,12 +28,15 @@
   const n = $derived(counts(all));
   const digits = $derived(String(Math.max(1, ...all.map((l) => l.n))).length);
   let opened = $state(new Set<number>());
+  let whole = $state(false);
+  const cut = $derived(!whole && limit !== undefined && shown.length > limit + 2 ? limit : shown.length);
+  const hidden = $derived(shown.slice(cut).reduce((n, r) => n + (r.kind === "fold" ? r.lines.length : 1), 0));
 </script>
 
 {#snippet line(l: Line)}
   <div class="row {l.kind}">
     <span class="num" aria-hidden="true">{l.n}</span>
-    <span class="sign" aria-hidden="true">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}</span>
+    <span class="sign" aria-hidden="true">{l.kind === "add" ? "+" : l.kind === "del" ? "-" : ""}</span>
     <span class="code"
       >{#if l.kind !== "same"}<span class="sr-only">{l.kind === "add" ? "added: " : "removed: "}</span>{/if}{#if l.words}{#each l.words as w, i (i)}{#if w.changed}<mark
             >{w.text}</mark
@@ -53,7 +58,7 @@
     </div>
   {/if}
   <div class="lines" class:scroll style:--digits="{digits}ch">
-    {#each shown as row, i (i)}
+    {#each shown.slice(0, cut) as row, i (i)}
       {#if row.kind !== "fold"}
         {@render line(row)}
       {:else if opened.has(row.id)}
@@ -64,6 +69,9 @@
         </button>
       {/if}
     {/each}
+    {#if hidden}
+      <button type="button" class="fold more" onclick={() => (whole = true)} data-testid="diff-more">… +{hidden} line{hidden === 1 ? "" : "s"}</button>
+    {/if}
   </div>
 </div>
 
@@ -112,7 +120,7 @@
   }
   .lines {
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 6px;
     background: var(--code-bg);
     padding: 0.25rem 0;
     overflow-x: auto;
@@ -159,10 +167,10 @@
     border-radius: 2px;
   }
   .add mark {
-    background: color-mix(in srgb, var(--ok) 30%, transparent);
+    background: var(--diff-add-word, color-mix(in srgb, var(--ok) 30%, transparent));
   }
   .del mark {
-    background: color-mix(in srgb, var(--danger) 30%, transparent);
+    background: var(--diff-del-word, color-mix(in srgb, var(--danger) 30%, transparent));
   }
   .fold {
     display: block;

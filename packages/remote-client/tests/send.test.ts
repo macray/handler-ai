@@ -1,4 +1,4 @@
-// A prompt from the phone is never lost (docs/dev/design/remote.md §5, the lease): re-attached
+// A prompt from the phone is never lost (remote design §5, the lease): re-attached
 // before it is sent after a sleep, sent again when the host had detached the phone, given back
 // to the input when it still fails.
 import { beforeEach, describe, expect, it } from "vitest";

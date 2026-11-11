@@ -3,11 +3,14 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from handler_control import agent_state
 from handler_control.agents import AgentRecord, RunsAs
 from handler_harness import catalog
 
 
+@pytest.mark.rule("agent.its-state-is-its-own")
 def test_an_agent_keeps_the_slots_that_are_not_a_login_nor_the_daemons() -> None:
     claude = catalog.get("claude-code").descriptor
     assert agent_state.owned_slots(claude) == ["config_dir", "config_json"]
@@ -17,6 +20,7 @@ def test_an_agent_keeps_the_slots_that_are_not_a_login_nor_the_daemons() -> None
     assert agent_state.owned_slots(vibe) == []  # a login, and the sessions
 
 
+@pytest.mark.rule("agent.its-state-is-its-own")
 def test_ensure_creates_folders_and_json_files_once(tmp_path: Path) -> None:
     claude = catalog.get("claude-code").descriptor
     on_claude = RunsAs(harness="claude-code", account="perso")
@@ -29,11 +33,12 @@ def test_ensure_creates_folders_and_json_files_once(tmp_path: Path) -> None:
     agent_state.ensure(claude, folder)
     assert (folder / "config_dir").is_dir()
     # the slot's initial content: onboarded, so Claude Code's terminal does not ask to log in
-    assert json.loads((folder / "config_json").read_text()) == {"hasCompletedOnboarding": True}
-    (folder / "config_json").write_text('{"kept": true}')
+    config = folder / "config_json" / "config_json"  # alone in its folder (A.1)
+    assert json.loads(config.read_text()) == {"hasCompletedOnboarding": True}
+    config.write_text('{"kept": true}')
     agent_state.ensure(claude, folder)
-    assert (folder / "config_json").read_text() == '{"kept": true}'  # never overwritten
-    assert (folder / "config_json").stat().st_mode & 0o777 == 0o600
+    assert config.read_text() == '{"kept": true}'  # never overwritten
+    assert config.stat().st_mode & 0o777 == 0o600
 
 
 def test_a_json_file_without_initial_content_starts_empty(tmp_path: Path) -> None:
@@ -41,4 +46,5 @@ def test_a_json_file_without_initial_content_starts_empty(tmp_path: Path) -> Non
     slot = claude.state_slots["config_json"].model_copy(update={"initial": None})
     plain = claude.model_copy(update={"state_slots": claude.state_slots | {"config_json": slot}})
     agent_state.ensure(plain, tmp_path)
-    assert (tmp_path / "config_json").read_text() == "{}\n"  # a JSON file the harness can read
+    config = tmp_path / "config_json" / "config_json"
+    assert config.read_text() == "{}\n"  # a JSON file the harness can read

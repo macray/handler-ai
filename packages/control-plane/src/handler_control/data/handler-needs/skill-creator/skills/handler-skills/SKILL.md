@@ -34,9 +34,9 @@ command-line tools, language runtimes the user chose), their project folder, and
 network (only the hosts the user allowed). So:
 
 - say in `compatibility` what a script needs (commands, runtimes, hosts it reaches);
-- prefer what is already there (shell, Python's standard library, Bun for a TypeScript script)
+- prefer what is already there (shell, Python's standard library, Node for a JavaScript script)
   over installing packages;
-- never ask for secrets in the skill's files: the agent gets credentials from Handler addons.
+- never ask for secrets in the skill's files: the agent gets credentials from Handler's tools.
 
 ## When it is ready
 

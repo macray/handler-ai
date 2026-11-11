@@ -17,8 +17,16 @@ from handler_control.migrations import (
     m0003_chat_and_handler_needs,
     m0004_apps,
     m0005_sources,
+    m0006_file_slots_in_folders,
+    m0007_addon_uses,
+    m0008_toolbox_manifest,
+    m0009_kept_blocked,
+    m0010_pins,
+    m0011_notes_default,
+    m0012_push_keys,
 )
 from handler_control.settings import Settings
+from handler_harness import catalog
 
 
 def settings(tmp_path: Path) -> Settings:
@@ -272,8 +280,8 @@ def test_m0004_apps_and_their_actions(tmp_path: Path) -> None:
         assert read.actions["add"].route == "POST /api/asks/add"  # the app's own path
     assert not (s.bindings_dir / "miniapp.toml").exists()
     assert 'addon = "app-builder"' in (s.bindings_dir / "app-builder.toml").read_text()
+    assert json.loads((s.state_dir / "agents.json").read_text())[1]["bindings"] == ["app-builder"]
     registry = AgentRegistry(s.state_dir)
-    assert registry.agents["c"].bindings == ["app-builder"]
     r = registry.agents["r"]
     assert r.origin is not None and r.origin.version == 2 and r.interface is not None
     assert r.interface.fields is not None and r.interface.result is not None
@@ -304,3 +312,165 @@ def test_m0005_what_handler_shipped_comes_from_its_official_source(
     migrated = json.loads((s.state_dir / "apps.json").read_text())["apps"]
     assert migrated == {"planner": {"files": {}, "fromSource": "official"}, "notes": {}}
     m0005_sources.migrate(settings(tmp_path / "nothing"))  # no file: nothing to do
+
+
+def test_m0006_a_file_a_sandbox_writes_is_alone_in_its_folder(tmp_path: Path) -> None:
+    s = settings(tmp_path)
+    runs = s.data_dir / "agent-state" / "a1" / "claude-code@max"
+    (runs / "config_dir").mkdir(parents=True)
+    (runs / "config_dir" / "settings.json").write_text("{}")
+    (runs / "config_json").write_text('{"hasCompletedOnboarding": true}\n')
+    older = s.data_dir / "agent-state" / "a1" / "config_json"  # before <runs>: left as it was
+    older.write_text("{}")
+    login = s.data_dir / "accounts" / "plus"
+    login.mkdir(parents=True)
+    (login / "credential").write_text("auth")
+    m0006_file_slots_in_folders.migrate(s)
+    assert (
+        runs / "config_json" / "config_json"
+    ).read_text() == '{"hasCompletedOnboarding": true}\n'
+    assert (runs / "config_dir" / "settings.json").read_text() == "{}"  # a folder: as it was
+    assert sorted(p.name for p in runs.iterdir()) == ["config_dir", "config_json"]
+    assert older.read_text() == "{}"
+    assert (login / "login" / "credential").read_text() == "auth"
+    assert [p.name for p in login.iterdir()] == ["login"]
+    m0006_file_slots_in_folders.migrate(settings(tmp_path / "nothing"))  # nothing to do
+
+
+def test_m0007_agents_use_addons_and_bindings_only_fill_slots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = settings(tmp_path)
+    own = tmp_path / "addons"
+    (own / "shop").mkdir(parents=True)
+    (own / "shop" / "addon.toml").write_text(
+        'apiVersion = "handler.addon/v1"\nname = "shop"\n[settings.store]\nenv = "STORE"\n'
+    )
+    monkeypatch.setenv("HANDLER_ADDONS_DIR", str(own))
+    s.bindings_dir.mkdir(parents=True)
+    (s.bindings_dir / "apps.toml").write_text(
+        'apiVersion = "handler.binding/v1"\naddon = "app-builder"\n'
+    )
+    shop = 'apiVersion = "handler.binding/v1"\naddon = "shop"\nsettings = { store = "x" }\n'
+    (s.bindings_dir / "my-shop.toml").write_text(shop)
+    s.state_dir.mkdir()
+    agents = [
+        {"id": "a1", "bindings": ["my-shop", "apps"]},
+        {"id": "a2", "bindings": ["gone"]},
+        {"id": "a3", "bindings": []},
+    ]
+    (s.state_dir / "agents.json").write_text(json.dumps(agents))
+    m0007_addon_uses.migrate(s)
+    migrated = json.loads((s.state_dir / "agents.json").read_text())
+    assert migrated == [
+        {"id": "a1", "addons": [{"addon": "app-builder"}, {"addon": "shop", "binding": "my-shop"}]},
+        {"id": "a2", "addons": []},  # a binding that cannot be read: the agent could not start
+        {"id": "a3", "addons": []},
+    ]
+    assert [p.name for p in s.bindings_dir.iterdir()] == ["my-shop.toml"]  # filling slots
+    m0007_addon_uses.migrate(settings(tmp_path / "nothing"))  # nothing to do
+
+
+def test_m0008_the_toolbox_says_its_distro_packages_and_the_users_caches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    toolbox = tmp_path / "toolbox"
+    toolbox.mkdir()
+    monkeypatch.setenv("HANDLER_TOOLBOX_DIR", str(toolbox))
+    (toolbox / "toolbox.toml").write_text(
+        '[caches.cargo]\ntarget = "~/.cargo"\nabout = "Rust crates"\n'
+        '[caches.cache]\ntarget = "~/.cache"\nabout = "What tools cache"\ngeneral = true\n'
+        '[caches.gradle]\ntarget = "~/.gradle"\nabout = "Gradle\'s"\n'
+        '[caches.sdk]\ntarget = "~/.sdkman"\ngeneral = true\n'
+    )
+    m0008_toolbox_manifest.migrate(settings(tmp_path))
+    manifest = catalog.toolbox()
+    assert manifest.distro == "fedora"
+    assert list(manifest.system_packages) == ["podman", "wl-clipboard"]
+    assert [(c.target, c.about, c.general) for c in manifest.caches] == [
+        ("~/.gradle", "Gradle's", False),
+        ("~/.sdkman", "~/.sdkman", True),  # no about: its target
+    ]
+    written = (toolbox / "toolbox.toml").read_text()
+    m0008_toolbox_manifest.migrate(settings(tmp_path))  # already in the new format
+    assert (toolbox / "toolbox.toml").read_text() == written
+    monkeypatch.setenv("HANDLER_TOOLBOX_DIR", str(tmp_path / "nothing"))
+    m0008_toolbox_manifest.migrate(settings(tmp_path))  # no file: nothing to do
+
+
+def test_m0009_every_stored_agent_keeps_no_host_blocked(tmp_path: Path) -> None:
+    s = settings(tmp_path)
+    s.state_dir.mkdir(parents=True)
+    model = {"harness": "claude-code", "account": "perso"}
+    agents = [
+        {"id": "a1", "model": model, "scope": None, "allow": ["pypi.org:443"]},
+        {"id": "a2", "model": model, "scope": None, "network": "open"},
+    ]
+    (s.state_dir / "agents.json").write_text(json.dumps(agents))
+    m0009_kept_blocked.migrate(s)
+    written = json.loads((s.state_dir / "agents.json").read_text())
+    assert [(a["id"], a.get("allow"), a["blocked"]) for a in written] == [
+        ("a1", ["pypi.org:443"], []),
+        ("a2", None, []),
+    ]
+    registry = AgentRegistry(s.state_dir)
+    assert [r.blocked for r in registry.agents.values()] == [[], []]
+    m0009_kept_blocked.migrate(settings(tmp_path / "nothing"))  # nothing to do
+
+
+def test_m0010_the_pinned_projects_keep_their_place_in_the_menu(tmp_path: Path) -> None:
+    s = settings(tmp_path)
+    s.state_dir.mkdir(parents=True)
+    s.config_dir.mkdir(parents=True)
+    (s.config_dir / "areas.toml").write_text('[work]\ncolor = "blue"\n[home]\ncolor = "green"\n')
+    projects = [
+        {"id": "p1", "name": "zeta", "area": None, "pinned": True},
+        {"id": "p2", "name": "shop", "area": "home", "pinned": True},
+        {"id": "p3", "name": "api", "area": "work", "pinned": False},
+        {"id": "p4", "name": "Blog", "area": "home", "pinned": True},
+        {"id": "p5", "name": "docs", "area": "work", "pinned": True},
+    ]
+    (s.state_dir / "projects.json").write_text(json.dumps(projects))
+    m0010_pins.migrate(s)
+    pinned = json.loads((s.state_dir / "pins.json").read_text())
+    assert [p["id"] for p in pinned] == ["p5", "p4", "p2", "p1"]  # by area, then by name
+    assert all(p["kind"] == "project" for p in pinned)
+    written = json.loads((s.state_dir / "projects.json").read_text())
+    assert [p["id"] for p in written] == ["p1", "p2", "p3", "p4", "p5"]
+    assert not any("pinned" in p for p in written)
+    m0010_pins.migrate(settings(tmp_path / "nothing"))  # nothing to do
+
+
+def test_m0011_who_used_home_notes_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    s = settings(tmp_path)
+    m0011_notes_default.migrate(s)  # no ~/notes: the new default
+    assert not (s.config_dir / "notes.toml").exists()
+    (tmp_path / "home" / "notes").mkdir(parents=True)
+    m0011_notes_default.migrate(s)
+    assert (s.config_dir / "notes.toml").read_text() == f'root = "{tmp_path / "home" / "notes"}"\n'
+    (s.config_dir / "notes.toml").write_text('root = "/elsewhere"\n')
+    m0011_notes_default.migrate(s)  # a root set already is kept
+    assert (s.config_dir / "notes.toml").read_text() == 'root = "/elsewhere"\n'
+
+
+def test_m0012_a_push_subscription_without_keys_is_dropped(tmp_path: Path) -> None:
+    s = settings(tmp_path)
+    m0012_push_keys.migrate(s)  # no devices: nothing to do
+    assert not (s.config_dir / "remote-devices.json").exists()
+    path = s.config_dir / "remote-devices.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"devices": [
+            {"id": "d_1", "name": "phone", "pushEndpoint": "https://fcm.googleapis.com/x"},
+            {"id": "d_2", "name": "tablet", "pushEndpoint": None},
+        ]})
+    )  # fmt: skip
+    m0012_push_keys.migrate(s)
+    assert json.loads(path.read_text()) == {"devices": [
+        {"id": "d_1", "name": "phone", "push": None},
+        {"id": "d_2", "name": "tablet", "push": None},
+    ]}  # fmt: skip
+    assert path.stat().st_mode & 0o777 == 0o600

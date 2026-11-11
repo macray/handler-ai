@@ -1,0 +1,12 @@
+# A toolchain addon (G.1) needing a command no system package of Handler's provides: its source
+# has one (system-packages/fake-cc, B.7), installed with it. Its image is never built here.
+apiVersion = "handler.tool/v1"
+name = "fake-toolchain"
+description = "A compiler's toolchain, for the tests"
+image = "localhost/handler-ai-tool-fake-toolchain"
+commands = ["fake-build"]
+needs = ["fake-cc"]
+
+[[caches]]
+target = "~/.fake-toolchain"
+about = "Fake toolchain downloads"

@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The user's toolbox Containerfile (contract B.6): edited here, used by the next toolbox rebuild,
-  // which checks every harness and addon image on top of it before any switches (D.4).
+  // The user's own lines of the toolbox (custom.containerfile, contract B.7), appended last to
+  // the recipe Handler generates: edited here, used by the next toolbox build, which checks every
+  // harness and addon image on top of it before any switches (D.4).
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
   import { api } from "../lib/api";
@@ -10,7 +11,6 @@
 
   let text = $state("");
   let saved = $state(""); // what the file holds
-  let defaultText = $state("");
   let loaded = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -18,10 +18,9 @@
   const dirty = $derived(text !== saved);
 
   $effect(() => {
-    api.toolboxContainerfile().then(
-      (file) => {
-        text = saved = file.content;
-        defaultText = file.defaultContent;
+    api.toolboxLines().then(
+      (lines) => {
+        text = saved = lines.content;
         loaded = true;
       },
       (e: Error) => (error = e.message),
@@ -32,8 +31,8 @@
     busy = true;
     error = null;
     try {
-      const file = await api.saveToolboxContainerfile(text);
-      text = saved = file.content;
+      const lines = await api.saveToolboxLines(text);
+      text = saved = lines.content;
       onsaved();
     } catch (e) {
       error = (e as Error).message;
@@ -45,32 +44,24 @@
   function close(): void {
     if (!dirty || confirm("Close without saving your changes?")) onclose();
   }
-
-  function restoreDefault(): void {
-    if (text === defaultText || confirm("Replace the text with Handler's default Containerfile? Nothing is saved until you save.")) {
-      text = defaultText;
-    }
-  }
 </script>
 
 <div class="enter space-y-3 rounded-[10px] border bg-card p-4 shadow-panel" data-testid="toolbox-editor">
   <div class="text-sm">
-    <span class="font-medium">Toolbox Containerfile</span>
-    <span class="ml-2 font-mono text-xs text-muted-foreground">{directory}/Containerfile</span>
+    <span class="font-medium">Your lines</span>
+    <span class="ml-2 font-mono text-xs text-muted-foreground">{directory}/custom.containerfile</span>
   </div>
   {#if loaded}
-    <Textarea bind:value={text} rows={22} class="font-mono text-xs" spellcheck={false} data-testid="toolbox-content" />
+    <Textarea bind:value={text} rows={12} class="font-mono text-xs" spellcheck={false} placeholder="RUN dnf -y install …" data-testid="toolbox-content" />
     <p class="text-xs text-muted-foreground">
-      The tools every agent gets. Saving rebuilds nothing: <span class="font-medium">Rebuild everything</span> builds it,
-      then every harness and tool image on top of it, and switches them only if all pass their checks.
-      What toolchains keep between sessions is in <a class="underline underline-offset-2" href={href({ view: "settings", section: "caches" })}>Settings → Caches</a>.
+      Containerfile lines added last to the toolbox, run as root: every agent gets what they install. Saving rebuilds nothing:
+      <span class="font-medium">Apply</span> builds the toolbox, then every agent program and tool image already built on top of it, and switches them only if all
+      pass their checks. What tools keep between sessions is in
+      <a class="underline underline-offset-2" href={href({ view: "settings", section: "caches" })}>Settings → Caches</a>.
     </p>
   {/if}
   <div class="flex flex-wrap items-center gap-2">
     <Button size="sm" disabled={busy || !loaded || !dirty} onclick={save} data-testid="toolbox-save">Save</Button>
-    <Button variant="outline" size="sm" disabled={busy || !loaded || text === defaultText} onclick={restoreDefault} data-testid="toolbox-default">
-      Restore the default
-    </Button>
     <Button type="button" variant="ghost" size="sm" onclick={close}>Close</Button>
     {#if dirty}<span class="text-xs text-muted-foreground">not saved</span>{/if}
   </div>

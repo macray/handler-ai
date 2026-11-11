@@ -1,4 +1,4 @@
-"""Envelopes (docs/dev/design/remote.md §4): sealed per direction, bound to host, device and
+"""Envelopes (remote design §4): sealed per direction, bound to host, device and
 envelope id."""
 
 import json
@@ -17,6 +17,7 @@ HOST, DEV = VECTORS["hostId"], VECTORS["deviceId"]
 PLAIN: dict[str, Any] = {"expires": 1, "frames": [{"s": "s_1", "m": {"jsonrpc": "2.0", "id": 1}}]}
 
 
+@pytest.mark.rule("envelope.sealed-end-to-end")
 def test_vectors() -> None:
     """The remote client (WebCrypto) is checked against the same file."""
     assert rc.derive(KEY, "down").hex() == VECTORS["derived"]["down"]
@@ -27,6 +28,7 @@ def test_vectors() -> None:
         assert rc.open_envelope(KEY, HOST, DEV, direction, case["envelope"]) == case["plaintext"]
 
 
+@pytest.mark.rule("envelope.sealed-end-to-end")
 def test_round_trip() -> None:
     envelope = rc.seal(KEY, HOST, DEV, "up", PLAIN)
     assert set(envelope) == {"id", "nonce", "ct"}
@@ -34,6 +36,7 @@ def test_round_trip() -> None:
     assert rc.seal(KEY, HOST, DEV, "up", PLAIN)["nonce"] != envelope["nonce"]
 
 
+@pytest.mark.rule("envelope.bound-to-its-way")
 @pytest.mark.parametrize(
     ("key", "host", "dev", "direction", "change"),
     [
@@ -59,6 +62,7 @@ def test_anything_else_is_refused(
         rc.open_envelope(key, host, dev, direction, envelope)
 
 
+@pytest.mark.rule("envelope.sealed-end-to-end", "device.paired-from-this-computer-only")
 def test_pairing_fragment_carries_what_the_device_needs() -> None:
     fragment = rc.pairing_fragment("https://gw.example", HOST, DEV, KEY, "phone")
     payload = json.loads(rc.unb64(fragment.removeprefix("pair=")))

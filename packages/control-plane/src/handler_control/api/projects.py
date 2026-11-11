@@ -1,4 +1,4 @@
-"""Project routes (D.8): projects, made with their first agents; their agents are changed through
+"""Project routes (D.8): projects, made alone or with their first agents; their agents are changed through
 the agent routes (agents.py)."""
 
 from datetime import datetime
@@ -6,13 +6,9 @@ from datetime import datetime
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
 
-from handler_contracts import (
-    CreateProjectRequest,
-    ProjectSettingsRequest,
-    SetProjectPinnedRequest,
-)
+from handler_contracts import CreateProjectRequest, Pin, ProjectSettingsRequest
 
-from .. import caches, save_rules
+from .. import caches, pins, save_rules
 from ..projects import ProjectRecord, folder_name
 from .common import (
     Context,
@@ -21,6 +17,7 @@ from .common import (
     parse_body,
     text_or_none,
 )
+from .toolbox import apply_confirmed
 
 
 def add_project_routes(app: FastAPI, ctx: Context) -> None:
@@ -49,8 +46,9 @@ def add_project_routes(app: FastAPI, ctx: Context) -> None:
             for a in body.agents:
                 ctx.agents.set_up_from(a)
             checked = save_rules.new_project_agents(ctx.settings, ctx.projects, body)
-        folder = checked[0].scope
-        assert folder is not None  # a project's agents work in its folder
+            folder = checked[0].scope if checked else None
+            folder = folder or save_rules.checked_folder(ctx.settings, body.folder)
+        first = not ctx.projects.projects
         project = ctx.projects.add(
             ProjectRecord(
                 id=ctx.projects.new_id(),
@@ -63,11 +61,18 @@ def add_project_routes(app: FastAPI, ctx: Context) -> None:
         )
         default = next((i for i, a in enumerate(body.agents) if a.default), 0)
         for i, a in enumerate(body.agents):
-            agent = a.model_copy(update={"project_id": project.id, "default": i == default})
+            confirmed = {"toolbox_adds": body.toolbox_adds}  # for them all (checked above)
+            agent = a.model_copy(
+                update={"project_id": project.id, "default": i == default} | confirmed
+            )
             with check_problems():  # checked above
                 settings, origin = ctx.agents.checked(agent)
             ctx.agents.create(agent, settings, origin)
         ctx.projects.give_skills(project, body.skills)
+        ctx.projects.give_addons(project, body.addons)
+        apply_confirmed(ctx, body.toolbox_adds, uses(ctx, project))
+        if first:  # only the first project is pinned by itself (D.28)
+            pins.add(ctx.settings.state_dir, Pin(kind="project", id=project.id))
         return out(project, 201)
 
     @app.get("/v1/projects/{project_id}", dependencies=authed)
@@ -90,13 +95,8 @@ def add_project_routes(app: FastAPI, ctx: Context) -> None:
             area=body.area,
         )
         ctx.projects.give_skills(project, body.skills)
-        return out(project)
-
-    @app.put("/v1/projects/{project_id}/pinned", dependencies=authed)
-    async def pin_project(project_id: str, request: Request) -> Response:
-        project = ctx.get_project(project_id)
-        body = parse_body(SetProjectPinnedRequest, await request.body())
-        ctx.projects.update(project, pinned=body.pinned)
+        ctx.projects.give_addons(project, body.addons)
+        apply_confirmed(ctx, body.toolbox_adds, uses(ctx, project))
         return out(project)
 
     @app.delete("/v1/projects/{project_id}", dependencies=authed)
@@ -105,3 +105,8 @@ def add_project_routes(app: FastAPI, ctx: Context) -> None:
         await ctx.agents.delete_project(project)
         caches.remove_project(ctx.settings, project.id)
         return Response(status_code=204)
+
+
+def uses(ctx: Context, project: ProjectRecord) -> set[str]:
+    """The addons a project's agents use, its own included."""
+    return {u.addon for a in ctx.projects.agents(project) for u in a.addon_uses}

@@ -1,27 +1,13 @@
-// The token reaches the page in the URL fragment (`/#token=…`, opened by `handler ui`): browsers
-// never send fragments to the server. It is kept in sessionStorage (this tab only) and removed
-// from the address bar right away; `&then=/route` opens that page (`handler project
-// import-agents` prints one for the set-up page).
+// The web UI is signed in by a cookie (HttpOnly: this page never reads it): `handler ui` opens a
+// one-time link that sets it, then redirects here, on the page it names (`/#/setup/x`). The
+// browser keeps it a year, so a bookmark opens the UI; handlerd takes it only on requests from
+// this page's own origin. The token itself never reaches the browser.
 
-const KEY = "handler.token";
-
-export function captureToken(): void {
-  const match = /^#token=([A-Za-z0-9_-]+)(?:&then=(\/[^&]*))?/.exec(window.location.hash);
-  if (!match?.[1]) return;
+/** Whether this browser is signed in (its cookie opens the UI). */
+export async function signedIn(): Promise<boolean> {
   try {
-    sessionStorage.setItem(KEY, match[1]);
+    return (await fetch("/v1/ui/signed-in")).status === 204;
   } catch {
-    memoryToken = match[1];
-  }
-  history.replaceState(null, "", `${window.location.pathname}#${match[2] ?? "/"}`);
-}
-
-let memoryToken: string | null = null;
-
-export function token(): string | null {
-  try {
-    return sessionStorage.getItem(KEY) ?? memoryToken;
-  } catch {
-    return memoryToken;
+    return false;
   }
 }

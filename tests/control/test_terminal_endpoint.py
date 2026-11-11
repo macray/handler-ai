@@ -12,7 +12,7 @@ import pytest
 
 from handler_contracts import terminal_path
 
-from ..support.daemon import Daemon, start_daemon
+from ..support.daemon import FAKE_SECRET, Daemon, start_daemon
 from ..support.terminal import Attached
 
 
@@ -47,11 +47,14 @@ def test_auth_and_unknown_agent(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
         assert c.post(terminal_path("nope"), json={}).status_code == 404
 
 
+@pytest.mark.rule("terminal.runs-with-the-agent-s-settings", "terminal.outlives-handlerd")
 def test_runs_on_the_client_s_terminal_with_its_settings_as_flags(
     daemon: Daemon, ad_hoc: dict[str, Any]
 ) -> None:
     started = _start(daemon, ad_hoc["id"], args=["--resume", "a b"])
     assert started["sandbox"] in started["attach"]
+    paste = Path(started["paste"])  # where the client puts what it pastes, ready before attach
+    assert paste.is_dir() and started["sandbox"] == paste.name
     [conn] = _connections(daemon, ad_hoc["id"])
     assert conn["sandbox"] == started["sandbox"]
     # shown as a terminal, with what it runs as (the web UI's terminal view)
@@ -70,8 +73,32 @@ def test_runs_on_the_client_s_terminal_with_its_settings_as_flags(
     term.type("quit")
     assert term.exit_code() == 3
     _until_no_connection(daemon, ad_hoc["id"])
+    assert not paste.exists()  # removed with the terminal
 
 
+@pytest.mark.rule("terminal.secrets-never-reach-the-client")
+def test_the_client_gets_how_to_attach_never_the_account_s_token(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """The terminal of an agent on an account with a token: what the client is given (the
+    sandbox, the attach command, the paste folder) holds neither the token nor what the terminal
+    program got for it (its phantom; the fake's token, with no host to go to, as it is).
+
+    If this fails: a token reaches the CLI's process, and any program reading it."""
+    with daemon.http() as c:
+        r = c.post(terminal_path(ad_hoc["id"]), json={"term": "xterm-test"})
+    assert r.status_code == 201, r.text
+    started = r.json()
+    term = Attached(started["attach"])
+    given = term.until(".\r\n").split("token:")[1].split(".\r\n")[0]
+    term.type("quit")
+    term.exit_code()
+    assert len(given) == len(FAKE_SECRET)  # the program got a token
+    assert set(started) == {"sandbox", "attach", "paste"}
+    assert FAKE_SECRET not in r.text and given not in r.text
+
+
+@pytest.mark.rule("terminal.only-its-folder")
 def test_a_folder_inside_the_agent_s_is_the_only_one_mounted(
     daemon: Daemon, ad_hoc: dict[str, Any]
 ) -> None:
@@ -86,6 +113,7 @@ def test_a_folder_inside_the_agent_s_is_the_only_one_mounted(
     _until_no_connection(daemon, ad_hoc["id"])
 
 
+@pytest.mark.rule("terminal.only-its-folder")
 def test_a_folder_outside_the_agent_s_is_refused(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     with daemon.http() as c:
         outside = c.post(terminal_path(ad_hoc["id"]), json={"folder": str(daemon.make_scope())})
@@ -97,6 +125,7 @@ def test_a_folder_outside_the_agent_s_is_refused(daemon: Daemon, ad_hoc: dict[st
     assert not _connections(daemon, ad_hoc["id"])
 
 
+@pytest.mark.rule("terminal.outlives-handlerd")
 def test_stopping_handlerd_leaves_the_program_running() -> None:
     """A daemon of its own: the module's goes on."""
     running = cast(Generator[Daemon], start_daemon())
@@ -121,6 +150,7 @@ def test_an_invalid_start_is_refused(daemon: Daemon, ad_hoc: dict[str, Any]) -> 
     assert r.status_code == 422
 
 
+@pytest.mark.rule("terminal.runs-with-the-agent-s-settings")
 def test_what_cannot_run_says_why(daemon: Daemon) -> None:
     ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope())
     with daemon.http() as c:

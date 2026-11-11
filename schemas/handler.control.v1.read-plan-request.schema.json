@@ -1,0 +1,75 @@
+{
+  "$id": "urn:handler.control/v1/read-plan-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A plan (D.27): a file in the folder of an agent, or of a session's agent (`agentId` or\n`sessionId`, and its `path`), or a draft (`draftId`); `runnerId` who runs it.",
+  "properties": {
+    "agentId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "path": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Path"
+    },
+    "draftId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Draftid"
+    },
+    "runnerId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runnerid"
+    }
+  },
+  "title": "ReadPlanRequest",
+  "type": "object"
+}

@@ -13,9 +13,12 @@ from handler_harness import catalog
 
 
 @pytest.fixture(autouse=True)
-def _default_toolbox(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The default toolbox (read only), in place of `~/.config/handler-ai/toolbox`."""
+def _default_toolbox(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
+    """The default toolbox (read only), in place of `~/.config/handler-ai/toolbox`, and no
+    system package nor addon of the user's (a test brings its own addons)."""
     monkeypatch.setenv("HANDLER_TOOLBOX_DIR", str(catalog.DEFAULT_TOOLBOX))
+    monkeypatch.setenv("HANDLER_SYSTEM_PACKAGES_DIR", str(tmp_path / "system-packages"))
+    monkeypatch.setenv("HANDLER_TOOLS_DIR", str(tmp_path / "no-addons"))
     yield
 
 

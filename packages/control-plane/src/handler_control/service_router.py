@@ -1,4 +1,4 @@
-"""The service router (docs/dev/design/services.md §5, I.5): handlerd's side of a services socket
+"""The service router (services design §5, I.5): handlerd's side of a services socket
 mounted in a sandbox. It speaks MCP (JSON-RPC 2.0, one message per line) and serves the tools of the
 interfaces its caller was granted, as the interface states them (S1); it validates each call's
 input and output against the tool's schemas (S2), enforces the caller's selection and limits,
@@ -14,7 +14,7 @@ call. Its callers are automation runs; agents and apps reach the same router lat
 import asyncio
 import contextlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,8 +41,9 @@ class Grant:
 
     llm: frozenset[str]
     log: Path  # services.ndjson: one line per call
-    timeout: float = 120.0  # per call
-    max_calls: int = 50
+    # llm/v1's [limits]: a call's time, the calls of a run
+    timeout: float = field(default_factory=lambda: services.load(LLM).limits["timeoutSeconds"])
+    max_calls: int = field(default_factory=lambda: services.load(LLM).limits["callsPerRun"])
     calls: int = 0
     in_tokens: int = 0
     out_tokens: int = 0

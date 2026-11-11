@@ -13,7 +13,7 @@ RUN npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp p
     && npm cache clean --force \
     && command -v pi \
     && command -v pi-acp \
-    && modules=/usr/lib/node_modules \
+    && modules="$(npm root -g)" \
     && test -f "$modules/pi-mcp-adapter/index.ts" \
     && printf '#!/bin/sh\nexec pi --extension %s "$@"\n' "$modules/pi-mcp-adapter" > /usr/local/bin/handler-pi \
     && chmod 755 /usr/local/bin/handler-pi \

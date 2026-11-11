@@ -1,5 +1,5 @@
-"""Apps from paired devices (contract H.8, docs/dev/design/apps.md §5.2): a real gateway,
-devices in Python, the test app in podman. Persons and scopes: the owner's phone and a family
+"""Apps from paired devices (contract H.8, apps design §5.2): a real gateway,
+devices in Python, the test app in a real sandbox. Persons and scopes: the owner's phone and a family
 member's (apps only); an app reaches the persons it is shared with, and nobody else."""
 
 import base64
@@ -13,12 +13,12 @@ from typing import Any
 import httpx
 import pytest
 
-from ..apps.conftest import add_app, api, copy_fixture, requires_podman
+from ..apps.conftest import add_app, api, copy_fixture, real_sandbox_env, requires_app_runtime
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
 from ..support.remote import Device, DeviceError, Gateway, start_gateway
 
-pytestmark = requires_podman
+pytestmark = requires_app_runtime
 S = "app:counter"
 
 
@@ -37,7 +37,7 @@ def data_root() -> Iterator[Path]:
 
 @pytest.fixture(scope="module")
 def daemon(gateway: Gateway, data_root: Path) -> Iterator[Daemon]:
-    for d in start_daemon(extra_env={"HANDLER_DATA_DIR": str(data_root)}):
+    for d in start_daemon(extra_env={"HANDLER_DATA_DIR": str(data_root)} | real_sandbox_env()):
         body = {"gatewayUrl": gateway.url, "hostToken": gateway.host_token}
         assert api(d, "PUT", "/v1/remote/gateway", body).status_code == 200
         source = copy_fixture("app", data_root)
@@ -81,12 +81,18 @@ def http(device: Device, method: str, path: str, body: Any = None) -> tuple[int,
     return result["status"], json.loads(raw) if "json" in kind else raw.decode()
 
 
+@pytest.mark.rule("remote.polls-only-while-something-is-reachable")
 def test_sharing_an_app_starts_polling(daemon: Daemon) -> None:
     wait_light(daemon, "idle")  # nothing shared
     assert share(daemon, "owner")["persons"] == ["owner"]
     wait_light(daemon, "ok")
 
 
+@pytest.mark.rule(
+    "phone-app.only-to-whom-it-is-shared-with",
+    "phone-app.its-api-as-the-device-s-person",
+    "phone-app.its-page-reaches-nothing",
+)
 def test_owner_uses_the_app(daemon: Daemon) -> None:
     phone = pair(daemon)
     listed = phone.request(None, "_handler/remote/list_apps")
@@ -111,6 +117,11 @@ def test_owner_uses_the_app(daemon: Daemon) -> None:
     assert e.value.code == -32602
 
 
+@pytest.mark.rule(
+    "device.a-family-member-s-reaches-apps-only",
+    "phone-app.only-to-whom-it-is-shared-with",
+    "phone-app.its-api-as-the-device-s-person",
+)
 def test_family_member_gets_only_what_is_shared_with_them(daemon: Daemon) -> None:
     r = api(daemon, "POST", "/v1/remote/devices", {"name": "x", "person": "alice"})
     assert r.status_code == 409  # a family member's device reaches apps only
@@ -138,6 +149,7 @@ def test_family_member_gets_only_what_is_shared_with_them(daemon: Daemon) -> Non
         alice.request(S, "_handler/app/ui")
 
 
+@pytest.mark.rule("remote.polls-only-while-something-is-reachable")
 def test_unshared_app_stops_polling(daemon: Daemon) -> None:
     share(daemon)
     wait_light(daemon, "idle")

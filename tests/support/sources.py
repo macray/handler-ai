@@ -9,10 +9,19 @@ import pytest
 from dulwich import porcelain
 
 TEST_SOURCE = Path(__file__).resolve().parents[1] / "fixtures" / "source"
-# A checkout of Handler's registry, for the tests of its own items (Planner, shopify): opt-in,
-# as it is not in this repository and changes without notice.
+# A checkout of a registry of Handler's, for the tests of its items (Planner, shopify: in the
+# private one only): opt-in, as it is not in this repository and changes without notice.
 REGISTRY = Path(r) if (r := os.environ.get("HANDLER_TEST_REGISTRY")) else None
-requires_registry = pytest.mark.skipif(REGISTRY is None, reason="HANDLER_TEST_REGISTRY not set")
+
+
+def requires_registry(item: str) -> pytest.MarkDecorator:
+    """Skips unless HANDLER_TEST_REGISTRY holds `item` (`apps/planner`): the public registry
+    holds neither Planner nor shopify."""
+    if REGISTRY is None:
+        return pytest.mark.skip(reason="HANDLER_TEST_REGISTRY not set")
+    return pytest.mark.skipif(
+        not (REGISTRY / item).is_dir(), reason=f"{item} is not in HANDLER_TEST_REGISTRY"
+    )
 
 
 def git_repo(folder: Path, target: Path) -> Path:

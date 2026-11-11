@@ -65,6 +65,50 @@
       "title": "SessionOutput",
       "type": "object"
     },
+    "SessionPlan": {
+      "description": "The plan a session is a step of (origin \"plan\", D.27).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "step": {
+          "minimum": 1,
+          "title": "Step",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "step"
+      ],
+      "title": "SessionPlan",
+      "type": "object"
+    },
+    "SessionPlanDraft": {
+      "description": "The plan draft a plan builder's session writes (D.27): its folder is the draft, its\nproject's folder seen read-only, at its own path.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "projectId": {
+          "title": "Projectid",
+          "type": "string"
+        },
+        "folder": {
+          "title": "Folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "projectId",
+        "folder"
+      ],
+      "title": "SessionPlanDraft",
+      "type": "object"
+    },
     "SessionSubject": {
       "description": "What a run works on (D.18): the skill its form's skill field named, as it saw it.",
       "properties": {
@@ -244,6 +288,18 @@
       "default": null,
       "title": "Missingimage"
     },
+    "request": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request"
+    },
     "harnessVersion": {
       "anyOf": [
         {
@@ -266,7 +322,8 @@
         "automation",
         "app",
         "check",
-        "ask"
+        "ask",
+        "plan"
       ],
       "title": "Origin",
       "type": "string"
@@ -361,6 +418,28 @@
       "anyOf": [
         {
           "$ref": "#/$defs/SessionAppDraft"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "planDraft": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionPlanDraft"
         },
         {
           "type": "null"

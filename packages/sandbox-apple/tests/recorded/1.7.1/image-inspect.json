@@ -1,0 +1,126 @@
+[
+  {
+    "configuration": {
+      "creationDate": "2026-11-09T12:55:47Z",
+      "descriptor": {
+        "annotations": {
+          "com.apple.containerization.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "io.containerd.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "org.opencontainers.image.created": "2026-11-09T12:55:50Z",
+          "org.opencontainers.image.ref.name": "0d67d927f6cc"
+        },
+        "digest": "sha256:0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "size": 375
+      },
+      "name": "localhost/handler-ai-pi:latest"
+    },
+    "id": "0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+    "variants": [
+      {
+        "config": {
+          "architecture": "arm64",
+          "config": {
+            "Cmd": [
+              "/bin/bash"
+            ],
+            "Env": [
+              "PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "DISTTAG=f44container",
+              "FGC=f44",
+              "FBR=f44",
+              "LANG=C.UTF-8",
+              "HOME=/home/agent"
+            ],
+            "Labels": {
+              "maintainer": "Clement Verna <cverna@fedoraproject.org>",
+              "org.opencontainers.image.title": "handler-ai-pi"
+            },
+            "WorkingDir": "/"
+          },
+          "created": "2026-11-09T12:55:47.240735921Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "LABEL maintainer=Clement Verna <cverna@fedoraproject.org>",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ENV DISTTAG=f44container FGC=f44 FBR=f44",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ADD fedora-20260826.tar / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "CMD [\"/bin/bash\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:15.399986759Z",
+              "created_by": "RUN /bin/sh -c dnf -y upgrade     && dnf -y install --setopt=install_weak_deps=False         git openssh-clients ca-certificates curl wget unzip zip tar         ripgrep fd-find jq less which diffutils findutils procps-ng file patch         python3 python3-pip python-unversioned-command uv         nodejs npm     && dnf clean all # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "ENV LANG=C.UTF-8 HOME=/home/agent PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-toolbox",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "RUN /bin/sh -c npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp pi-mcp-adapter     && npm cache clean --force     && command -v pi     && command -v pi-acp     && modules=\"$(npm root -g)\"     && test -f \"$modules/pi-mcp-adapter/index.ts\"     && printf '#!/bin/sh\\nexec pi --extension %s \"$@\"\\n' \"$modules/pi-mcp-adapter\" > /usr/local/bin/handler-pi     && chmod 755 /usr/local/bin/handler-pi     && pi_version=\"$(jq -er .version \"$modules/@earendil-works/pi-coding-agent/package.json\")\"     && acp_version=\"$(jq -er .version \"$modules/pi-acp/package.json\")\"     && mcp_version=\"$(jq -er .version \"$modules/pi-mcp-adapter/package.json\")\"     && mkdir -p /usr/share/handler     && echo \"pi ${pi_version} (pi-acp ${acp_version}, pi-mcp-adapter ${mcp_version})\" > /usr/share/handler/version     && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent) # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-pi",
+              "empty_layer": true
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:121832a7edf8b8d6dcfd46c8c189a1a7491511e7f736d43c08024437542509c0",
+              "sha256:b7ed0841e28286b6b7f9b2f1109f80f95a932ba6a8e9f13eb8b8bfb7c4abeff3",
+              "sha256:c0b13bd82d8626bf6ba08b27ba9d97fa74c82ac4cf90fd3a3f0b4fb85bfab5a1",
+              "sha256:a8743119a54afc3cf6bfd073da815874d7e5badbb57ff60dc29a197183efe8f7",
+              "sha256:3bcf7cc9d10d5c92021908eaa27a0b8abe08b9430490ae8a4288b8e103176e43"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:3e4bfb70f67c658e85654e1d928b8a6dec41d1f6a7565b1ce1afc463956570b0",
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        },
+        "size": 292070320
+      }
+    ]
+  }
+]

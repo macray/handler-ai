@@ -1,6 +1,6 @@
 """G.2, D.15 through a real handlerd: bindings created, edited, renamed and deleted through the API,
 their secret values going to the secret store (never read back), a hand-written reference kept,
-and a binding in use neither renamed nor deleted. The addon has no image: no podman needed."""
+and a connection in use neither renamed nor deleted. The addon has no image: no podman needed."""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,7 +10,7 @@ import pytest
 from ..support.daemon import Daemon, start_daemon
 
 MANIFEST = """
-apiVersion = "handler.addon/v1"
+apiVersion = "handler.tool/v1"
 name = "shop"
 description = "a shop"
 egress = ["shop.example.com:443"]
@@ -31,14 +31,15 @@ TOKEN = "shop-token-not-a-real-one"
 def daemon(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Daemon]:
     addons = tmp_path_factory.mktemp("addons")
     (addons / "shop").mkdir()
-    (addons / "shop" / "addon.toml").write_text(MANIFEST)
-    yield from start_daemon(extra_env={"HANDLER_ADDONS_DIR": str(addons)})
+    (addons / "shop" / "tool.toml").write_text(MANIFEST)
+    yield from start_daemon(extra_env={"HANDLER_TOOLS_DIR": str(addons)})
 
 
 def bindings_dir(daemon: Daemon) -> Path:
-    return daemon.config_dir / "bindings"
+    return daemon.config_dir / "connections"
 
 
+@pytest.mark.rule("connection.fills-its-tool-s-slots")
 def test_addon_slots_are_described(daemon: Daemon) -> None:
     with daemon.http() as c:
         [shop] = [a for a in c.get("/v1/addons").json() if a["name"] == "shop"]
@@ -49,6 +50,15 @@ def test_addon_slots_are_described(daemon: Daemon) -> None:
     assert shop["egress"] == ["shop.example.com:443"]
 
 
+@pytest.mark.rule(
+    "access.the-api-stores-what-it-is-given",
+    "access.its-secrets-follow-it",
+    "access.in-use-is-never-renamed",
+    "secrets.never-read-back",
+    "secrets.every-one-is-listed",
+    "secrets.kept-for-you-only",
+    "connection.fills-its-tool-s-slots",
+)
 def test_bindings_are_written_through_the_api(daemon: Daemon) -> None:
     body = {
         "name": "dev-shop",
@@ -69,10 +79,10 @@ def test_bindings_are_written_through_the_api(daemon: Daemon) -> None:
         assert c.post("/v1/bindings", json=body).status_code == 409
         path = bindings_dir(daemon) / "dev-shop.toml"
         assert TOKEN not in path.read_text() and path.stat().st_mode & 0o777 == 0o600
-        [secret] = [s for s in c.get("/v1/secrets").json() if s["path"].startswith("bindings/")]
-        assert secret["path"] == "bindings/dev-shop/token"
+        [secret] = [s for s in c.get("/v1/secrets").json() if s["path"].startswith("connections/")]
+        assert secret["path"] == "connections/dev-shop/token"
         assert (secret["usedBy"], secret["hosts"]) == (
-            ["bindings/dev-shop"],
+            ["connections/dev-shop"],
             ["shop.example.com:443"],
         )
 
@@ -87,13 +97,14 @@ def test_bindings_are_written_through_the_api(daemon: Daemon) -> None:
         assert r.json()["handWritten"] == ["extra"] and r.json()["secrets"] == ["extra", "token"]
         assert not path.exists()
         renamed = (bindings_dir(daemon) / "shop-dev.toml").read_text()
-        assert "SHOP_EXTRA_SOURCE" in renamed and "bindings/shop-dev/token" in renamed
+        assert "SHOP_EXTRA_SOURCE" in renamed and "connections/shop-dev/token" in renamed
         paths = [s["path"] for s in c.get("/v1/secrets").json()]
-        assert "bindings/shop-dev/token" in paths and "bindings/dev-shop/token" not in paths
+        assert "connections/shop-dev/token" in paths and "connections/dev-shop/token" not in paths
         assert c.put("/v1/bindings/shop-dev", json=edit | {"addon": "other"}).status_code == 422
 
         # in use by an ad-hoc agent: neither renamed nor deleted
-        ad_hoc = daemon.create_ad_hoc("fake", daemon.make_scope(), bindings=["shop-dev"])
+        uses = [{"addon": "shop", "binding": "shop-dev"}]
+        ad_hoc = daemon.create_ad_hoc("fake", daemon.make_scope(), addons=uses)
         [listed] = [b for b in c.get("/v1/bindings").json() if b["name"] == "shop-dev"]
         assert listed["usedBy"] == [f"ad-hoc/{ad_hoc['id']}"]
         assert c.put("/v1/bindings/shop-dev", json=edit | {"name": "again"}).status_code == 409
@@ -102,4 +113,4 @@ def test_bindings_are_written_through_the_api(daemon: Daemon) -> None:
 
         assert c.delete("/v1/bindings/shop-dev").status_code == 204
         assert c.delete("/v1/bindings/shop-dev").status_code == 404
-        assert not [s for s in c.get("/v1/secrets").json() if s["path"].startswith("bindings/")]
+        assert not [s for s in c.get("/v1/secrets").json() if s["path"].startswith("connections/")]

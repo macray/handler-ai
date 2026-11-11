@@ -3,9 +3,11 @@ daemon has the official source's fake-browser and fake-shop installed (D.26: tes
 
 from pathlib import Path
 
+import pytest
+
 from ..support.daemon import Daemon
 
-MANIFEST = 'apiVersion = "handler.addon/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
+MANIFEST = 'apiVersion = "handler.tool/v1"\nname = "notes"\negress = ["notes.example.com:443"]\n'
 
 
 def test_an_installed_addon_says_where_it_came_from(daemon: Daemon) -> None:
@@ -17,10 +19,11 @@ def test_an_installed_addon_says_where_it_came_from(daemon: Daemon) -> None:
     assert listed["app-builder"]["builtin"] and "source" not in listed["app-builder"]
 
 
+@pytest.mark.rule("tool.installed-as-previewed")
 def test_preview_install_and_remove_from_a_folder(daemon: Daemon, tmp_path: Path) -> None:
     folder = tmp_path / "notes"
     folder.mkdir()
-    (folder / "addon.toml").write_text(MANIFEST)
+    (folder / "tool.toml").write_text(MANIFEST)
     with daemon.http() as c:
         seen = c.post("/v1/addons/preview", json={"source": str(folder)}).json()
         assert seen["egress"] == ["notes.example.com:443"] and "image" not in seen
@@ -32,6 +35,11 @@ def test_preview_install_and_remove_from_a_folder(daemon: Daemon, tmp_path: Path
         assert "notes" not in [a["name"] for a in c.get("/v1/addons").json()]
 
 
+@pytest.mark.rule(
+    "tool.installed-as-previewed",
+    "tool.an-install-stays-in-its-folder",
+    "tool.yours-is-never-replaced",
+)
 def test_what_cannot_be_installed_or_removed(daemon: Daemon) -> None:
     with daemon.http() as c:
         bad = c.post("/v1/addons/preview", json={"source": "relative/notes"})

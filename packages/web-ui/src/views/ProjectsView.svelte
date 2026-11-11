@@ -1,29 +1,36 @@
 <script lang="ts">
-  // Home: every project, by name, so each keeps its place; an area to show only its projects, a
-  // filter. A row opens its project; its pin puts it in the menu or takes it off (new projects
-  // are pinned, and the menu lists only those). With no project yet, the first steps side by
-  // side, the next one marked: connect a model, say where your code is, open a folder. Under the
-  // projects, Other folders: the place of the agents of no project (but Chat's), always there.
+  // Projects, where Handler opens the first time and on the logo: every project, by name, so each
+  // keeps its place; an area to show only its projects, a filter on what the rows show. A row opens
+  // its project: its name and area, its description or its folder (short, whole in the tooltip),
+  // what its sessions do only when they do something, when it was last used, its pin (D.28: only
+  // the first project is pinned by itself; the outline only on hover). One waiting for you is
+  // amber, and its Open session goes to the session waiting longest: the row and the session are
+  // two ways in. With no project yet (no header: the first run's title is the page's), the first
+  // steps side by side, the next one marked: connect a model, say where your code is, a new
+  // project. Under the projects, Agents outside projects: one row, the place of the agents of no
+  // project (but Chat's and apps'), counted, never listed; always there.
   import Check from "@lucide/svelte/icons/check";
-  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Folder from "@lucide/svelte/icons/folder";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
-  import Pin from "@lucide/svelte/icons/pin";
   import PinOff from "@lucide/svelte/icons/pin-off";
+  import PinButton from "../components/PinButton.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import Search from "@lucide/svelte/icons/search";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import Smartphone from "@lucide/svelte/icons/smartphone";
   import Workflow from "@lucide/svelte/icons/workflow";
+  import type { Snippet } from "svelte";
   import { areas } from "../lib/areas.svelte";
   import AreaTag from "../components/AreaTag.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import MenuButton from "../components/MenuButton.svelte";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
+  import { ago, exactTime } from "../lib/agents";
   import { api } from "../lib/api";
   import type { Agent, Project } from "../lib/contracts.gen";
-  import { agentLabel, byName, matches, projects } from "../lib/projects.svelte";
+  import { byName, matches, projects, shortFolder } from "../lib/projects.svelte";
+  import { pins } from "../lib/pins.svelte";
   import { href } from "../lib/router.svelte";
   import { sessions, type LiveSession } from "../lib/sessions.svelte";
 
@@ -86,49 +93,91 @@
     );
   }
 
-  type Activity = { label: string; tone: "warn" | "ok" | "idle" };
+  // waiting: the session waiting longest (the oldest last activity), what Open session opens
+  type Activity = { tone: "warn" | "ok" | "idle"; label: string; waiting?: LiveSession };
   function activityOf(mine: LiveSession[], open: number): Activity | null {
-    const waiting = mine.filter((s) => s.status === "needs-you").length;
-    if (waiting) return { label: waiting === 1 ? "needs you" : `${waiting} need you`, tone: "warn" };
-    if (mine.some((s) => s.status === "working")) return { label: "working", tone: "ok" };
-    return open ? { label: `${open} open`, tone: "idle" } : null;
+    const waiting = mine.filter((s) => s.status === "needs-you");
+    if (waiting.length) {
+      const longest = waiting.reduce((a, b) => (b.info.lastActivityAt < a.info.lastActivityAt ? b : a));
+      return { tone: "warn", label: waiting.length === 1 ? "needs you" : `${waiting.length} need you`, waiting: longest };
+    }
+    if (mine.some((s) => s.status === "working")) return { tone: "ok", label: "working" };
+    return open ? { tone: "idle", label: `${open} open` } : null;
   }
+  const outsideIds = $derived(new Set(outside.map((a) => a.id)));
   const outsideActivity = $derived(
     activityOf(
-      sessions.list.filter((s) => !s.info.projectId),
+      sessions.list.filter((s) => !s.info.projectId && outsideIds.has(s.info.agentId)),
       outside.reduce((n, a) => n + a.connections.length, 0),
     ),
   );
+  // the command line's agents (no name: called by their folder), counted on the row
+  const fromCommandLine = $derived(outside.filter((a) => !a.name).length);
+  const outsideCount = $derived(
+    outside.length
+      ? `${outside.length === 1 ? "1 agent" : `${outside.length} agents`}${fromCommandLine ? ` · ${fromCommandLine} from the command line` : ""}`
+      : "No agent yet",
+  );
 
-  /** A step's card: the next one ringed, the last one dimmed until it is next. */
+  /** A step's card: the next one ringed, the last one flat (an outline, no lift) until it is
+   *  next; its text stays readable: it says why it waits. */
   function card(id: "model" | "folders" | "project"): string {
-    const ring = next === id ? "ring-2 ring-primary" : id === "project" ? "opacity-70" : "";
-    return `flex min-h-56 flex-col gap-2.5 rounded-xl bg-card p-4.5 shadow-panel ${ring}`;
+    const look = next === id ? "shadow-panel ring-2 ring-primary" : id === "project" ? "ring-1 ring-border ring-inset" : "shadow-panel";
+    return `flex min-h-56 flex-col gap-2.5 rounded-xl bg-card p-4.5 ${look}`;
   }
 
-  async function pin(p: Project, pinned: boolean): Promise<void> {
-    error = null;
-    try {
-      await projects.setPinned(p.id, pinned);
-    } catch (e) {
-      error = (e as Error).message;
-      return;
-    }
+  /** Taken off the menu: the toast offers Undo for a while. */
+  function wasUnpinned(p: Project): void {
     clearTimeout(toastTimer);
-    unpinned = pinned ? null : p;
-    if (!pinned) toastTimer = setTimeout(() => (unpinned = null), 6000);
+    unpinned = p;
+    toastTimer = setTimeout(() => (unpinned = null), 6000);
+  }
+
+  async function undo(p: Project): Promise<void> {
+    clearTimeout(toastTimer);
+    unpinned = null;
+    await pins.pin("project", p.id).catch(() => {});
   }
   void areas.load();
 </script>
 
 {#snippet state(s: Activity)}
-  <span class="fact inline-flex shrink-0 items-center gap-1.5 {s.tone === 'warn' ? 'font-semibold text-warn' : ''}" data-testid="project-state">
-    <span class="size-2 rounded-full {s.tone === 'warn' ? 'bg-warn' : s.tone === 'ok' ? 'bg-ok' : 'border-[1.5px] border-muted-foreground'}"></span>{s.label}
-  </span>
+  <!-- one state element: a dot and a word; amber only for needs you; open alone, a hollow dot -->
+  {#if s.tone === "warn"}
+    <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-warn/12 px-2 py-px text-xs font-semibold text-warn ring-1 ring-warn/30 ring-inset" data-testid="project-state"
+      ><span class="size-1.5 rounded-full bg-warn"></span>{s.label}</span
+    >
+  {:else if s.tone === "ok"}
+    <span class="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" data-testid="project-state"><span class="size-1.5 rounded-full bg-ok"></span>{s.label}</span>
+  {:else}
+    <span class="size-2 shrink-0 rounded-full border-[1.5px] border-muted-foreground" title={s.label} aria-label={s.label} data-testid="project-state"></span>
+  {/if}
 {/snippet}
 
-{#snippet pinIcon(pinned: boolean)}
-  <Pin class="size-4 {pinned ? 'fill-current' : ''}" />
+{#snippet openSession(s: Activity | null)}
+  {#if s?.waiting}
+    <Button
+      variant="outline"
+      size="sm"
+      class="relative z-10 h-7 shrink-0 border-warn/40 bg-card font-semibold text-warn hover:bg-warn/10 hover:text-warn"
+      href={href({ view: "session", key: s.waiting.key })}
+      data-testid="open-session">Open session</Button
+    >
+  {/if}
+{/snippet}
+
+{#snippet row(s: Activity | null, testid: string, body: Snippet, end: Snippet)}
+  <!-- 64px, airy; the whole row is its link (`after:inset-0`), its buttons stay apart above it -->
+  <div
+    class="group relative flex min-h-16 items-center gap-4 px-5 py-3 transition-colors {s?.tone === 'warn'
+      ? 'bg-warn/[0.07] before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-warn hover:bg-warn/10'
+      : 'hover:bg-muted/40'}"
+    data-testid={testid}
+  >
+    {@render body()}
+    {@render openSession(s)}
+    {@render end()}
+  </div>
 {/snippet}
 
 {#snippet step(id: "model" | "folders" | "project", n: number, done: boolean)}
@@ -141,16 +190,37 @@
   >
 {/snippet}
 
-<PageHeader titled title="Projects">
-  {#snippet actions()}
-    <Button size="sm" href={href({ view: "edit-project" })} data-testid="new-project"><Plus />New project</Button>
-  {/snippet}
-</PageHeader>
+{#if !(loaded && projects.list.length === 0)}
+  <!-- one column, Apps' width; its controls one line, staying with the title -->
+  <PageHeader title="Projects" width="max-w-[944px]">
+    {#snippet actions()}
+      {#if filters.length}
+        <!-- one area at a time, or all -->
+        <div class="inline-flex rounded-[9px] bg-muted p-0.5 ring-1 ring-border ring-inset" role="group" aria-label="area" data-testid="project-areas">
+          {#each [null, ...filters] as a (a ?? "all")}
+            <button
+              type="button"
+              class="rounded-[7px] px-3 py-1 text-[0.8125rem] transition-colors {area === a ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}"
+              aria-pressed={area === a}
+              onclick={() => (area = a)}>{a === null ? "All" : a === NO_AREA ? "No area" : a}</button
+            >
+          {/each}
+        </div>
+      {/if}
+      <div class="relative">
+        <Search class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input bind:value={query} class="h-8 w-48 pl-8" placeholder="Filter" aria-label="filter projects" data-testid="project-search" />
+      </div>
+      <Button size="sm" class="ml-auto" href={href({ view: "edit-project" })} data-testid="new-project"><Plus />New project</Button>
+    {/snippet}
+  </PageHeader>
+{/if}
 <div class="flex-1 overflow-y-auto">
   {#if loaded && projects.list.length === 0}
     <!-- the first run: three steps side by side, the next one ringed and the only primary button -->
     <section class="mx-auto w-full max-w-4xl space-y-8 px-8 py-14" data-testid="get-started">
       <div class="space-y-2">
+        <div class="-mt-10 mb-4 md:hidden"><MenuButton /></div>
         <h1 class="text-[1.875rem] leading-tight font-semibold tracking-[-0.022em]">Your first project</h1>
         <p class="max-w-2xl text-[0.9375rem] text-muted-foreground">
           A project is a folder and the agents you work on it with. Each agent runs in its own sandbox and sees only that folder.
@@ -178,7 +248,10 @@
           <p class="text-sm text-muted-foreground">
             Agents only work inside these folders{#if roots.length && !existing}. None of them exists yet{/if}:
           </p>
-          <p class="font-mono text-xs text-foreground">{roots.join(", ") || "…"}</p>
+          <!-- a path breaks only after a / or a comma, never inside a name -->
+          <p class="font-mono text-xs text-foreground">
+            {#each (roots.join(", ") || "…").split(/(?<=[/,])/) as part, i (i)}<span class="whitespace-nowrap">{part}</span><wbr />{/each}
+          </p>
           {#if steps.folders}
             <p class="mt-auto flex items-center gap-1.5 text-xs text-ok"><Check class="size-3.5" />{existing === 1 ? "It exists" : `${existing} exist`}</p>
           {:else}
@@ -187,7 +260,7 @@
         </li>
         <li class={card("project")} data-testid="step-project">
           {@render step("project", 3, false)}
-          <h2 class="text-[0.9375rem] font-semibold">Open a folder</h2>
+          <h2 class="text-[0.9375rem] font-semibold">New project</h2>
           <p class="text-sm text-muted-foreground">It becomes a project with a first agent. Then type your first request on its page.</p>
           {#if !steps.model}<p class="text-xs text-muted-foreground">Connect a model first.</p>{/if}
           <Button
@@ -207,71 +280,49 @@
       </div>
     </section>
   {:else}
-    <div class="mx-auto w-full max-w-3xl space-y-6 px-8 py-10">
-      <div class="flex flex-wrap items-center gap-3">
-        <PageTitle title="Projects" />
-        <div class="ml-auto flex flex-wrap items-center gap-2.5">
-          {#if filters.length}
-            <!-- one area at a time, or all -->
-            <div class="inline-flex rounded-[9px] bg-muted p-0.5 ring-1 ring-border ring-inset" role="group" aria-label="area" data-testid="project-areas">
-              {#each [null, ...filters] as a (a ?? "all")}
-                <button
-                  type="button"
-                  class="rounded-[7px] px-3 py-1 text-[0.8125rem] transition-colors {area === a
-                    ? 'bg-card text-foreground shadow-xs'
-                    : 'text-muted-foreground hover:text-foreground'}"
-                  aria-pressed={area === a}
-                  onclick={() => (area = a)}>{a === null ? "All" : a === NO_AREA ? "No area" : a}</button
-                >
-              {/each}
-            </div>
-          {/if}
-          <div class="relative">
-            <Search class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input bind:value={query} class="h-8 w-44 pl-8" placeholder="Filter" aria-label="filter projects" data-testid="project-search" />
-          </div>
-        </div>
-      </div>
-      {#if error || projects.error}<p class="text-sm text-danger">{error ?? projects.error}</p>{/if}
+    <div class="mx-auto w-full max-w-[944px] space-y-4 px-8 pt-5 pb-8">
+      {#if error || projects.error || pins.error}<p class="text-sm text-danger">{error ?? projects.error ?? pins.error}</p>{/if}
 
       {#if loaded}
         {#if listed.length}
-          <!-- one card, a row each, by name; the whole row opens the project, its pin stays apart -->
+          <!-- one card, a row each, by name -->
           <ul class="divide-y overflow-hidden rounded-[10px] border bg-card shadow-panel" aria-label="projects">
             {#each listed as p (p.id)}
               {@const s = activity(p)}
-              <li data-testid="project-row" class="group relative flex items-center gap-3.5 px-4 py-3.5 transition-colors hover:bg-muted/40">
-                <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary">
-                  <Folder class="size-4.5 {p.area ? `area-icon ${areas.colorClass(p.area)}` : 'text-muted-foreground'}" />
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="flex items-center gap-2">
-                    <a
-                      href={href({ view: "project", id: p.id })}
-                      title={p.folder}
-                      class="truncate font-semibold tracking-[-0.01em] text-foreground no-underline after:absolute after:inset-0"
-                      data-testid="project-name">{p.name}</a
-                    >
-                    {#if p.area}<AreaTag name={p.area} />{/if}
+              <li>
+                {#snippet body()}
+                  <Folder class="size-4.5 shrink-0 {p.area ? `area-icon ${areas.colorClass(p.area)}` : 'text-muted-foreground'}" />
+                  <span class="min-w-0 flex-1">
+                    <span class="flex min-w-0 items-center gap-2">
+                      <a
+                        href={href({ view: "project", id: p.id })}
+                        title={p.folder}
+                        class="truncate leading-5 font-semibold tracking-[-0.01em] text-foreground no-underline after:absolute after:inset-0"
+                        data-testid="project-name">{p.name}</a
+                      >
+                      <!-- the area said once: not when only its projects are shown -->
+                      {#if p.area && area === null}<span class="inline-flex opacity-75"><AreaTag name={p.area} /></span>{/if}
+                      {#if s}{@render state(s)}{/if}
+                    </span>
+                    {#if p.description}
+                      <span class="mt-0.5 block truncate text-[0.8125rem] leading-[18px] text-muted-foreground">{p.description}</span>
+                    {:else}
+                      <span class="mt-0.5 block truncate font-mono text-xs leading-[18px] text-muted-foreground" title={p.folder}>{shortFolder(p.folder)}</span>
+                    {/if}
                   </span>
-                  {#if p.description}
-                    <span class="block truncate text-sm text-muted-foreground">{p.description}</span>
-                  {:else}
-                    <span class="fact block truncate">{p.folder}</span>
-                  {/if}
-                </span>
-                {#if s}{@render state(s)}{/if}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="relative z-10 size-8 shrink-0 {p.pinned ? 'text-primary hover:text-primary' : 'text-muted-foreground'}"
-                  title={p.pinned ? "In the menu: unpin" : "Pin to the menu"}
-                  aria-label={p.pinned ? `unpin ${p.name} from the menu` : `pin ${p.name} to the menu`}
-                  aria-pressed={p.pinned}
-                  onclick={() => pin(p, !p.pinned)}
-                  data-testid="project-pin">{@render pinIcon(p.pinned)}</Button
-                >
-                <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                {/snippet}
+                {#snippet end()}
+                  <span
+                    class="w-24 shrink-0 text-right text-xs {s?.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}"
+                    title={p.lastUsedAt ? exactTime(p.lastUsedAt) : undefined}
+                    data-testid="project-last-used">{ago(p.lastUsedAt)}</span
+                  >
+                  <!-- the filled pin always; the outline one on hover or focus -->
+                  <span class={pins.has("project", p.id) ? "" : "opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"}>
+                    <PinButton kind="project" id={p.id} label={p.name} onunpin={() => wasUnpinned(p)} />
+                  </span>
+                {/snippet}
+                {@render row(s, "project-row", body, end)}
               </li>
             {/each}
           </ul>
@@ -280,22 +331,22 @@
             No project {query ? `matches “${query}”` : "in this area"}.
           </p>
         {/if}
-        <!-- the place of the agents of no project (but Chat's and apps'): no pin, it is always in the menu -->
-        <div class="group relative flex items-center gap-3.5 rounded-[10px] border bg-card px-4 py-3.5 shadow-panel transition-colors hover:bg-muted/40" data-testid="outside-row">
-          <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary"><FolderOpen class="size-4.5 text-muted-foreground" /></span>
-          <span class="min-w-0 flex-1">
-            <span class="flex items-center gap-2">
-              <a href={href({ view: "agents" })} class="truncate font-semibold tracking-[-0.01em] text-foreground no-underline after:absolute after:inset-0">Other folders</a>
-              <span class="fact">{outside.length === 1 ? "1 agent" : `${outside.length} agents`}</span>
+        <!-- the place of the agents of no project (but Chat's and apps'): one row, whatever the
+             area or the filter, never hidden; its agents counted, not listed; no pin -->
+        <div class="overflow-hidden rounded-[10px] border bg-card shadow-panel">
+          {#snippet body()}
+            <FolderOpen class="size-4.5 shrink-0 text-muted-foreground" />
+            <span class="min-w-0 flex-1">
+              <span class="flex min-w-0 items-center gap-2">
+                <a href={href({ view: "agents" })} class="truncate leading-5 font-semibold tracking-[-0.01em] text-foreground no-underline after:absolute after:inset-0">Agents outside projects</a>
+                {#if outsideActivity}{@render state(outsideActivity)}{/if}
+              </span>
+              <span class="mt-0.5 block truncate font-mono text-xs leading-[18px] text-muted-foreground" data-testid="outside-count">{outsideCount}</span>
             </span>
-            <span class="block truncate text-sm text-muted-foreground"
-              >Agents of no project, in their own folder{outside.length ? `: ${outside.slice(0, 3).map(agentLabel).join(", ")}${outside.length > 3 ? "…" : ""}` : ""}</span
-            >
-          </span>
-          {#if outsideActivity}{@render state(outsideActivity)}{/if}
-          <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          {/snippet}
+          {#snippet end()}<span class="size-8 shrink-0"></span>{/snippet}
+          {@render row(outsideActivity, "outside-row", body, end)}
         </div>
-        <p class="flex items-center gap-1.5 text-xs text-muted-foreground"><Pin class="size-3" />Pinned projects are in the menu. New ones start pinned.</p>
       {/if}
     </div>
   {/if}
@@ -309,6 +360,6 @@
     data-testid="unpinned-toast"
   >
     <PinOff class="size-4" /><span><b class="font-semibold">{p.name}</b> is no longer in the menu. It stays here.</span>
-    <Button variant="ghost" size="sm" class="font-semibold text-background hover:bg-background/15 hover:text-background" onclick={() => pin(p, true)} data-testid="unpinned-undo">Undo</Button>
+    <Button variant="ghost" size="sm" class="font-semibold text-background hover:bg-background/15 hover:text-background" onclick={() => undo(p)} data-testid="unpinned-undo">Undo</Button>
   </div>
 {/if}

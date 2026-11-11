@@ -1,6 +1,6 @@
 """Chat in the web UI, in a real browser against a real handlerd: Handler's own app for talking
 about anything with no folder of yours. Who you talk to are the agents of no project and no app,
-with no folder, used as a chat; the others of no project are in Other folders. On the model
+with no folder, used as a chat; the others of no project are in Agents outside projects. On the model
 alone, on a stub provider in the test process (no harness image needed)."""
 
 import re
@@ -41,7 +41,7 @@ def daemon(stub: StubLlm) -> Iterator[Daemon]:
 def page(browser: Browser, daemon: Daemon) -> Iterator[Page]:
     context = browser.new_context()
     page = context.new_page()
-    page.goto(f"{daemon.base_url}/#token={daemon.token}")
+    page.goto(daemon.ui_url())
     yield page
     context.close()
 
@@ -57,8 +57,11 @@ def test_someone_new_to_talk_to_then_a_conversation(
     dialog = page.get_by_test_id("chat-new-dialog")
     dialog.get_by_test_id("chat-name").fill("Writing partner")
     dialog.get_by_test_id("chat-instructions").fill("Ask before rewriting; keep my voice.")
-    dialog.get_by_test_id("chat-model-alone").click()
-    dialog.get_by_test_id("access-provider").filter(has_text="stub").click()
+    dialog.get_by_test_id("model-choice-harness").click()  # Who works: the program's chip
+    page.get_by_test_id("model-choice-program-alone").click()
+    dialog.get_by_test_id("model-choice-access").click()
+    page.get_by_test_id("model-choice-access-row").filter(has_text="stub").click()
+    dialog.get_by_test_id("chat-name").click()  # the menu closes
     dialog.get_by_test_id("chat-add").click()
     expect(page.get_by_test_id("chat-pick")).to_contain_text("Writing partner")
     with daemon.http() as c:
@@ -75,7 +78,7 @@ def test_someone_new_to_talk_to_then_a_conversation(
 
 
 def test_chat_and_other_folders_split_the_agents_of_no_project(page: Page, daemon: Daemon) -> None:
-    """An agent of no project is in Other folders, not in Chat; one whose home is Chat is in Chat
+    """An agent of no project is in Agents outside projects, not in Chat; one whose home is Chat is in Chat
     only. Ask's Start a chat about it types what was said in the box."""
     with daemon.http() as c:
         body = {"name": "Claude", "modelAlone": True, "model": {"provider": "stub"}, "chat": True}
@@ -85,7 +88,7 @@ def test_chat_and_other_folders_split_the_agents_of_no_project(page: Page, daemo
     daemon.create_ad_hoc("fake", daemon.make_scope(), name="Notes keeper")
 
     page.goto(f"{daemon.base_url}/#/agents")
-    expect(page.get_by_role("heading", name="Other folders")).to_be_visible()
+    expect(page.get_by_role("heading", name="Agents outside projects")).to_be_visible()
     expect(page.get_by_test_id("outside-yours")).to_contain_text("Notes keeper")
     expect(page.get_by_test_id("outside-yours")).not_to_contain_text("Claude")
 
@@ -96,5 +99,6 @@ def test_chat_and_other_folders_split_the_agents_of_no_project(page: Page, daemo
 
     page.goto(f"{daemon.base_url}/#/agents/{chat['id']}")  # its address opens its place: Chat
     expect(page).to_have_url(re.compile(r"#/chat\?agent="))
+    expect(page.get_by_test_id("sidebar-chat")).to_be_visible()  # its own entry in the menu
     page.goto(f"{daemon.base_url}/#/apps")
-    expect(page.get_by_test_id("chat-card")).to_contain_text("from Handler")
+    expect(page.get_by_test_id("apps-intro")).to_be_visible()  # Apps holds the apps only

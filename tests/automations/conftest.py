@@ -29,7 +29,7 @@ def knowledge() -> Path:
 def daemon(stub: StubLlm, knowledge: Path) -> Iterator[Daemon]:
     yield from start_daemon(
         extra_env={
-            "HANDLER_KNOWLEDGE_DIR": str(knowledge),
+            "HANDLER_NOTES_DIR": str(knowledge),
             "HANDLER_TEST_FAKE_TOOLBOX": "1",
             "HANDLER_TEST_STUB_KEY": STUB_KEY,
         },

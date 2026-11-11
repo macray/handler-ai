@@ -11,6 +11,31 @@
         "path": {
           "title": "Path",
           "type": "string"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Branch"
+        },
+        "changedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changedat"
         }
       },
       "required": [
@@ -21,7 +46,7 @@
       "type": "object"
     }
   },
-  "description": "Folder picker (UI): sub-directories of a path inside the work folders (D.13).",
+  "description": "Folder picker (UI): sub-directories of a path inside the work folders, or the folders in\nthem changed last (D.13).",
   "properties": {
     "path": {
       "anyOf": [

@@ -16,7 +16,7 @@ import json
 import secrets
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -145,7 +145,7 @@ class AppRuns:
 
     def update(self, app: str, run_id: str, **fields: Any) -> None:
         runs = self.load(app)
-        self.save(app, [_replace(r, fields) if r.id == run_id else r for r in runs])
+        self.save(app, [replace(r, **fields) if r.id == run_id else r for r in runs])
 
     # ── its state: its session's ────────────────────────────────────────
 
@@ -232,7 +232,3 @@ class AppRuns:
             task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.gather(*self.watchers, return_exceptions=True)
-
-
-def _replace(record: RunRecord, fields: dict[str, Any]) -> RunRecord:
-    return RunRecord(**asdict(record) | fields)

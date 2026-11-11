@@ -1,4 +1,4 @@
-"""Contract H — App (`handler.app/v1`), docs/dev/design/apps.md.
+"""Contract H — App (`handler.app/v1`), apps design.
 
 An app's code is a folder written by an agent (with the `app-builder` addon's skill): a manifest
 (`app.toml`), a Bun backend in its own directory, a built UI. handler runs it on demand in a
@@ -21,8 +21,7 @@ APP_API_VERSION = "handler.app/v1"
 MANIFEST_FILE = "app.toml"
 
 # The runtime every app runs on (H.3). Pinned: an app is tested against it when it is deployed.
-# The default toolbox installs the same Bun version for the agents that write apps (B.6: the
-# person may change it; a rebuild only checks that Bun is there).
+# The app-builder addon installs the same Bun version for the agents that write apps.
 RUNTIME_VERSION = "1.4.2"
 RUNTIME_IMAGE = f"docker.io/oven/bun:{RUNTIME_VERSION}-distroless"
 

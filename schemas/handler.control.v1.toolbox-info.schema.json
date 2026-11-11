@@ -1,6 +1,92 @@
 {
   "$id": "urn:handler.control/v1/toolbox-info",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ToolboxNeed": {
+      "description": "A command what is in use needs from the toolbox (B.6): one of `commands`, who needs it,\nand what gives it.",
+      "properties": {
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "neededBy": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Neededby",
+          "type": "array"
+        },
+        "providedBy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providedby"
+        }
+      },
+      "required": [
+        "commands",
+        "neededBy"
+      ],
+      "title": "ToolboxNeed",
+      "type": "object"
+    },
+    "ToolboxSystemPackage": {
+      "description": "A system package turned on in the toolbox (B.7).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "builtVersion": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Builtversion"
+        },
+        "neededBy": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Neededby",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ToolboxSystemPackage",
+      "type": "object"
+    }
+  },
+  "description": "GET /v1/toolbox (D.2): the toolbox image, what it is made of, and who needs what.",
   "properties": {
     "image": {
       "title": "Image",
@@ -26,6 +112,54 @@
     "directory": {
       "title": "Directory",
       "type": "string"
+    },
+    "distro": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Distro"
+    },
+    "systemPackages": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ToolboxSystemPackage"
+      },
+      "title": "Systempackages",
+      "type": "array"
+    },
+    "commands": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "title": "Commands",
+      "type": "object"
+    },
+    "needs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ToolboxNeed"
+      },
+      "title": "Needs",
+      "type": "array"
+    },
+    "problem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Problem"
     }
   },
   "required": [

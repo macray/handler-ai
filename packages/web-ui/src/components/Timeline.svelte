@@ -21,11 +21,12 @@
   import { Button } from "$lib/components/ui/button";
   import { clockTime, dayOf, exactTime } from "../lib/agents";
 
-  let { entries, shown = 8, empty }: { entries: TimelineEntry[]; shown?: number; empty: string } = $props();
+  let { entries, empty }: { entries: TimelineEntry[]; empty: string } = $props();
 
+  const SHOWN = 8; // the latest ones, until "all" is asked
   let all = $state(false);
   const sorted = $derived([...entries].sort((a, b) => b.at.localeCompare(a.at)));
-  const visible = $derived(all ? sorted : sorted.slice(0, shown));
+  const visible = $derived(all ? sorted : sorted.slice(0, SHOWN));
   const days = $derived(
     visible.reduce<{ day: string; entries: TimelineEntry[] }[]>((out, e) => {
       const day = dayOf(e.at);

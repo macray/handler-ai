@@ -5,6 +5,4 @@ description = "Ollama on this machine"
 [endpoints]
 openai-chat = "http://127.0.0.1:11434/v1"
 
-[[models]]
-id = "qwen3:8b"
-name = "Qwen3 8B (a model you pulled)"
+# no model: Test in the form (or `handler provider test NAME`) lists the models you pulled

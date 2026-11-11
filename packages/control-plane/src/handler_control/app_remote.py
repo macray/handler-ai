@@ -1,4 +1,4 @@
-"""Apps from paired devices (H.8, docs/dev/design/apps.md §5.2): the `app:<name>` channel
+"""Apps from paired devices (H.8, apps design §5.2): the `app:<name>` channel
 of the remote connector. The phone never talks to the app's origin: it gets the app's UI as one
 self-contained HTML page, shows it in a sandboxed frame with no network, and carries its backend
 calls here, sealed like everything else.

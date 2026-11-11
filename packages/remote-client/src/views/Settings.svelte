@@ -66,6 +66,29 @@
         data-testid="push-toggle"
       ><span></span></button>
     </div>
+    {#if app.pushOn}
+      <div class="card row">
+        <span class="text">
+          <span>Send a test notification</span>
+          {#if app.pushTest === "sent"}
+            <span class="hint" data-testid="push-test-sent">
+              Two notifications: "Test 1 of 2: shown by this phone", then "Something new for you" from
+              the host within a few seconds. Only the first? The push is lost on its way to this
+              phone. Neither? This phone's settings block notifications (its own, or the browser's).
+            </span>
+          {:else}
+            <span class="hint">Checks that this phone shows notifications, then that the host's reach it.</span>
+          {/if}
+        </span>
+        <button
+          type="button"
+          class="secondary"
+          disabled={app.pushTest === "sending"}
+          onclick={() => app.testPush()}
+          data-testid="push-test"
+        >{app.pushTest === "sending" ? "Sending…" : "Send"}</button>
+      </div>
+    {/if}
     {#if app.pushError}<p class="error">{app.pushError}</p>{/if}
   </section>
 
@@ -220,6 +243,16 @@
     border-radius: 8px;
     color: var(--danger);
     font-size: 0.9em;
+  }
+  .secondary {
+    flex: none;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9em;
+  }
+  .secondary:disabled {
+    opacity: 0.6;
   }
   .error {
     color: var(--danger);

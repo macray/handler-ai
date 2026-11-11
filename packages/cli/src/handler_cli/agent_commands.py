@@ -140,10 +140,16 @@ def show(d: Daemon, a: dict[str, Any]) -> None:
     print(f"  network      {network_mode(a)}")
     if a.get("allow"):
         print(f"  its hosts    {', '.join(a['allow'])}")
+    if a.get("blocked"):
+        print(f"  kept blocked {', '.join(a['blocked'])}")
     print(f"  permissions  {a['permissions']}")
-    for key, label in (("bindings", "bindings"), ("knowledge", "knowledge"), ("skills", "skills")):
+    own = [addon_label(u) for u in a.get("addons", [])]
+    given = [f"{addon_label(u)} (its project's)" for u in a.get("projectAddons", [])]
+    if own or given:
+        print(f"  {'tools':<12} {', '.join([*own, *given])}")
+    for key, word in (("knowledge", "notes"), ("skills", "skills")):
         if a.get(key):
-            print(f"  {label:<12} {', '.join(a[key])}")
+            print(f"  {word:<12} {', '.join(a[key])}")
     if a.get("confinement", "strict") != "strict":
         print(f"  containers   {'yes' if a['confinement'] == 'nested' else a['confinement']}")
     if a.get("display"):
@@ -173,13 +179,20 @@ def network_mode(a: dict[str, Any]) -> str:
 
 def print_network(d: Daemon, a: dict[str, Any]) -> None:
     print(f"network {network_mode(a)}" + (f" + {', '.join(a['allow'])}" if a.get("allow") else ""))
+    if a.get("blocked"):
+        print(f"kept blocked {', '.join(a['blocked'])}")
     events = d.call("GET", f"/v1/agents/{a['id']}/egress-events")
     if not events:
         print("no connection yet")
         return
     rows = [["TIME", "DECISION", "HOST", "CONNECTION"]]
-    rows += [[e["t"][11:19], e["decision"], e["host"], e["connection"]] for e in events]
+    rows += [[e["t"][11:19], e["decision"], connected(e), e["connection"]] for e in events]
     table(rows)
+
+
+def connected(event: dict[str, Any]) -> str:
+    """Its host, and why it could not connect (`unreached`)."""
+    return f"{event['host']} ({event['error']})" if event.get("error") else event["host"]
 
 
 def runs(w: dict[str, Any]) -> str:
@@ -197,18 +210,25 @@ def model_label(m: dict[str, Any]) -> str:
     return " · ".join([program(m), access, *([m["model"]] if m.get("model") else [])])
 
 
+def addon_label(use: dict[str, Any]) -> str:
+    """A tool an agent uses (G.3): `app-builder`, `shopify=my-shop` (with its connection)."""
+    return use["addon"] + (f"={use['binding']}" if use.get("binding") else "")
+
+
 def describe_agent(w: dict[str, Any], *, runs_too: bool = True) -> str:
     """Its settings in one line, the defaults left out: `runs=… network=filtered/log-only
-    +2 hosts bindings=… knowledge=… containers display`."""
+    +2 hosts tools=… notes=… containers display`."""
     network = w["network"] + (f"/{w['egress']}" if w.get("egress") == "log-only" else "")
     parts = [f"runs={runs(w)}"] if runs_too else []
     parts.append(f"network={network}" + (f" +{len(w['allow'])} hosts" if w.get("allow") else ""))
+    if w.get("blocked"):
+        parts.append(f"kept-blocked={','.join(w['blocked'])}")
     if w["permissions"] != "bypass":
         parts.append(f"permissions={w['permissions']}")
-    if w.get("bindings"):
-        parts.append(f"bindings={','.join(w['bindings'])}")
+    if w.get("addons"):
+        parts.append(f"tools={','.join(map(addon_label, w['addons']))}")
     if w.get("knowledge"):
-        parts.append(f"knowledge={','.join(w['knowledge'])}")
+        parts.append(f"notes={','.join(w['knowledge'])}")
     if w.get("confinement", "strict") != "strict":
         parts.append("containers" if w["confinement"] == "nested" else w["confinement"])
     if w.get("display"):

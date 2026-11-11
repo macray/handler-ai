@@ -21,11 +21,13 @@ from handler_contracts import (
     ProviderRequest,
     ProviderTemplate,
     StoreSecret,
+    TemplateProvider,
 )
 from handler_harness import catalog
 
 from . import secrets
 from .files import describe, write_private
+from .settings import TEMPLATES
 
 
 class ProviderError(ValueError):
@@ -72,7 +74,7 @@ def problems(provider: Provider, store: secrets.SecretStore) -> list[str]:
     if ref is None or isinstance(ref, CommandSecret):
         return []
     try:
-        secrets.resolve_all({"apiKey": ref}, store)
+        secrets.resolve(ref, store)
     except secrets.SecretError as e:
         return [f"apiKey: {e}"]
     return []
@@ -87,19 +89,23 @@ def harnesses(provider: Provider) -> list[str]:
     ]
 
 
-def templates(templates_dir: Path) -> list[ProviderTemplate]:
-    return [
-        ProviderTemplate(
-            name=loaded.name,
-            description=p.description,
-            endpoints=dict(p.endpoints),
-            models=p.models,
-            needs_key=p.api_key is not None,
-            files=p.files,
+def templates() -> list[ProviderTemplate]:
+    """Valid providers but for their models: a local server's has none, they are picked from
+    what it serves."""
+    found = []
+    for path in sorted((TEMPLATES / "providers").glob("*.toml")):
+        p = TemplateProvider.from_toml(path.read_text())
+        found.append(
+            ProviderTemplate(
+                name=path.stem,
+                description=p.description,
+                endpoints=dict(p.endpoints),
+                models=p.models,
+                needs_key=p.api_key is not None,
+                files=p.files,
+            )
         )
-        for loaded in load_all(templates_dir / "providers")
-        if (p := loaded.provider) is not None
-    ]
+    return found
 
 
 def key_path(name: str) -> str:

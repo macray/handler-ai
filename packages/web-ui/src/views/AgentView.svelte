@@ -34,14 +34,14 @@
 </script>
 
 {#if part && app}
-  <PageHeader title={agentLabel(part)} parent={{ label: app, href: href({ view: "apps", app }) }} titled />
+  <PageHeader width="max-w-4xl" title={agentLabel(part)} parent={{ label: app, href: href({ view: "apps", app }) }} />
   <div class="flex-1 overflow-y-auto">
     <div class="mx-auto w-full max-w-4xl px-8 py-8">
       <AgentWorkspace agent={part} {list} {automations} edit={href({ view: "edit-ad-hoc", id: part.id })} partOf={app} />
     </div>
   </div>
 {:else}
-  <PageHeader title="Agent" titled />
+  <PageHeader width="max-w-4xl" title="Agent" />
   <div class="mx-auto w-full max-w-4xl px-8 py-10">
     {#if error}<p class="text-sm text-danger">{error}</p>{:else}<p class="text-sm text-muted-foreground">Loading…</p>{/if}
   </div>

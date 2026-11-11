@@ -4,7 +4,8 @@
 
 export type SkillDoc = { name: string; description: string; other: string; body: string };
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n?---[ \t]*(?:\r?\n|$)/;
+/** A leading `---` block (its text: group 1). */
+export const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n?---[ \t]*(?:\r?\n|$)/;
 const KEY = /^([A-Za-z0-9_-]+):(.*)$/;
 
 /** Its top-level entries: each key with the lines that continue it (indented, or blank). */

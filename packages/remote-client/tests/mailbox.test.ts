@@ -1,4 +1,4 @@
-// What the phone takes from the host (docs/dev/design/remote.md §4): each envelope once, before
+// What the phone takes from the host (remote design §4): each envelope once, before
 // it expires, a reload included; an answer only for the request it answers, on its channel. The
 // gateway may replay old envelopes, which the host sealed and the phone opens.
 import { beforeEach, describe, expect, it, vi } from "vitest";

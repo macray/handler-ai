@@ -13,7 +13,6 @@ user's, nothing follows the definition.
 """
 
 import json
-import shutil
 import tomllib
 from pathlib import Path
 
@@ -87,7 +86,3 @@ def install_skills(folder: Path, skills_dir: Path) -> list[str]:
             target.mkdir(parents=True)
             skills.copy(folder / "skills" / name, target)
     return names
-
-
-def remove(folder: Path) -> None:
-    shutil.rmtree(folder, ignore_errors=True)

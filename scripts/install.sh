@@ -12,6 +12,7 @@
 set -eu
 
 PACKAGE="${HANDLER_WHEEL:-handler-ai}"
+SHELL_PATH="$PATH"  # the PATH of the terminal that runs this script
 
 say() { printf '%s\n' "$*"; }
 fail() { say "handler install: $*" >&2; exit 1; }
@@ -43,9 +44,13 @@ say "Installing handler…"
 uv tool install --force --python '>=3.12' "$PACKAGE"
 
 bin=$(uv tool dir --bin)
-case ":$PATH:" in
-    *":$bin:"*) ;;
-    *) say "Add $bin to your PATH (\`uv tool update-shell\` does it), then open a new shell." ;;
-esac
 say ""
-say "handler is installed. Next: handler setup"
+case ":$SHELL_PATH:" in
+    *":$bin:"*) say "handler is installed. Next: handler setup" ;;
+    *)
+        say "handler is installed in $bin, which this terminal does not find yet."
+        say "Next, in a new terminal: handler setup"
+        say "(if it is still not found there, run \`uv tool update-shell\` and open another one)"
+        say "Or in this terminal: $bin/handler setup"
+        ;;
+esac

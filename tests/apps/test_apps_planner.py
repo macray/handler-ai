@@ -1,8 +1,8 @@
-"""H.12, H.13 and D.24 with Handler's own Planner, in podman: installed from Handler's copy, given
-its folder and its agent (set up from its definition on the fake harness), deployed (its own
+"""H.12, H.13 and D.24 with Handler's own Planner, in a real sandbox: installed from Handler's
+copy, given its folder and its agent (set up from its definition on the fake harness), deployed (its own
 tests run), then asked: by its code (calendar.md written, a clash said, at once), by its agent (a
 run, whose result is the action's), and through Ask (the router on the model alone, a stub
-provider playing it). Planner is the registry's: opt-in, HANDLER_TEST_REGISTRY."""
+provider playing it). Planner is the private registry's: opt-in, HANDLER_TEST_REGISTRY."""
 
 import json
 import time
@@ -14,14 +14,13 @@ import pytest
 
 from handler_control.secrets import SecretStore
 
-from ..support import dev_env
 from ..support.daemon import FAKE_SECRET, Daemon, start_daemon
 from ..support.remote import Device, DeviceError, Gateway, start_gateway
 from ..support.sources import REGISTRY, requires_registry
 from ..support.stub_llm import StubLlm
-from .conftest import api, requires_podman
+from .conftest import api, real_sandbox_env, requires_app_runtime
 
-pytestmark = [requires_podman, requires_registry]
+pytestmark = [requires_app_runtime, requires_registry("apps/planner")]
 
 
 ROUTER = Path(__file__).parents[2] / (
@@ -56,7 +55,7 @@ def daemon(data_root: Path, stub: StubLlm) -> Iterator[Daemon]:
     providers = {"stub": stub.provider()}
     assert REGISTRY is not None
     yield from start_daemon(
-        extra_env=env | dev_env.home_env(), extra_providers=providers, source=REGISTRY, addons=()
+        extra_env=env | real_sandbox_env(), extra_providers=providers, source=REGISTRY, addons=()
     )
 
 
@@ -95,6 +94,7 @@ def installed(daemon: Daemon, folder: Path) -> dict[str, Any]:
     return r.json()
 
 
+@pytest.mark.rule("action.done-by-its-code-or-its-agent")
 def test_its_actions_are_listed_with_their_forms(installed: dict[str, Any]) -> None:
     actions = {a["name"]: a for a in installed["actions"]}
     assert {n: a["by"] for n, a in actions.items()} == {
@@ -108,6 +108,7 @@ def test_its_actions_are_listed_with_their_forms(installed: dict[str, Any]) -> N
     assert actions["add"]["examples"][0] == "Tomorrow I call the bank at 10"
 
 
+@pytest.mark.rule("action.done-by-its-code-or-its-agent")
 def test_an_ask_done_by_its_code(daemon: Daemon, installed: dict[str, Any], folder: Path) -> None:
     add = {"fields": {"what": "Dentist", "day": "2026-10-21", "time": "11:00"}}
     r = api(daemon, "POST", "/v1/apps/planner/actions/add", add)
@@ -128,6 +129,7 @@ def test_an_ask_done_by_its_code(daemon: Daemon, installed: dict[str, Any], fold
     assert api(daemon, "POST", "/v1/apps/planner/actions/nope", {}).status_code == 404
 
 
+@pytest.mark.rule("action.done-by-its-code-or-its-agent")
 def test_an_ask_done_by_its_agent(daemon: Daemon, installed: dict[str, Any]) -> None:
     answer = {"status": "attention", "summary": "The bank first, then the dentist."}
     fields = {"request": "Plan my day.", "fake": "valid", "answer": answer}  # the fake agent's
@@ -145,12 +147,19 @@ def test_an_ask_done_by_its_agent(daemon: Daemon, installed: dict[str, Any]) -> 
     assert (session["origin"], session["app"]) == ("app", "planner")
 
 
+@pytest.mark.rule("router.the-one-you-gave")
 def test_ask_without_a_router(daemon: Daemon, installed: dict[str, Any]) -> None:
     said = {"turns": [{"who": "you", "text": "Tomorrow I call the bank at 10"}]}
     r = api(daemon, "POST", "/v1/ask", said)
     assert r.status_code == 409 and "Ask router" in r.json()["detail"]
 
 
+@pytest.mark.rule(
+    "ask.only-the-actions-offered",
+    "ask.a-pick-runs-at-once-as-the-owner",
+    "ask.none-leads-to-chat",
+    "router.one-run-per-ask",
+)
 def test_ask_routes_to_an_ask_and_runs_it(
     daemon: Daemon, installed: dict[str, Any], stub: StubLlm, folder: Path
 ) -> None:
@@ -198,6 +207,7 @@ def gateway() -> Iterator[Gateway]:
     yield from start_gateway()
 
 
+@pytest.mark.rule("ask.the-owner-s-devices-only")
 def test_ask_from_the_owner_s_phone(
     daemon: Daemon, installed: dict[str, Any], gateway: Gateway
 ) -> None:

@@ -30,6 +30,38 @@
       ],
       "title": "RuntimeCheckItem",
       "type": "object"
+    },
+    "RuntimeSupports": {
+      "description": "What a runtime gives on this host (A.8): a spec needing an ability it lacks is refused\n(A1), and an agent needing one is refused when it is saved (D.2).",
+      "properties": {
+        "isolation": {
+          "title": "Isolation",
+          "type": "string"
+        },
+        "abilities": {
+          "items": {
+            "enum": [
+              "nested",
+              "privileged",
+              "display"
+            ],
+            "type": "string"
+          },
+          "title": "Abilities",
+          "type": "array"
+        },
+        "limits": {
+          "title": "Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isolation",
+        "abilities",
+        "limits"
+      ],
+      "title": "RuntimeSupports",
+      "type": "object"
     }
   },
   "description": "What `handler-sandbox-<impl> check` prints (A.8): can this host run sandboxes.",
@@ -48,6 +80,17 @@
       },
       "title": "Items",
       "type": "array"
+    },
+    "supports": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeSupports"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

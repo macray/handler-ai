@@ -4,7 +4,7 @@ handler-harness list                     harnesses and their image (images are b
                                          `handler image rebuild toolbox` builds the toolbox then
                                          every harness image; `handler image list` shows their
                                          versions)
-handler-harness render NAME SCOPE (--account FILE | --provider FILE) [--model M]
+handler-harness render NAME (--account FILE | --provider FILE) [--model M]
                    [--permissions MODE]  show the HarnessLaunch of harness NAME on that account
                                          or provider (the login, keys and config file contents
                                          replaced by placeholders), for an agent in permission
@@ -31,7 +31,6 @@ def cmd_list() -> int:
 
 def cmd_render(
     name: str,
-    scope: str,
     *,
     account_file: Path | None,
     provider_file: Path | None,
@@ -58,7 +57,6 @@ def cmd_render(
         launch = render(
             harness.descriptor,
             agent,
-            scope,
             file_placeholders,
             provider_key=key,
             account_token=token,
@@ -81,7 +79,6 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list")
     r = sub.add_parser("render")
     r.add_argument("name")
-    r.add_argument("scope")
     access = r.add_mutually_exclusive_group(required=True)
     access.add_argument("--account", type=Path, help="an account file (accounts/<name>.toml)")
     access.add_argument("--provider", type=Path, help="a provider file (providers/<name>.toml)")
@@ -97,7 +94,6 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list()
     return cmd_render(
         args.name,
-        args.scope,
         account_file=args.account,
         provider_file=args.provider,
         model=args.model,

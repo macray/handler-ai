@@ -4,13 +4,18 @@ A pure state machine, independent of any transport: feed it one JSON-RPC message
 (`from_client` / `from_agent`) and it returns what to send and to whom. The WebSocket relay
 (relay.py) is just a transport around it.
 
-    P1  initialize: force clientCapabilities fs/terminal off
-    P2  session/new|load|resume: cwd must be inside the agent's scope
-    P3  session/new|load|resume: HTTP MCP servers must be reachable under the network policy
+It refuses by default: the agent works in its sandbox with its own tools, so it is offered nothing
+of the client's computer, and gets through to a client only what Handler knows.
+
+    P1  initialize: the client capabilities are fs and terminal, both off; any other is dropped
+    P2  session/new|load|resume, and any request carrying a cwd: it must be inside the agent's
+        scope
+    P3  the same requests: HTTP MCP servers must be reachable under the network policy
         (checked after P8, so the platform's own servers are checked too)
-    P4  agent→client fs/* and terminal/*: never forwarded, the agent gets an error
+    P4  agent→client: only the known requests and notifications pass (and extensions'
+        notifications, P6); another request gets an error, another notification is dropped
     P5  client→agent `$/…` notifications (heartbeats): dropped
-    P6  `_…` extension methods: forwarded, logged
+    P6  `_…` extension methods: forwarded, logged (from the agent: its notifications only, P4)
     P7  after session/new or session/load: apply session defaults (mode, config options) before
         the client sees the session; failure → the client gets an error, never a session in
         the wrong mode (a loaded session runs in a new sandbox: the agent's mode applies again)
@@ -29,8 +34,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from handler_contracts import (
-    BLOCKED_AGENT_METHOD_PREFIXES,
-    CWD_CHECKED_METHODS,
+    AGENT_NOTIFICATIONS,
+    AGENT_REQUESTS,
+    SESSION_METHODS,
     FilteredNetwork,
     NetworkPolicy,
     NoNetwork,
@@ -141,8 +147,9 @@ class AcpPolicy:
             return []  # P5
         if method == "initialize" and is_request(m):
             return [ToAgent(self._force_capabilities(m))]  # P1
-        if method in CWD_CHECKED_METHODS and is_request(m):
-            m = self._add_mcp_servers(m)  # P8
+        if is_request(m) and (method in SESSION_METHODS or has_cwd(m)):
+            if method in SESSION_METHODS:
+                m = self._add_mcp_servers(m)  # P8
             if refusal := self.check_session_params(m):
                 return [ToClient(refusal)]  # P2 / P3
             if method in ("session/new", "session/load"):
@@ -163,10 +170,13 @@ class AcpPolicy:
 
     def _force_capabilities(self, m: Message) -> Message:
         params = dict(m.get("params") or {})
-        caps = dict(params.get("clientCapabilities") or {})
-        caps["fs"] = {"readTextFile": False, "writeTextFile": False}
-        caps["terminal"] = False
-        params["clientCapabilities"] = caps
+        caps = params.get("clientCapabilities")
+        if isinstance(caps, dict) and (dropped := sorted(set(caps) - {"fs", "terminal"})):
+            self.on_event(f"client capabilities dropped: {', '.join(dropped)}")
+        params["clientCapabilities"] = {
+            "fs": {"readTextFile": False, "writeTextFile": False},
+            "terminal": False,
+        }
         return m | {"params": params}
 
     def _add_mcp_servers(self, m: Message) -> Message:
@@ -219,9 +229,9 @@ class AcpPolicy:
 
     def from_agent(self, m: Message) -> list[Action]:
         method = m.get("method")
-        if isinstance(method, str) and method.startswith(BLOCKED_AGENT_METHOD_PREFIXES):
+        if "method" in m and not agent_may_send(m):  # P4
             self.on_event(f"blocked agent→client {method}")
-            if is_request(m):  # P4
+            if is_request(m):
                 reply = error_response(
                     m["id"], PolicyErrorCode.NOT_PERMITTED, "P4", "not permitted by sandbox policy"
                 )
@@ -293,6 +303,21 @@ class AcpPolicy:
                 for o in result["configOptions"]
             ]
         return response | {"result": result}
+
+
+def has_cwd(m: Message) -> bool:
+    params = m.get("params")
+    return isinstance(params, dict) and "cwd" in params
+
+
+def agent_may_send(m: Message) -> bool:
+    """P4: the requests and notifications Handler knows, and extensions' notifications."""
+    method = m.get("method")
+    if not isinstance(method, str):
+        return False
+    if is_request(m):
+        return method in AGENT_REQUESTS
+    return method in AGENT_NOTIFICATIONS or method.startswith("_")
 
 
 def instructed(instructions: str, params: Message) -> list[Any]:

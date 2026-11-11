@@ -76,7 +76,8 @@
         "automation",
         "app",
         "check",
-        "ask"
+        "ask",
+        "plan"
       ],
       "title": "Origin",
       "type": "string"

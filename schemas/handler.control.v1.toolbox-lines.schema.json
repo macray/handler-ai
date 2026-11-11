@@ -1,0 +1,17 @@
+{
+  "$id": "urn:handler.control/v1/toolbox-lines",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The user's own lines of the toolbox (`custom.containerfile`, B.7), appended last.",
+  "properties": {
+    "content": {
+      "maxLength": 262144,
+      "title": "Content",
+      "type": "string"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "ToolboxLines",
+  "type": "object"
+}

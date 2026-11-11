@@ -3,6 +3,7 @@ apiVersion = "handler.harness/v1"
 name = "pi"
 product = "pi"
 image = "localhost/handler-ai-pi"  # no tag: launches use :latest (contract B.6)
+needs = ["node", "npm", "jq"]  # what its recipe installs with, from the toolbox (B.6)
 acpCommand = ["pi-acp"]
 home = "/home/agent"
 
@@ -24,10 +25,6 @@ skillsDir = "~/.pi/agent/skills"
 mcpTransports = ["stdio", "http", "sse"]
 mcpEnv = "sandbox"
 mcpConfigFile = "~/.config/mcp/mcp.json"
-
-# pi writes its state under ~/.pi/agent (sessions, trust.json, settings.json) and pi-acp its
-# session map under ~/.pi/pi-acp: writable, including when files are mounted inside it.
-writablePaths = ["~/.pi"]
 
 [env]
 NODE_USE_ENV_PROXY = "1"     # Node's fetch only honours HTTPS_PROXY with this

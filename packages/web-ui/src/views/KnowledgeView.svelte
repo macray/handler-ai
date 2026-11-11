@@ -1,13 +1,14 @@
 <script lang="ts">
-  // Knowledge (D.5): the knowledge root (where it is, changed here unless HANDLER_KNOWLEDGE_DIR sets
-  // it), its folders (browse, create) and their notes, read-only. A folder's _index.md, when there
-  // is one, is shown first: its summary, then its overview. Each agent gets the folders
-  // selected in its settings; "Use in a new project" opens the project editor with the folder selected.
-  // The root is changed, and a folder made, in a dialog.
+  // Notes (D.5; in the files and the API, knowledge), the Library's Notes shelf: the notes root
+  // (where it is, changed here unless HANDLER_NOTES_DIR sets it), its folders (browse, create)
+  // and their notes, read-only. There is nothing to set up: the default root is made by handlerd.
+  // A folder's _index.md, when there is one, is shown first: its summary, then its overview. Each
+  // agent gets the folders selected in its settings (only there). The root is changed, and a
+  // folder made, in a dialog; the root's is one path, its button saying what it will do
+  // (Use this folder / Create this folder, from GET /v1/knowledge/check).
   import UsesPanel from "../components/UsesPanel.svelte";
   import BookOpen from "@lucide/svelte/icons/book-open";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
-  import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import FileText from "@lucide/svelte/icons/file-text";
   import Folder from "@lucide/svelte/icons/folder";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
@@ -15,11 +16,10 @@
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import Dialog from "../components/Dialog.svelte";
-  import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
+  import { LIBRARY_WIDTH } from "../lib/library";
   import { markdown } from "@handler/acp-view/lib/render";
   import { api } from "../lib/api";
-  import type { KnowledgeFolderView, KnowledgeListing, KnowledgeNote } from "../lib/contracts.gen";
+  import type { KnowledgeFolderView, KnowledgeListing, KnowledgeNote, KnowledgeRootCheck } from "../lib/contracts.gen";
   import { dirname, join, resolveLink, splitFrontmatter } from "../lib/knowledge";
   import { href, navigate } from "../lib/router.svelte";
 
@@ -33,6 +33,7 @@
   let editingRoot = $state(false);
   let newFolder = $state("");
   let makingFolder = $state(false); // the "New folder" dialog open
+  let rootCheck = $state<KnowledgeRootCheck | null>(null); // what the typed root is
 
   const folder = $derived(note ? dirname(note) : path);
   const shown = $derived(opened ? splitFrontmatter(opened.text) : view?.index ? splitFrontmatter(view.index) : null);
@@ -67,6 +68,20 @@
         (e: Error) => (error = e.message),
       );
     else opened = null;
+  });
+
+  // what the typed root is, a moment after typing stops
+  $effect(() => {
+    const typed = rootInput.trim();
+    rootCheck = null;
+    if (!editingRoot || !typed) return;
+    const timer = setTimeout(() => {
+      api.checkKnowledgeRoot(typed).then(
+        (c) => rootInput.trim() === typed && ((rootCheck = c), (error = null)),
+        (e: Error) => rootInput.trim() === typed && (error = e.message),
+      );
+    }, 250);
+    return () => clearTimeout(timer);
   });
 
   async function saveRoot(root: string | null, create = false): Promise<void> {
@@ -110,39 +125,21 @@
   }
 </script>
 
-<PageHeader titled title="Knowledge">
-  {#snippet actions()}
-    {#if listing?.exists}
-      <Button variant="outline" size="sm" href={href({ view: "edit-project", knowledge: folder })} data-testid="use-knowledge">
-        Use {folder === "." ? listing.root.split("/").at(-1) : folder.split("/").at(-1)} in a new project
-      </Button>
-    {/if}
-  {/snippet}
-</PageHeader>
 <div class="flex-1 overflow-y-auto">
-  <div class="mx-auto w-full max-w-6xl space-y-8 px-8 py-10">
-    <PageTitle
-      title="Knowledge"
-      description="Folders of notes your agents can read, chosen in each agent's settings. Agents read them at /knowledge/<name>, never write them: you edit the notes in your editor or Obsidian."
-    />
+  <div class="mx-auto w-full {LIBRARY_WIDTH} space-y-6 px-8 py-6">
     {#if error && !editingRoot && !makingFolder}<p class="text-sm text-danger" data-testid="knowledge-error">{error}</p>{/if}
 
     <div class="flex items-center gap-4 rounded-[10px] border bg-card px-4 py-3.5 text-sm shadow-panel">
       <span class="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground sm:flex"><BookOpen class="size-4" /></span>
       <div class="min-w-0 flex-1 space-y-0.5">
         <p class="truncate font-mono text-[13px]" title={listing?.root} data-testid="knowledge-root">{listing?.root ?? "…"}</p>
-        {#if listing && !listing.exists}
-          <p class="inline-flex items-center gap-1 rounded-md bg-warn/10 px-1.5 py-0.5 text-xs text-warn"><TriangleAlert class="size-3" />does not exist yet</p>
-        {:else if listing}
+        {#if listing}
           <p class="fact">
-            {#if listing.source === "env"}the knowledge root, set by HANDLER_KNOWLEDGE_DIR{:else}the knowledge root{listing.source === "default" ? ", the default one" : ", chosen here"}{/if}
-            · {listing.folders.length} folder{listing.folders.length === 1 ? "" : "s"}
+            {#if listing.source === "env"}where your notes are, set by HANDLER_NOTES_DIR{:else}where your notes are{listing.source === "default" ? ", the default place" : ", chosen here"}{/if}
+            · {#if listing.exists}{listing.folders.length} folder{listing.folders.length === 1 ? "" : "s"} · agents get them in their settings, read only{:else}<span class="text-danger">this folder does not exist</span>{/if}
           </p>
         {/if}
       </div>
-      {#if listing && !listing.exists && listing.source !== "env"}
-        <Button size="sm" onclick={() => saveRoot(listing?.root ?? null, true)} data-testid="create-root">Create it</Button>
-      {/if}
       {#if listing && listing.source !== "env"}
         <Button variant="outline" size="sm" onclick={() => ((editingRoot = true), (rootInput = listing?.root ?? ""), (error = null))} data-testid="change-root">Change</Button>
       {/if}
@@ -150,7 +147,7 @@
 
     {#if listing?.exists}
       <div class="grid gap-6 md:grid-cols-[15rem_1fr]">
-        <nav class="space-y-3" aria-label="knowledge folders">
+        <nav class="space-y-3" aria-label="notes folders">
           <div class="flex items-center justify-between px-2">
             <h2 class="section-label">folders</h2>
             <Button
@@ -245,20 +242,23 @@
   </div>
 </div>
 
-<Dialog bind:open={editingRoot} title="Change the knowledge root" description="The folder holding your knowledge folders. Agents' settings keep their folders' names." testid="knowledge-root-dialog">
-  <form class="space-y-5" onsubmit={(e) => (e.preventDefault(), void saveRoot(rootInput))}>
+<Dialog bind:open={editingRoot} title="Where your notes are" description="A folder on this computer: a full path, starting with / or ~/. Agents keep their folders by name." testid="knowledge-root-dialog">
+  <form class="space-y-5" onsubmit={(e) => (e.preventDefault(), void saveRoot(rootInput, rootCheck?.state === "missing"))}>
     <div class="space-y-1.5">
-      <Label for="knowledge-root-input">Knowledge root</Label>
-      <Input id="knowledge-root-input" bind:value={rootInput} class="font-mono text-sm" placeholder="/home/you/knowledge" />
+      <Label for="knowledge-root-input">Folder</Label>
+      <Input id="knowledge-root-input" bind:value={rootInput} class="font-mono text-sm" placeholder="~/notes" aria-invalid={!!error || rootCheck?.state === "not-a-folder"} />
+      {#if error}<p class="text-xs text-danger" data-testid="knowledge-error">{error}</p>
+      {:else if rootCheck?.state === "not-a-folder"}<p class="text-xs text-danger">{rootCheck.root} is a file, not a folder.</p>
+      {:else if rootCheck?.state === "missing"}<p class="fact">New: Handler creates it.</p>{/if}
     </div>
-    {#if error}<p class="text-danger" data-testid="knowledge-error">{error}</p>{/if}
     <div class="flex flex-wrap justify-end gap-2 border-t pt-4">
       {#if listing?.source === "config"}
         <Button type="button" variant="ghost" size="sm" class="mr-auto" onclick={() => saveRoot(null)}>Back to the default</Button>
       {/if}
       <Button type="button" variant="ghost" size="sm" onclick={() => (editingRoot = false)}>Cancel</Button>
-      <Button type="button" variant="outline" size="sm" onclick={() => saveRoot(rootInput, true)}>Create and save</Button>
-      <Button type="submit" size="sm">Save</Button>
+      <Button type="submit" size="sm" disabled={!rootCheck || rootCheck.state === "not-a-folder"} data-testid="knowledge-save-root"
+        >{rootCheck?.state === "missing" ? "Create this folder" : "Use this folder"}</Button
+      >
     </div>
   </form>
 </Dialog>
@@ -266,7 +266,7 @@
 <Dialog
   bind:open={makingFolder}
   title="New folder"
-  description={`In ${folder === "." ? "the knowledge root" : folder}. Agents can then be given it in their settings.`}
+  description={`In ${folder === "." ? "the notes root" : folder}. Agents can then be given it in their settings.`}
   testid="knowledge-folder-dialog"
 >
   <form class="space-y-5" onsubmit={createFolder}>

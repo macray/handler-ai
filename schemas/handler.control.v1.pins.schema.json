@@ -1,0 +1,44 @@
+{
+  "$id": "urn:handler.control/v1/pins",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Pin": {
+      "description": "A project or an app in the web UI's menu (D.28); Chat is no pin, it has its own entry.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "project",
+            "app"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "title": "Pin",
+      "type": "object"
+    }
+  },
+  "description": "The web UI's menu's Pinned (D.28): projects and apps mixed, in the person's order; the\nsame on every browser. PUT replaces the whole list (pin, unpin and reorder are one call).",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/Pin"
+      },
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "Pins",
+  "type": "object"
+}

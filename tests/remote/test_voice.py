@@ -38,6 +38,12 @@ def daemon(stub: StubLlm, gateway: Gateway) -> Iterator[Daemon]:
         yield d
 
 
+@pytest.mark.rule(
+    "voice.off-until-a-speech-model-is-chosen",
+    "voice.only-a-speech-model-writes-it-down",
+    "voice.where-it-goes-is-said",
+    "voice.heard-is-asked-at-once",
+)
 def test_voice_is_off_until_a_speech_model_is_chosen(daemon: Daemon, stub: StubLlm) -> None:
     with daemon.http() as c:
         voice = c.get("/v1/voice").json()
@@ -58,6 +64,7 @@ def test_voice_is_off_until_a_speech_model_is_chosen(daemon: Daemon, stub: StubL
         )
 
 
+@pytest.mark.rule("ask.the-owner-s-devices-only", "voice.heard-is-asked-at-once")
 def test_the_owner_s_phone_speaks(daemon: Daemon) -> None:
     with daemon.http() as c:
         assert c.put("/v1/voice", json={"model": "stub/ears"}).is_success

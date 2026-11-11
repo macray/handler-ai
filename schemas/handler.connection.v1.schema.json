@@ -1,0 +1,148 @@
+{
+  "$id": "urn:handler.connection/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CommandSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "CommandSecret",
+      "type": "object"
+    },
+    "EnvSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "title": "EnvSecret",
+      "type": "object"
+    },
+    "FileSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "FileSecret",
+      "type": "object"
+    },
+    "StoreSecret": {
+      "additionalProperties": false,
+      "properties": {
+        "secret": {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$",
+          "title": "Secret",
+          "type": "string"
+        }
+      },
+      "required": [
+        "secret"
+      ],
+      "title": "StoreSecret",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "handler.connection/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "tool": {
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Tool",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "settings": {
+      "anyOf": [
+        {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Settings"
+    },
+    "secrets": {
+      "anyOf": [
+        {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EnvSecret"
+                },
+                {
+                  "$ref": "#/$defs/FileSecret"
+                },
+                {
+                  "$ref": "#/$defs/CommandSecret"
+                },
+                {
+                  "$ref": "#/$defs/StoreSecret"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Secrets"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tool"
+  ],
+  "title": "Binding",
+  "type": "object"
+}

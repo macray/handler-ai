@@ -9,8 +9,9 @@ shape, in its final message). A job's runs are unattended; a brief's sessions ar
     fill             instructions with the form's values in place of their placeholders
     check_input      a run's input against its agent's interface → its subject, digest set
     misfit           why an agent's interface does not fit the one an app needs (H.2)
-    subject_mount    the subject, mounted read-only at /subject/<name>
+    subject_folder   the subject, a read-only folder at /subject/<name>
     request          the first request: instructions, input, subject, a job's rule for the result
+    result_rule      that rule: how a run gives its result back
     parse            the result, from the final message
     repair           the turn sent once when the result is missing or invalid
 """
@@ -28,7 +29,7 @@ from handler_contracts import (
     SKILL_FIELD,
     SUBJECT_ROOT,
     AgentInterface,
-    Mount,
+    HostFolder,
     SessionInput,
     SessionOutput,
     SessionSubject,
@@ -192,16 +193,13 @@ def subject_path(subject: SessionSubject) -> str:
     return f"{SUBJECT_ROOT}/{subject.skill}"
 
 
-def subject_mount(skills_dir: Path, subject: SessionSubject) -> Mount:
+def subject_folder(skills_dir: Path, subject: SessionSubject) -> HostFolder:
     """The subject, read-only: the run reads it, never changes it. SkillError when it is gone."""
     skill = skills.get(skills_dir, subject.skill)
     if skill.error:
         raise skills.SkillError(f"skill '{subject.skill}': {skill.error}")
-    return Mount(
-        source=str(skill.path.resolve()),
-        target=subject_path(subject),
-        read_only=True,
-        kind="subject",
+    return HostFolder(
+        source=str(skill.path.resolve()), target=subject_path(subject), writable=False
     )
 
 
@@ -228,12 +226,17 @@ def request(
         parts.append(text + (f"\n\n{subject_notes}" if subject_notes else ""))
     if interface.result is None:  # a brief: a chat goes on from there
         return "\n\n".join(parts)
-    parts.append(
+    parts.append(result_rule(interface.result))
+    return "\n\n".join(parts)
+
+
+def result_rule(schema: dict[str, Any]) -> str:
+    """How a run gives its result back: the end of its first request (a job's, a plan's step's)."""
+    return (
         "## Result\n\nWhen you are done, end your final message with one fenced code block whose "
         f"info string is `json {FENCE}`, holding one JSON value valid against this JSON Schema, "
-        "and nothing after it:\n\n```json\n" + json.dumps(interface.result, indent=2) + "\n```"
+        "and nothing after it:\n\n```json\n" + json.dumps(schema, indent=2) + "\n```"
     )
-    return "\n\n".join(parts)
 
 
 def parse(answer: str | None, schema: dict[str, Any]) -> SessionOutput:

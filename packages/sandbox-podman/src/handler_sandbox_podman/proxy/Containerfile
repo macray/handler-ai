@@ -1,6 +1,0 @@
-# handler egress proxy (contract A.3): mitmproxy, driven by handler's addon (addon.py, mounted at
-# /handler/addon.py by handler-sandbox-podman). Settings, events and its CA live in a directory
-# bind-mounted at /cfg. Debian-based: Alpine (musl) has no wheels for mitmproxy's Rust parts.
-FROM docker.io/library/python:3.13-slim
-RUN pip install --no-cache-dir mitmproxy==12.2.3
-ENTRYPOINT ["mitmdump"]

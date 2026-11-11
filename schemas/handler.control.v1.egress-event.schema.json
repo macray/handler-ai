@@ -17,8 +17,11 @@
         "allowed",
         "denied",
         "unlisted",
+        "held",
         "injected",
-        "leak"
+        "leak",
+        "reached",
+        "unreached"
       ],
       "title": "Decision",
       "type": "string"
@@ -38,6 +41,30 @@
       ],
       "default": null,
       "title": "Secret"
+    },
+    "wait": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Wait"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
     }
   },
   "required": [

@@ -1,0 +1,49 @@
+# The test suite where the maintainer's machine cannot run it: on a Linux host (Podman and a
+# rootful Docker, strict, nested and privileged confinement), and on macOS. HANDLER_TEST_STRICT
+# makes a skip of what the place should test a failure (tests/support/place.py).
+#
+# macOS runners are virtual machines without nested virtualization: neither Apple container nor
+# Docker runs there. The macOS job proves what needs no sandbox (the CLI's launchd service, the
+# clipboard, socket paths, the runtimes' `check` refusing cleanly); the sandbox runtimes are
+# tested on a Mac itself.
+#
+# GitHub only: Forgejo Actions reads this file too, and has no macOS runner.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-host:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-24.04
+    env:
+      HANDLER_TEST_STRICT: "1"
+      HANDLER_TEST_RUNTIMES: podman,docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - name: The runtimes here (contract A.8)
+        run: |
+          podman version
+          uv run handler-sandbox-podman check
+          uv run handler-sandbox-docker check
+      - run: uv run pytest -n auto --dist loadfile -rs
+
+  macos:
+    if: github.server_url == 'https://github.com'
+    runs-on: macos-26
+    env:
+      HANDLER_TEST_STRICT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ty check --python-platform darwin
+      - run: uv run pytest -n auto --dist loadfile -rs

@@ -99,6 +99,66 @@
       ],
       "title": "ProviderModel",
       "type": "object"
+    },
+    "ProviderReach": {
+      "description": "What a provider's server answered (D.12): `ok` once every endpoint gave its model list.",
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
+        },
+        "models": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProviderModel"
+          },
+          "title": "Models",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hint"
+        }
+      },
+      "required": [
+        "ok",
+        "at",
+        "urls"
+      ],
+      "title": "ProviderReach",
+      "type": "object"
     }
   },
   "description": "A provider (E, D.12): where model calls go.",
@@ -226,6 +286,22 @@
       },
       "title": "Areas",
       "type": "array"
+    },
+    "local": {
+      "default": false,
+      "title": "Local",
+      "type": "boolean"
+    },
+    "reached": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProviderReach"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

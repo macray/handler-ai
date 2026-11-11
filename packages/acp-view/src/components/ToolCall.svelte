@@ -1,13 +1,16 @@
 <script lang="ts">
-  // One step of the agent: its verb and title, under it what it gave back (a failure's first line),
-  // the whole of it when opened. Paths are relative to the session's folder (`root`); `onopen`
-  // shows one of its files (the page's files pane), when the page has one.
+  // One step of the agent, as Claude Code shows it: `● Verb(argument)`, under it (└) what it gave
+  // back. An edit shows its diff at once (its first lines, the rest a click away), a command its
+  // last lines, a failure its first line; the whole of it when opened. Paths are relative to the
+  // session's folder (`root`); `onopen` shows one of its files (the page's files pane), when the
+  // page has one.
   import { imageSrc, markdown } from "../lib/render";
   import { blockText, type ToolEntry } from "../lib/session.svelte";
-  import { headline, relative, summary } from "../lib/tools";
+  import { changeLine, headline, relative, summary, tail } from "../lib/tools";
   import Diff from "./Diff.svelte";
 
-  // `asking`: a permission request for this step waits for an answer (shown under the timeline)
+  // `asking`: a permission request for this step waits for an answer (shown under it, or under
+  // the timeline)
   let {
     tool,
     root,
@@ -23,10 +26,18 @@
   } = $props();
   const unfinished = $derived(ended && (tool.status === "pending" || tool.status === "in_progress"));
 
+  const DIFF_ROWS = 12; // an edit's lines shown before "… +N lines"
+  const OUTPUT_LINES = 4; // a command's last lines shown
+
   let open = $state(false);
   const head = $derived(headline(tool, root));
   const said = $derived(summary(tool));
-  const diffPaths = $derived(new Set(tool.content.flatMap((c) => (c.type === "diff" ? [c.path] : []))));
+  const diffs = $derived(tool.content.flatMap((c) => (c.type === "diff" ? [c] : [])));
+  const changed = $derived(changeLine(tool, root));
+  const output = $derived(
+    tool.status === "completed" && (tool.toolKind === "execute" || tool.toolKind === "search") ? tail(tool, OUTPUT_LINES) : null,
+  );
+  const diffPaths = $derived(new Set(diffs.map((d) => d.path)));
   // a diff names its file: not said twice
   const locations = $derived(tool.locations.filter((l) => !diffPaths.has(l.path)));
 </script>
@@ -42,32 +53,51 @@
 
 <div class="tool {unfinished ? 'unfinished' : tool.status}" class:asking>
   <button type="button" class="line head" onclick={() => (open = !open)} aria-expanded={open}>
-    <span class="gutter" aria-hidden="true">⏺</span>
+    <span class="gutter" aria-hidden="true">●</span>
     <span class="summary">
-      <span class="verb">{head.verb}</span>
-      <span class="title">{head.title}</span>
-      {#if asking}<span class="status asking" data-testid="tool-asking">waiting for you ↓</span>
+      <span class="call"><span class="verb">{head.verb}</span>{#if head.title}<span class="title">({head.title})</span>{/if}</span>
+      {#if asking}<span class="status asking" data-testid="tool-asking">waiting for you</span>
       {:else if unfinished}<span class="status unfinished">not finished</span>
       {:else if tool.status !== "completed"}<span class="status {tool.status}">{tool.status.replaceAll("_", " ")}</span>{/if}
       <span class="chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
     </span>
   </button>
-  {#if !open && said}
+  {#if !open && diffs.length && asking}
+    <!-- its question (under it) shows the diff -->
+  {:else if !open && diffs.length && tool.status !== "failed"}
     <div class="line said" data-testid="tool-summary">
-      <span class="gutter elbow" aria-hidden="true">⎿</span>
+      <span class="gutter elbow" aria-hidden="true">└</span>
+      <div class="changes">
+        <span class="said-text">{changed}</span>
+        {#each diffs as d, i (i)}
+          <Diff path={diffPaths.size > 1 ? d.path : undefined} oldText={d.oldText} newText={d.newText} {root} {onopen} scroll={false} limit={DIFF_ROWS} />
+        {/each}
+      </div>
+    </div>
+  {:else if !open && output}
+    <div class="line said" data-testid="tool-summary">
+      <span class="gutter elbow" aria-hidden="true">└</span>
+      <div class="output">
+        {#if output.more}<button type="button" class="more" onclick={() => (open = true)}>… +{output.more} line{output.more === 1 ? "" : "s"}</button>{/if}
+        <pre>{output.lines.join("\n")}</pre>
+      </div>
+    </div>
+  {:else if !open && said}
+    <div class="line said" data-testid="tool-summary">
+      <span class="gutter elbow" aria-hidden="true">└</span>
       <span class="said-text">{said}</span>
     </div>
   {/if}
   {#if open}
     <div class="line body">
-      <span class="gutter elbow" aria-hidden="true">⎿</span>
+      <span class="gutter elbow" aria-hidden="true">└</span>
       <div class="content">
         {#each locations as loc (loc.path + (loc.line ?? ""))}
           <div class="loc">{@render path(loc.path, loc.line)}</div>
         {/each}
         {#each tool.content as item, i (i)}
           {#if item.type === "diff"}
-            <Diff path={item.path} oldText={item.oldText} newText={item.newText} {root} {onopen} />
+            <Diff path={item.path} oldText={item.oldText} newText={item.newText} {root} {onopen} scroll={false} />
           {:else if item.type === "content" && imageSrc(item.content)}
             <img class="shot" src={imageSrc(item.content)} alt="tool output" />
           {:else if item.type === "content"}
@@ -152,16 +182,21 @@
     align-items: baseline;
     min-width: 0;
   }
+  /* Verb(argument): the argument wraps (a command is read whole), up to three lines */
+  .call {
+    min-width: 0;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow-wrap: anywhere;
+  }
   .verb {
     font-weight: 700;
-    flex: none;
   }
   .title {
     color: var(--muted-foreground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
   }
   .chevron {
     color: var(--muted-foreground);
@@ -176,6 +211,36 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+  }
+  .changes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+  .changes .said-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .output {
+    min-width: 0;
+  }
+  .output pre {
+    margin: 0;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .more {
+    font: inherit;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted-foreground);
+    opacity: 0.8;
+  }
+  .more:hover {
+    color: var(--foreground);
   }
   .failed .said {
     color: var(--danger);

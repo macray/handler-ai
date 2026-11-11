@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from handler_control import transcript
 from handler_control.secrets import redactor
 
@@ -47,6 +49,7 @@ def write(tmp_path: Path, events: list[dict[str, Any]]) -> Path:
     return log
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_read_keeps_the_slice(tmp_path: Path) -> None:
     log = write(tmp_path, LOG)
     assert [e["seq"] for e in transcript.read(log, 3, 6)] == [3, 4, 5, 6]
@@ -54,6 +57,7 @@ def test_read_keeps_the_slice(tmp_path: Path) -> None:
     assert transcript.read(tmp_path / "missing", 1, 2) == []
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_render_joins_chunks_and_merges_tool_calls() -> None:
     out = transcript.render(LOG, [("Agent", "dev"), ("Events", "1 to 12")])
     assert out.startswith("# Session transcript\n\n- Agent: dev\n- Events: 1 to 12\n")
@@ -69,6 +73,7 @@ def test_render_joins_chunks_and_merges_tool_calls() -> None:
     assert out.index("[7] Tool call") < out.index("[8] Permission") < out.index("[10] Agent")
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_tool_io_is_cut_and_fenced() -> None:
     long = "a" * 2500 + "`````" + "b" * 2000
     call = update(1, sessionUpdate="tool_call", toolCallId="t", title="cat", rawOutput=long)
@@ -78,11 +83,13 @@ def test_tool_io_is_cut_and_fenced() -> None:
     assert transcript.fenced("x ````` y").startswith("``````\n")
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_an_update_of_a_call_started_before_the_slice_is_shown() -> None:
     late = update(5, sessionUpdate="tool_call_update", toolCallId="old", status="completed")
     assert "### [5] Tool call: old (completed)" in transcript.render([late], [])
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_redacted_with_raw_and_json_escaped_values() -> None:
     secret = 'sk-"quoted"-value'
     out = transcript.render([update(1, **text("agent_message_chunk", f"key {secret}"))], [])
@@ -90,3 +97,16 @@ def test_redacted_with_raw_and_json_escaped_values() -> None:
     redact = redactor([secret])
     assert secret not in redact(out)
     assert escaped not in redact(f"raw {escaped}")
+
+
+@pytest.mark.rule("session.an-unreachable-model-is-said")
+def test_handler_s_line_on_a_model_that_does_not_answer_is_in_the_transcript() -> None:
+    said = {"seq": 4, "t": "…", "kind": "lifecycle", "event": "model unreached", "shown": True}
+    local = said | {"host": "host.containers.internal:3000", "error": "connection refused"}
+    out = transcript.render([local | {"local": True}], [])
+    assert (
+        "[4] Handler: The model at host.containers.internal:3000 does not answer (connection "
+        "refused). Is the server listening on 0.0.0.0?"
+    ) in out
+    remote = said | {"host": "api.example.com:443", "error": "host not found", "local": False}
+    assert "does not answer (host not found).\n" in transcript.render([remote], []) + "\n"

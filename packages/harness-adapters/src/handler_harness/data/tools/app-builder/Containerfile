@@ -1,0 +1,18 @@
+# app-builder tool image (contract G.1): Bun, installed in the toolbox by its official installer,
+# shipped as the installed tree only, mounted read-only at /opt/tools/app-builder. Pinned to the
+# version apps run on (handler_contracts.RUNTIME_VERSION, H.3): an app's tests pass the same way
+# here and when it is deployed.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE} AS build
+ARG PREFIX=/opt/tools/app-builder
+ARG BUN_VERSION=bun-v1.4.2
+
+# bunx is bun under another name; the installer links it only when a bun is already on PATH
+RUN curl -fsSL https://bun.sh/install | BUN_INSTALL="$PREFIX" bash -s "${BUN_VERSION}" \
+    && ln -sf bun "$PREFIX/bin/bunx" \
+    && rm -rf "$PREFIX/install" /home/agent/.bun \
+    && "$PREFIX/bin/bun" --version | sed 's/^/Bun /' > "$PREFIX/version"
+
+FROM scratch
+COPY --from=build /opt/tools/app-builder /
+LABEL org.opencontainers.image.title="handler-ai-tool-app-builder"

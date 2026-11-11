@@ -2,6 +2,8 @@
 # `codex app-server`; the Codex binary comes with it (its @openai/codex dependency).
 # codex-acp starts handler-codex instead (CODEX_PATH, harness.toml): that Codex with privacy config
 # overrides. `-c` beats config.toml; unset, analytics are on and metrics go to OpenAI (statsig).
+# It also makes CODEX_HOME, which Codex refuses to start without: the sandbox's home is empty
+# unless the launch puts something there (config.toml, auth.json, the session's history).
 #
 # Not pinned: every rebuild (`handler image rebuild codex`, or the web UI) installs the latest release.
 # What was installed is recorded in /usr/share/handler/version (contract B.6); the build fails if
@@ -12,9 +14,9 @@ FROM ${TOOLBOX_IMAGE}
 RUN npm install -g --no-fund --no-audit @agentclientprotocol/codex-acp \
     && npm cache clean --force \
     && command -v codex-acp \
-    && adapter=/usr/lib/node_modules/@agentclientprotocol/codex-acp \
+    && adapter="$(npm root -g)"/@agentclientprotocol/codex-acp \
     && test -f "$adapter/node_modules/@openai/codex/bin/codex.js" \
-    && printf '#!/bin/sh\nexec node %s -c analytics.enabled=false -c feedback.enabled=false -c check_for_update_on_startup=false -c otel.metrics_exporter=none "$@"\n' \
+    && printf '#!/bin/sh\nmkdir -p "$CODEX_HOME"\nexec node %s -c analytics.enabled=false -c feedback.enabled=false -c check_for_update_on_startup=false -c otel.metrics_exporter=none "$@"\n' \
         "$adapter/node_modules/@openai/codex/bin/codex.js" > /usr/local/bin/handler-codex \
     && chmod 755 /usr/local/bin/handler-codex \
     && acp_version="$(jq -er .version "$adapter/package.json")" \

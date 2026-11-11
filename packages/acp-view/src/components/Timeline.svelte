@@ -4,13 +4,21 @@
   // (sanitized). Meant to sit on a `.term-surface`.
   import { imageSrc, markdown } from "../lib/render";
   import type { Snippet } from "svelte";
-  import type { SessionState } from "../lib/session.svelte";
-  import { duration, turnSummary } from "../lib/tools";
+  import { modelText, startsTurn, type HostDecision, type SessionState } from "../lib/session.svelte";
+  import type { PendingPermission } from "../lib/connection.svelte";
+  import { duration, turnChanges, turnSummary } from "../lib/tools";
   import ToolCall from "./ToolCall.svelte";
+  import HostCard from "./HostCard.svelte";
+  import PermissionPrompt from "./PermissionPrompt.svelte";
+  import TurnChanges from "./TurnChanges.svelte";
 
   // `root`: the session's folder, paths are shown relative to it; `onopen`: shows one of its files.
   // `pinPlan`: the page keeps the current plan in view (Plan.svelte), so its updates here are one
   // line each, opened to see that version. `busy`: a turn is in progress (it has no footer yet).
+  // `ondecide`: answers a host the network filter refused (F.9); without it, its card says where to.
+  // `providers`: where the person tests the providers (a model that does not answer points there).
+  // `permissions`: the requests waiting for an answer, each shown under its step (a page that
+  // passes them pins only those whose step is not in the timeline: `askedAtStep`).
   let {
     session,
     root,
@@ -18,8 +26,11 @@
     pinPlan = false,
     busy = false,
     asking = [],
+    permissions,
     empty,
     first,
+    ondecide,
+    providers,
   }: {
     session: SessionState;
     root?: string | null;
@@ -27,8 +38,11 @@
     pinPlan?: boolean;
     busy?: boolean;
     asking?: string[]; // the steps whose permission requests wait for an answer
+    permissions?: PendingPermission[];
     empty?: Snippet; // shown while there is nothing yet (the page's start)
     first?: Snippet; // shown in place of the first user message: what the page started it with
+    ondecide?: (host: string, decision: HostDecision) => Promise<void>;
+    providers?: string;
   } = $props();
   const firstUser = $derived(first ? session.entries.findIndex((e) => e.kind === "user") : -1);
 
@@ -60,26 +74,32 @@
     };
   }
 
-  // Each turn's footer, at the index of its last entry: what it did and how long it took.
+  // Each turn's footer, at the index of its last entry: what it did and how long it took, and
+  // the files it changed (opened under it).
   const footers = $derived.by(() => {
-    const said = new Map<number, string>();
+    const said = new Map<number, { text: string; changes: ReturnType<typeof turnChanges> }>();
     const entries = session.entries;
     let start = -1;
     for (let i = 0; i <= entries.length; i++) {
       const e = entries[i];
-      if (i < entries.length && e?.kind !== "user") continue;
+      if (i < entries.length && !startsTurn(e)) continue;
       if (start >= 0 && i - 1 > start && (i < entries.length || !busy)) {
         const prompt = entries[start];
-        const text = turnSummary(entries.slice(start + 1, i), prompt?.kind === "user" ? prompt.ms : undefined);
-        if (text) said.set(i - 1, text);
+        const turn = entries.slice(start + 1, i);
+        const text = turnSummary(turn, prompt?.kind === "user" || prompt?.kind === "told" ? prompt.ms : undefined);
+        if (text) said.set(i - 1, { text, changes: turnChanges(turn) });
       }
       start = i;
     }
     return said;
   });
 
+  let reviewing = $state(new Set<number>()); // the turns whose changes are open
+
+  // where the last turn starts: a refused host before it is an earlier turn's
+  const lastTurn = $derived(session.entries.findLastIndex(startsTurn));
   // where the turn in progress starts: a step before it that did not finish never will
-  const current = $derived(busy ? session.entries.findLastIndex((e) => e.kind === "user") : session.entries.length);
+  const current = $derived(busy ? session.entries.findLastIndex(startsTurn) : session.entries.length);
 
   function mark(status: string): string {
     return status === "completed" ? "✓" : status === "in_progress" ? "◐" : "○";
@@ -103,7 +123,7 @@
       {@render first()}
     {:else if entry.kind === "user"}
       <div class="line user">
-        <span class="gutter" aria-hidden="true">❯</span>
+        <span class="gutter" aria-hidden="true">&gt;</span>
         <div class="text" data-testid="user-message">
           {#if entry.images.length}
             <div class="shots">
@@ -118,7 +138,7 @@
       </div>
     {:else if entry.kind === "agent"}
       <div class="line agent">
-        <span class="gutter" aria-hidden="true">⏺</span>
+        <span class="gutter" aria-hidden="true">●</span>
         <div class="text md" data-testid="agent-message" {@attach codeCopy(entry.text)}>{@html markdown(entry.text)}</div>
         {#if !(busy && i === session.entries.length - 1)}
           <button type="button" class="copy message-copy" onclick={() => copy(entry.text, i)} title="Copy this message (markdown)">
@@ -141,6 +161,9 @@
       </details>
     {:else if entry.kind === "tool"}
       <ToolCall tool={entry} {root} {onopen} asking={asking.includes(entry.id)} ended={i < current} />
+      {#each permissions?.filter((p) => p.request.toolCall.toolCallId === entry.id) ?? [] as pending (pending)}
+        <div class="asked"><PermissionPrompt {pending} {root} /></div>
+      {/each}
     {:else if entry.kind === "plan"}
       {@const done = entry.entries.filter((e) => e.status === "completed").length}
       {#snippet steps()}
@@ -164,21 +187,50 @@
           </div>
         </div>
       {/if}
+    {:else if entry.kind === "host"}
+      <HostCard {entry} past={i < lastTurn} {ondecide} />
+    {:else if entry.kind === "model"}
+      <div class="line notice warning" data-testid="model-unreached">
+        <span class="gutter" aria-hidden="true">!</span>
+        <div class="text">
+          <span class="who">Handler:</span> {modelText(entry)}
+          {#if providers && entry.provider}<a href={providers} data-testid="model-unreached-test">Test {entry.provider} in Settings → Model access</a>{:else if entry.provider}Test {entry.provider} in Settings → Model access.{/if}
+        </div>
+      </div>
+    {:else if entry.kind === "told"}
+      <div class="line told" data-testid="handler-told">
+        <span class="gutter" aria-hidden="true">↳</span>
+        <div class="text"><span class="who">Handler told the agent:</span> {entry.text.replace(/^Handler: /, "")}</div>
+      </div>
     {:else}
       <div class="line notice {entry.severity ?? 'info'}">
         <span class="gutter" aria-hidden="true">{entry.severity === "warning" || entry.severity === "error" ? "!" : "·"}</span>
         <div class="text">{entry.text}</div>
       </div>
     {/if}
-    {#if footers.has(i)}
-      <div class="turn-end" data-testid="turn-summary">{footers.get(i)}</div>
+    {@const footer = footers.get(i)}
+    {#if footer}
+      {#if footer.changes.length}
+        {@const open = reviewing.has(i)}
+        <button
+          type="button"
+          class="turn-end"
+          aria-expanded={open}
+          title="What this turn changed, file by file"
+          onclick={() => (reviewing = open ? new Set([...reviewing].filter((n) => n !== i)) : new Set([...reviewing, i]))}
+          data-testid="turn-summary">{footer.text} {open ? "▾" : "▸"}</button
+        >
+        {#if open}<TurnChanges changes={footer.changes} {root} {onopen} />{/if}
+      {:else}
+        <div class="turn-end" data-testid="turn-summary">{footer.text}</div>
+      {/if}
     {/if}
   {:else}
     {#if empty}{@render empty()}{:else}<p class="text-muted-foreground">Nothing yet.</p>{/if}
   {/each}
   {#if session.lastStop}
     <div class="line notice warning" data-testid="turn-stopped">
-      <span class="gutter" aria-hidden="true">⏹</span>
+      <span class="gutter" aria-hidden="true">■</span>
       <div class="text">{stopped(session.lastStop)}</div>
     </div>
   {/if}
@@ -204,17 +256,11 @@
   .timeline > .user:first-child {
     margin-top: 0;
   }
-  /* people's words in a text face, the agent's tools and code in the terminal's */
+  /* everything in the terminal's one face, as in Claude Code: weight and the gutter's glyphs
+     make the difference between your words, the agent's and its steps */
   .user .text,
   .agent .text {
-    font-family: var(--sans);
-    font-size: 14px;
     line-height: 1.6;
-  }
-  .agent :global(code),
-  .agent :global(pre) {
-    font-family: var(--mono);
-    font-size: 13px;
   }
   .agent {
     position: relative;
@@ -288,17 +334,14 @@
   }
   .user {
     background: var(--user-line);
-    border-left: 2px solid var(--prompt);
-    padding: 0.35rem 0.6rem 0.35rem calc(0.6rem - 2px);
-    border-radius: 0 4px 4px 0;
+    padding: 0.35rem 0.6rem;
+    border-radius: 4px;
   }
   .user .gutter {
-    color: var(--prompt);
-    font-weight: 700;
+    color: var(--muted-foreground);
   }
   .user .text {
     white-space: pre-wrap;
-    font-weight: 500;
   }
   .user:has(.shots) {
     align-items: start; /* the glyph at the top, not at the images' baseline */
@@ -329,11 +372,12 @@
   .agent :global(h2),
   .agent :global(h3) {
     font-size: 1em;
-    color: var(--link);
+    font-weight: 700;
+    color: var(--foreground);
     margin: 0.8rem 0 0.3rem;
   }
   .agent :global(:not(pre) > code) {
-    color: var(--foreground);
+    color: var(--code-fg, var(--foreground));
     background: var(--muted);
     border-radius: 3px;
     padding: 0 0.3ch;
@@ -364,7 +408,7 @@
   }
   .plan .gutter,
   .plan .label {
-    color: var(--link);
+    color: var(--muted-foreground);
   }
   .plan ul {
     list-style: none;
@@ -399,6 +443,21 @@
     color: var(--muted-foreground);
     font-size: 0.9em;
   }
+  button.turn-end {
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    font-family: inherit;
+    text-align: left;
+  }
+  button.turn-end:hover {
+    color: var(--foreground);
+  }
+  /* a question under its step: square on its coloured edge (the card's own) */
+  .asked {
+    margin-left: 2.5ch;
+  }
   .turn-end::before,
   .turn-end::after {
     content: "";
@@ -415,8 +474,20 @@
   .notice {
     color: var(--muted-foreground);
   }
+  .told {
+    color: var(--muted-foreground);
+  }
+  .told .who {
+    font-weight: 600;
+  }
   .notice.warning,
   .notice.error {
     color: var(--warn);
+  }
+  .notice .who {
+    font-weight: 600;
+  }
+  .notice a {
+    text-decoration: underline;
   }
 </style>

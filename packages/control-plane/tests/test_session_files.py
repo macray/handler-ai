@@ -6,10 +6,11 @@ import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from handler_contracts import ImageMount, Mount, NoNetwork, SandboxSpec, SandboxUser
+from handler_contracts import SessionMount
 from handler_control import session_files
 from handler_control.session_files import PathError
 
@@ -40,6 +41,7 @@ def touch_later(path: Path) -> None:
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
 
 
+@pytest.mark.rule("files.no-link-leads-out")
 def test_folder_lists_folders_first_links_unfollowed_and_no_git(root: Path) -> None:
     (root / ".git").mkdir()
     (root / "key").symlink_to(Path.home() / ".ssh" / "id_ed25519")
@@ -55,6 +57,7 @@ def test_folder_lists_folders_first_links_unfollowed_and_no_git(root: Path) -> N
     assert session_files.folder(root, "src/").path == "src"
 
 
+@pytest.mark.rule("files.no-link-leads-out")
 def test_links_are_never_followed(root: Path, tmp_path: Path) -> None:
     (tmp_path / "secret").write_text("s3cret")
     (root / "secret").symlink_to(tmp_path / "secret")
@@ -67,6 +70,7 @@ def test_links_are_never_followed(root: Path, tmp_path: Path) -> None:
         session_files.folder(root, "out")
 
 
+@pytest.mark.rule("files.no-link-leads-out")
 @pytest.mark.parametrize(
     "path", ["../work/README.md", "/etc/passwd", "src/../README.md", ".git/config"]
 )
@@ -96,6 +100,7 @@ def test_read_shows_text_images_and_only_the_size_of_the_rest(root: Path, tmp_pa
     assert e.value.missing
 
 
+@pytest.mark.rule("files.changes-are-since-the-session-started")
 def test_changes_since_the_baseline(root: Path, tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     (root / ".gitignore").write_text("node_modules/\n*.log\n")
@@ -128,6 +133,7 @@ def test_changes_since_the_baseline(root: Path, tmp_path: Path) -> None:
     assert (gone.change, gone.size, gone.before) == ("deleted", None, None)
 
 
+@pytest.mark.rule("files.changes-are-since-the-session-started")
 def test_changes_not_followed(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     missing = session_files.changes(root, tmp_path / "none.json", SINCE)
     assert missing.not_followed == "its folder was not recorded when it started"
@@ -139,6 +145,7 @@ def test_changes_not_followed(root: Path, tmp_path: Path, monkeypatch: pytest.Mo
     assert found.files == []
 
 
+@pytest.mark.rule("files.git-never-runs-on-the-host")
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git to make a repository")
 def test_git_gives_the_earlier_versions(root: Path, tmp_path: Path) -> None:
     git(root, "init", "-q")
@@ -162,6 +169,7 @@ def test_git_gives_the_earlier_versions(root: Path, tmp_path: Path) -> None:
     assert session_files.read(root, "README.md", baseline).before == "# Shop\n"
 
 
+@pytest.mark.rule("files.git-never-runs-on-the-host")
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git to make a repository")
 def test_a_hostile_repository_only_costs_the_child(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -187,6 +195,7 @@ def test_a_hostile_repository_only_costs_the_child(
     assert session_files.read(root, "README.md", baseline).before is None
 
 
+@pytest.mark.rule("files.access-lists-what-the-sandbox-sees")
 def test_what_the_sandbox_sees(root: Path, tmp_path: Path) -> None:
     recorded = tmp_path / "mounts.json"
     only_folder = session_files.mounts(recorded, str(root))  # not started yet
@@ -195,42 +204,34 @@ def test_what_the_sandbox_sees(root: Path, tmp_path: Path) -> None:
 
     notes = tmp_path / "notes"
     notes.mkdir()
-    spec = SandboxSpec(
-        api_version="handler.sandbox/v1",
-        name="s",
-        image="toolbox",
-        argv=["agent"],
-        env={},
-        workdir=str(root),
-        user=SandboxUser(mode="host-user", home="/home/agent"),
-        mounts=[
-            Mount(source=str(root), target=str(root), read_only=False, kind="scope"),
-            Mount(source=str(notes), target="/knowledge/notes", read_only=True, kind="knowledge"),
-            Mount(
-                source=str(tmp_path), target="/home/agent/.claude", read_only=False, kind="state"
-            ),
-        ],
-        image_mounts=[ImageMount(image="handler-ai-addon-shopify", target="/opt/shopify")],
-        files=[],
-        writable_paths=[],
-        network=NoNetwork(mode="none"),
-    )
-    session_files.record_mounts(recorded, spec, SINCE)
+
+    def seen_as(kind: Any, target: str, source: str, browsable: bool) -> SessionMount:
+        return SessionMount(target=target, kind=kind, read_only=kind != "state", source=source,
+                            browsable=browsable)  # fmt: skip
+
+    sees = [
+        seen_as("scope", str(root), str(root), True),
+        seen_as("knowledge", "/notes/notes", str(notes), True),
+        seen_as("state", "/home/agent/.claude", str(tmp_path), False),
+        seen_as("tools", "/opt/shopify", "handler-ai-tool-shopify", False),
+    ]
+    session_files.record_mounts(recorded, sees, SINCE)
     seen = session_files.mounts(recorded, str(root))
     assert seen.started_at == SINCE
     assert [(m.kind, m.target, m.browsable) for m in seen.mounts] == [
         ("scope", str(root), True),
-        ("knowledge", "/knowledge/notes", True),
+        ("knowledge", "/notes/notes", True),
         ("state", "/home/agent/.claude", False),
         ("tools", "/opt/shopify", False),
     ]
-    assert session_files.mount_root(recorded, str(root), "/knowledge/notes") == (notes, False)
+    assert session_files.mount_root(recorded, str(root), "/notes/notes") == (notes, False)
     for hidden in ("/home/agent/.claude", "/opt/shopify", "/etc"):
         with pytest.raises(PathError) as e:
             session_files.mount_root(recorded, str(root), hidden)
         assert e.value.missing
 
 
+@pytest.mark.rule("files.no-link-leads-out")
 def test_host_path_is_checked_like_a_read(root: Path, tmp_path: Path) -> None:
     (root / "out").symlink_to(tmp_path)
     assert session_files.host_path(root, "") == (root, True)

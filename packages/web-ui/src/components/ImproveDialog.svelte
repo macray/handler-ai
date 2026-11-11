@@ -1,7 +1,7 @@
 <script lang="ts">
   // Improve a job until its checks pass (D.21): what to improve (the person's words, given to the
-  // prompt writer), how many attempts and minutes at most. Without a prompt writer, the way to set
-  // one up (D.18: where it is needed). With few checks, a warning: an attempt may learn them, not
+  // prompt writer), how many attempts and minutes at most. Without a prompt writer, its set-up
+  // card (a helper, D.18: where it is needed). With few checks, a warning: an attempt may learn them, not
   // the rule.
   import { api } from "../lib/api";
   import type { Improvement } from "../lib/contracts.gen";
@@ -11,6 +11,7 @@
   import { Label } from "$lib/components/ui/label";
   import { Textarea } from "$lib/components/ui/textarea";
   import Dialog from "./Dialog.svelte";
+  import HelperCard from "./HelperCard.svelte";
 
   let { open = $bindable(false), agentId, checks, onstarted }: { open: boolean; agentId: string; checks: number; onstarted: (i: Improvement) => void } = $props();
 
@@ -46,9 +47,16 @@
 
 <Dialog bind:open title="Improve until its checks pass" description="The prompt writer rewrites its instructions, its checks judge each attempt. Nothing changes until you keep one." testid="improve-dialog">
   {#if writer === false}
-    <div class="space-y-2" data-testid="improve-no-writer">
-      <p>Improving needs a <span class="font-medium">prompt writer</span>: an agent on the model alone that rewrites instructions. Its own instructions are the default prompt; change them as you like.</p>
-      <Button href={href({ view: "set-up-helper", need: "prompt-writer" })} data-testid="improve-setup-writer">Set up the prompt writer</Button>
+    <div data-testid="improve-no-writer">
+      <HelperCard need="prompt-writer" onready={(a) => (writer = a.id)}>
+        {#snippet preview()}
+          <div class="space-y-1 font-mono text-xs">
+            <p>attempt 1 · 3 of 6 checks pass</p>
+            <p>attempt 2 · 5 of 6 checks pass</p>
+            <p>attempt 3 · 6 of 6 checks pass</p>
+          </div>
+        {/snippet}
+      </HelperCard>
     </div>
   {:else}
     <form
@@ -63,7 +71,7 @@
         <Textarea id="improve-goal" bind:value={goal} rows={3} placeholder="e.g. It says rewrite for a plain, polite no." data-testid="improve-goal" />
         <p class="text-xs text-muted-foreground">
           The prompt writer reads it with the checks that fail: say where it goes wrong, or what to make clearer.
-          {#if writer}<a class="text-link hover:underline" href={href({ view: "edit-ad-hoc", id: writer })}>Change how it writes</a>.{/if}
+          {#if writer}<a class="text-link hover:underline" href={href({ view: "settings", section: "helpers", helper: "prompt-writer" })}>Change how it writes</a>.{/if}
         </p>
       </div>
       <div class="grid grid-cols-2 gap-3">

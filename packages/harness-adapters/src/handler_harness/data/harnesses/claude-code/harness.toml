@@ -3,6 +3,7 @@ apiVersion = "handler.harness/v1"
 name = "claude-code"
 product = "Claude Code"
 image = "localhost/handler-ai-claude-code"  # no tag: launches use :latest (contract B.6)
+needs = ["node", "npm", "jq"]  # what its recipe installs with, from the toolbox (B.6)
 acpCommand = ["claude-agent-acp"]
 home = "/home/agent"
 
@@ -18,8 +19,11 @@ skillsDir = "~/.claude/skills"
 
 # MCP servers passed in ACP session/new (its addons'): claude-agent-acp
 # advertises mcpCapabilities http and sse; stdio is mandatory in ACP. It starts stdio servers at
-# session/new with its own environment, minus its token (verified 2026-09-26): mcpEnv "inherit".
+# session/new with its own environment: minus an account's token, but with a provider's
+# ANTHROPIC_API_KEY (verified 2026-11-03, 2.1.312), so "sandbox": render wraps them with
+# handler-sandbox-env, which drops both.
 mcpTransports = ["stdio", "http", "sse"]
+mcpEnv = "sandbox"
 
 [env]
 NODE_USE_ENV_PROXY = "1"     # Node's fetch only honours HTTPS_PROXY with this
@@ -56,7 +60,7 @@ initial = "{\"hasCompletedOnboarding\": true}\n"
 subscription = "Claude Pro or Max"
 # Unattended use (an automation's agent run): refused. A Claude subscription is for interactive
 # use by its owner (plan limits "assume ordinary, individual usage"): sessions you start and follow,
-# never runs nobody is there for (docs/dev/ui-ux.md "Vendors' terms").
+# never runs nobody is there for (UI-UX guide "Vendors' terms").
 unattended = "refused"
 terms = "https://www.anthropic.com/legal/consumer-terms"
 checked = 2026-10-05

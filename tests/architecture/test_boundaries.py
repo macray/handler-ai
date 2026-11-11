@@ -1,8 +1,9 @@
-"""Architecture rules: which block may import which (docs/dev/code-map.md).
+"""Architecture rules: which block may import which (code map).
 
 Blocks exchange data, not code. The only shared library is `handler_contracts`; the control plane
-may also use the harness adapters' pure `render`. Sandboxes are reached through their
-executables only (contract A binding), never imported.
+may also use the harness adapters' pure `render`, and sandbox runtimes the sandbox kit (what every
+runtime shares: the network filter). Sandboxes are reached through their executables only
+(contract A binding), never imported.
 """
 
 import ast
@@ -14,7 +15,10 @@ REPO = Path(__file__).resolve().parents[2]
 
 ALLOWED: dict[str, set[str]] = {
     "handler_contracts": set(),
-    "handler_sandbox_podman": {"handler_contracts"},
+    "handler_sandbox_kit": {"handler_contracts"},  # listed by the sandbox runtimes only
+    "handler_sandbox_podman": {"handler_contracts", "handler_sandbox_kit"},
+    "handler_sandbox_apple": {"handler_contracts", "handler_sandbox_kit"},
+    "handler_sandbox_docker": {"handler_contracts", "handler_sandbox_kit"},
     "handler_harness": {"handler_contracts"},
     "handler_control": {"handler_contracts", "handler_harness"},
     "handler_cli": {"handler_contracts"},  # a client: talks to handlerd over HTTP/WebSocket only
@@ -58,23 +62,57 @@ def test_every_package_has_a_readme() -> None:
     assert missing == []
 
 
-def test_only_the_sandbox_runs_podman() -> None:
+# `DEFAULT_RUNTIME`: the runtime handlerd uses when none was chosen, and `NOT_ON_MACOS`: the one
+# never offered there, names only (sandbox_process.py); `ABILITY_NEEDS`: the commands a sandbox
+# with an ability runs from the toolbox (B.6), the engine *inside* a sandbox, not the one running
+# it; `ENGINES_ON_PATH`: the commands whose folder handlerd's user service must have on its PATH
+# (daemon_commands.py), found there, never run.
+_NAMES_AN_ENGINE = ("DEFAULT_RUNTIME", "NOT_ON_MACOS", "ABILITY_NEEDS", "ENGINES_ON_PATH")
+
+
+def _names_the_default_runtime(tree: ast.AST) -> set[int]:
+    """The ids of the constants inside `_NAMES_AN_ENGINE`'s assignments."""
+    allowed: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if getattr(targets[0], "id", None) in _NAMES_AN_ENGINE:
+            allowed |= {id(constant) for constant in ast.walk(value)}
+    return allowed
+
+
+@pytest.mark.parametrize(
+    ("engine", "runtime"),
+    [("podman", "handler_sandbox_podman"), ("docker", "handler_sandbox_docker")],
+)
+def test_only_the_sandbox_runs_its_engine(engine: str, runtime: str) -> None:
     """The container engine is the sandbox's (contract A, A.7 for images): every other block asks
     its executable, so another runtime is another executable."""
-    violations = [
-        f"{path.relative_to(REPO)}:{node.lineno}"
-        for package, paths in package_sources().items()
-        if package != "handler_sandbox_podman"
-        for path in paths
-        for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.Constant) and node.value == "podman"
-    ]
+    violations = []
+    for package, paths in package_sources().items():
+        if package == runtime:
+            continue
+        for path in paths:
+            tree = ast.parse(path.read_text())
+            allowed = _names_the_default_runtime(tree)
+            violations += [
+                f"{path.relative_to(REPO)}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and node.value == engine
+                and id(node) not in allowed
+            ]
     assert violations == []
 
 
+@pytest.mark.rule("gateway.independent")
 def test_gateway_is_independent() -> None:
     """remote-gateway/ is its own project: it may run on another machine, and must not need handler
-    (docs/dev/design/remote.md §1). It only shares the envelope format, as data."""
+    (remote design §1). It only shares the envelope format, as data."""
     sources = sorted((REPO / "remote-gateway" / "src").rglob("*.py"))
     assert sources
     violations = [
@@ -103,11 +141,11 @@ CONTROL_LAYERS: list[tuple[str, set[str]]] = [
             "skill_sources",
             "interfaces",
             *("skill_scan", "definitions", "agents_files", "handler_needs"),
-            *("sources", "addon_install"),
+            *("sources", "addon_install", "addon_folders"),
             *("knowledge", "config_files"),
             *("automation_config", "transcript", "services"),
             *("session_files", "git_read"),
-            *("agents", "projects", "agent_state", "caches"),
+            *("agents", "projects", "pins", "agent_state", "caches", "toolbox"),
         },
     ),
     (
@@ -121,6 +159,7 @@ CONTROL_LAYERS: list[tuple[str, set[str]]] = [
             "service_router",
             "model_agent",
             "transcribe",
+            "provider_reach",
         },
     ),
     (
@@ -132,6 +171,9 @@ CONTROL_LAYERS: list[tuple[str, set[str]]] = [
             *("builds", "image_check", "image_updates"),
             *("apps", "app_http", "app_api", "app_runs", "schedules", "inbox"),
             *("agent_checks", "improvements", "uses"),
+            "refusals",
+            "plans",
+            "plan_drafts",
             "automations",
             "assistant",
             "voice",
@@ -188,6 +230,7 @@ def test_control_modules_import_only_their_layer_or_below() -> None:
     assert violations == []
 
 
+@pytest.mark.rule("alone.no-tools", "alone.reads-only-its-notes-and-conversation")
 def test_the_model_alone_reaches_no_sandbox_and_no_tool() -> None:
     """An agent on the model alone is text in, text out (D.18): its agent may only call the model
     (llm), read its knowledge and settings. Anything else (the service router, a launcher, an

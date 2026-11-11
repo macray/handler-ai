@@ -1,6 +1,7 @@
 """The person's inbox: what handler tells a person, like mail. Apps'
-notifications (H.9) and automations' results and failures (I.3) alike; nothing a sandbox writes
-directly.
+notifications (H.9), automations' results and failures (I.3), plans stopped or steps that
+completed with hosts refused (D.27), hosts refused to a session while nobody could answer (F.9)
+alike; nothing a sandbox writes directly.
 
     <state>/inbox.json      the last KEEP messages, oldest first
 
@@ -69,6 +70,9 @@ class Inbox:
         """Newest first; a person's only when `person` is given."""
         mine = [m for m in self.messages if person is None or m.person == person]
         return list(reversed(mine))[:limit]
+
+    def get(self, message_id: str) -> InboxMessage | None:
+        return next((m for m in self.messages if m.id == message_id), None)
 
     def mark_read(self, message_id: str) -> InboxMessage | None:
         with self.lock:

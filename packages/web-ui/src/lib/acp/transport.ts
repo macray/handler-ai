@@ -1,5 +1,5 @@
 // Contract C.1 in the browser: an agent's or a session's ACP WebSocket as an ACP SDK `Stream`.
-//   subprotocols: "acp.v1" + "bearer.<token>" (browsers cannot set an Authorization header)
+//   subprotocol:  "acp.v1"; the browser sends the UI's cookie, and its Origin
 //   framing:      one JSON-RPC message per text frame
 import type { AnyMessage, Stream } from "@agentclientprotocol/sdk";
 import type { Closed, OpenTransport } from "@handler/acp-view/lib/connection.svelte";
@@ -9,16 +9,16 @@ export type { Closed };
 export const ACP_SUBPROTOCOL = "acp.v1";
 
 /** The transport of an `AcpConnection` to one of handlerd's ACP endpoints. */
-export function websocketTransport(url: string, token: string): OpenTransport {
+export function websocketTransport(url: string): OpenTransport {
   return async (onClose) => {
-    const ws = await openWebSocket(url, token);
+    const ws = await openWebSocket(url);
     return { stream: websocketStream(ws, onClose), close: () => ws.close(1000, "closed by user") };
   };
 }
 
-export function openWebSocket(url: string, token: string, Ctor: typeof WebSocket = WebSocket): Promise<WebSocket> {
+export function openWebSocket(url: string, Ctor: typeof WebSocket = WebSocket): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new Ctor(url, [ACP_SUBPROTOCOL, `bearer.${token}`]);
+    const ws = new Ctor(url, [ACP_SUBPROTOCOL]);
     ws.addEventListener("open", () => resolve(ws), { once: true });
     ws.addEventListener("close", (e) => reject(new Error(`connection refused (${e.code}) ${e.reason}`)), {
       once: true,

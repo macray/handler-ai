@@ -1,0 +1,83 @@
+{
+  "$id": "urn:handler.control/v1/approve-plan-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/plans`: approve the file as read, and run it (D.27).",
+  "properties": {
+    "agentId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "path": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Path"
+    },
+    "draftId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Draftid"
+    },
+    "runnerId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runnerid"
+    },
+    "digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "digest"
+  ],
+  "title": "ApprovePlanRequest",
+  "type": "object"
+}

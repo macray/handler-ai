@@ -19,7 +19,8 @@
                 "config",
                 "knowledge",
                 "app",
-                "subject"
+                "subject",
+                "paste"
               ],
               "type": "string"
             },

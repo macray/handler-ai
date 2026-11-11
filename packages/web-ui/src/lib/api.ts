@@ -1,5 +1,4 @@
 // Control API client (contract D). Types come from the generated contracts (schemas/).
-import { token } from "./auth";
 import type {
   SpeechRequest,
   DraftPreview,
@@ -39,7 +38,12 @@ import type {
   AutomationView,
   AppLink,
   AppLog,
+  InboxAnswerRequest,
   InboxMessage,
+  Pins,
+  PlanDraft,
+  PlanRead,
+  PlanView,
   BindingInfo,
   BindingRequest,
   CreateSkillRequest,
@@ -50,6 +54,7 @@ import type {
   KnowledgeFolderView,
   KnowledgeListing,
   KnowledgeNote,
+  KnowledgeRootCheck,
   LoginWindow,
   Build,
   BuildLog,
@@ -68,7 +73,9 @@ import type {
   Problem,
   ProviderInfo,
   ProviderRequest,
+  ProviderReach,
   ProviderTemplate,
+  ProviderTestRequest,
   Project,
   ProjectSettingsRequest,
   RemotePairing,
@@ -76,7 +83,10 @@ import type {
   Session,
   ImageUpdates,
   RuntimeCheck,
+  SandboxRuntime,
+  SystemPackageInfo,
   ToolboxContainerfile,
+  ToolboxLines,
   ToolboxInfo,
   WorkFoldersInfo,
   CacheDeclaration,
@@ -92,9 +102,22 @@ export class ApiError extends Error {
     readonly status: number,
     readonly title: string,
     readonly detail?: string | null,
+    readonly toolboxAdds?: string[] | null, // 409 "toolbox changes not confirmed": to send back
   ) {
     super(detail ? `${title}: ${detail}` : title);
   }
+}
+
+/** What a save or an install adds to the toolbox, when it was refused for it (B.6): said to the
+ *  person, then sent back as `toolboxAdds` to confirm. */
+export type ToolboxChanges = { detail: string; adds: string[] };
+
+/** Where a plan is read from (D.27): a draft, or a file of an agent's (or a session's) folder. */
+export type PlanSource = { draftId: string } | { sessionId?: string; agentId?: string; path: string };
+
+export function toolboxChanges(e: unknown): ToolboxChanges | null {
+  if (!(e instanceof ApiError) || e.status !== 409 || e.title !== "toolbox changes not confirmed") return null;
+  return { detail: e.detail ?? e.title, adds: e.toolboxAdds ?? [] };
 }
 
 async function call<T>(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
@@ -103,9 +126,9 @@ async function call<T>(method: string, path: string, body?: unknown, headers?: R
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
-/** The request with the token; ApiError when it fails (problem details). */
+/** The request (the browser adds the UI's cookie); ApiError when it fails (problem details). */
 async function send(method: string, path: string, body?: BodyInit, headers?: Record<string, string>): Promise<Response> {
-  const response = await fetch(path, { method, headers: { Authorization: `Bearer ${token() ?? ""}`, ...headers }, body });
+  const response = await fetch(path, { method, headers, body });
   if (!response.ok) {
     let problem: Partial<Problem> = {};
     try {
@@ -113,7 +136,7 @@ async function send(method: string, path: string, body?: BodyInit, headers?: Rec
     } catch {
       /* not a problem+json body */
     }
-    throw new ApiError(response.status, problem.title ?? response.statusText, problem.detail);
+    throw new ApiError(response.status, problem.title ?? response.statusText, problem.detail, problem.toolboxAdds);
   }
   return response;
 }
@@ -141,20 +164,26 @@ export const api = {
   toolbox: () => call<ToolboxInfo>("GET", "/v1/toolbox"),
   networkFilter: () => call<NetworkFilterInfo>("GET", "/v1/network-filter"), // the egress proxy's image (D.4)
   runtime: () => call<RuntimeCheck>("GET", "/v1/runtime"), // can this host run sandboxes (A.8)
+  runtimes: () => call<SandboxRuntime[]>("GET", "/v1/runtimes"), // those installed, the one in use (D.2)
+  chooseRuntime: (name: string) => call<RuntimeCheck>("PUT", "/v1/runtime", { name }),
   // automatic image updates (D.4): the network filter, every built harness and addon image, not the toolbox
   imageUpdates: () => call<ImageUpdates>("GET", "/v1/image-updates"),
   setImageUpdates: (schedule: ImageUpdates["schedule"]) => call<ImageUpdates>("PUT", "/v1/image-updates", { schedule }),
   runImageUpdates: () => call<ImageUpdates>("POST", "/v1/image-updates/run"),
-  // the user's toolbox Containerfile (B.6): saved here, built by the next toolbox rebuild
+  // the toolbox's parts (B.7): its system packages and the user's own lines, saved here, built by
+  // the next toolbox build; the Containerfile it generates from them, read-only
+  systemPackages: () => call<SystemPackageInfo[]>("GET", "/v1/toolbox/system-packages"),
+  setSystemPackages: (systemPackages: string[]) => call<ToolboxInfo>("PUT", "/v1/toolbox/system-packages", { systemPackages }),
+  toolboxLines: () => call<ToolboxLines>("GET", "/v1/toolbox/lines"),
+  saveToolboxLines: (content: string) => call<ToolboxLines>("PUT", "/v1/toolbox/lines", { content }),
   toolboxContainerfile: () => call<ToolboxContainerfile>("GET", "/v1/toolbox/containerfile"),
-  saveToolboxContainerfile: (content: string) =>
-    call<ToolboxContainerfile>("PUT", "/v1/toolbox/containerfile", { content }),
   addons: () => call<AddonInfo[]>("GET", "/v1/addons"),
   // installing addons (G.5): from a source (source:<source>/<name>), a folder or an archive;
   // preview first
   previewAddon: (source: string) => call<AddonPreview>("POST", "/v1/addons/preview", { source }),
-  installAddon: (source: string, digest: string) =>
-    call<AddonInstalled>("POST", "/v1/addons/install", { source, digest }),
+  // toolboxAdds: the system packages its preview said it adds (B.6), confirmed by installing
+  installAddon: (source: string, digest: string, toolboxAdds: string[] = []) =>
+    call<AddonInstalled>("POST", "/v1/addons/install", { source, digest, toolboxAdds }),
   removeAddon: (name: string) => call<void>("DELETE", `/v1/addons/${encodeURIComponent(name)}`),
   // bindings (G.2, D.15): written from the form (secret values go to the secret store), or by hand
   bindings: () => call<BindingInfo[]>("GET", "/v1/bindings"),
@@ -171,11 +200,8 @@ export const api = {
   writeSkillFile: (name: string, path: string, body: SkillFileRequest) => call<SkillInfo>("PUT", skillFilePath(name, path), body),
   deleteSkillFile: (name: string, path: string) => call<SkillInfo>("DELETE", skillFilePath(name, path)),
   exportSkill: async (name: string) => (await send("GET", `/v1/skills/${encodeURIComponent(name)}/archive`)).blob(),
-  importSkill: async (archive: Blob, options: { project?: string | null; replace?: boolean }) => {
-    const query = new URLSearchParams();
-    if (options.project) query.set("project", options.project);
-    if (options.replace) query.set("replace", "true");
-    const response = await send("POST", `/v1/skills/import?${query}`, archive, { "Content-Type": "application/zip" });
+  importSkill: async (archive: Blob, options: { replace?: boolean }) => {
+    const response = await send("POST", `/v1/skills/import${options.replace ? "?replace=true" : ""}`, archive, { "Content-Type": "application/zip" });
     return (await response.json()) as SkillInfo;
   },
   // a folderless agent's session's folder as a skill (D.18)
@@ -225,6 +251,7 @@ export const api = {
     call<SkillInfo>("POST", `/v1/skills/import-url${options.replace ? "?replace=true" : ""}`, { url }),
   knowledge: () => call<KnowledgeListing>("GET", "/v1/knowledge"),
   // D.5: the root (null: back to the default), folders, and reading what they hold
+  checkKnowledgeRoot: (path: string) => call<KnowledgeRootCheck>("GET", `/v1/knowledge/check?path=${encodeURIComponent(path)}`),
   setKnowledgeRoot: (root: string | null, create = false) =>
     call<KnowledgeListing>("PUT", "/v1/knowledge/root", { root, create }),
   createKnowledgeFolder: (path: string) => call<KnowledgeListing>("POST", "/v1/knowledge/folders", { path }),
@@ -232,14 +259,16 @@ export const api = {
     call<KnowledgeFolderView>("GET", `/v1/knowledge/browse?path=${encodeURIComponent(path)}`),
   knowledgeNote: (path: string) => call<KnowledgeNote>("GET", `/v1/knowledge/note?path=${encodeURIComponent(path)}`),
   // image rebuilds (D.4, G.4): the daemon builds from the files on disk; clients only name the target
-  rebuild: (target: string) =>
-    call<Build>("POST", `${imagePath(target)}/rebuild`),
+  // the toolbox's: `update` pulls and builds it all again (system updates), else a change is applied
+  rebuild: (target: string, update = false) =>
+    call<Build>("POST", `${imagePath(target)}/rebuild`, update ? { update } : undefined),
   builds: () => call<Build[]>("GET", "/v1/builds"),
   build: (id: string) => call<Build>("GET", `/v1/builds/${id}`),
   buildLog: (id: string, offset: number) => call<BuildLog>("GET", `/v1/builds/${id}/log?offset=${offset}`),
   cancelBuild: (id: string) => call<Build>("POST", `/v1/builds/${id}/cancel`),
   // the folder picker, inside the work folders (D.13)
   directories: (path?: string) => call<DirectoryListing>("GET", `/v1/directories${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  recentDirectories: () => call<DirectoryListing>("GET", "/v1/directories/recent"),
   createDirectory: (body: CreateDirectoryRequest) => call<DirectoryListing>("POST", "/v1/directories", body),
   // accounts (D.9): a harness and a description; handler keeps the login
   accounts: () => call<AccountInfo[]>("GET", "/v1/accounts"),
@@ -256,6 +285,8 @@ export const api = {
   createProvider: (body: ProviderRequest) => call<ProviderInfo>("POST", "/v1/providers", body),
   updateProvider: (name: string, body: ProviderRequest) => call<ProviderInfo>("PUT", `/v1/providers/${encodeURIComponent(name)}`, body),
   deleteProvider: (name: string) => call<void>("DELETE", `/v1/providers/${encodeURIComponent(name)}`),
+  // its server asked for its models from where a sandbox would: the form's endpoints, or a saved one's
+  testProvider: (body: ProviderTestRequest) => call<ProviderReach>("POST", "/v1/providers/test", body),
   // areas (D.19): Work, Personal, a client, with their colours
   areas: () => call<AreaInfo[]>("GET", "/v1/areas"),
   createArea: (body: AreaRequest) => call<AreaInfo>("POST", "/v1/areas", body),
@@ -266,7 +297,7 @@ export const api = {
   setFolders: (roots: string[]) => call<WorkFoldersInfo>("PUT", "/v1/folders", { roots }),
   // the toolbox's caches (D.8): kept between sessions, each project's own or the global ones
   caches: () => call<CachesInfo>("GET", "/v1/caches"),
-  setCaches: (caches: Record<string, CacheDeclaration>) => call<CachesInfo>("PUT", "/v1/caches", { caches }),
+  setCaches: (caches: CacheDeclaration[]) => call<CachesInfo>("PUT", "/v1/caches", { caches }),
   cacheSizes: () => call<CacheSizes>("GET", "/v1/caches/sizes"), // measured: may take seconds
   emptyGlobalCaches: () => call<void>("DELETE", "/v1/caches/files"),
   emptyCache: (name: string) => call<void>("DELETE", `/v1/caches/${encodeURIComponent(name)}/files`),
@@ -335,8 +366,14 @@ export const api = {
     call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/agents/${encodeURIComponent(need)}`, { agentId }),
   setAppPersons: (name: string, persons: string[]) =>
     call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/persons`, { persons }),
+  // the menu's Pinned (D.28): the whole list, in order
+  pins: () => call<Pins>("GET", "/v1/pins"),
+  setPins: (body: Pins) => call<Pins>("PUT", "/v1/pins", body),
   inbox: () => call<InboxMessage[]>("GET", "/v1/inbox"),
   markRead: (id: string) => call<InboxMessage>("POST", `/v1/inbox/${encodeURIComponent(id)}/read`),
+  /** A message's hosts refused allowed or kept blocked for its agent (F.9); `again`: its plan
+   *  from its step, or its automation, run again. */
+  answerInbox: (id: string, body: InboxAnswerRequest) => call<InboxMessage>("POST", `/v1/inbox/${encodeURIComponent(id)}/answer`, body),
   openApp: (name: string) => call<AppLink>("POST", `/v1/apps/${encodeURIComponent(name)}/open`),
   appLog: (name: string) => call<AppLog>("GET", `/v1/apps/${encodeURIComponent(name)}/log`),
 
@@ -355,12 +392,30 @@ export const api = {
     (await send("GET", `${automationPath(name)}/files/${path.split("/").map(encodeURIComponent).join("/")}`)).text(),
   enableAutomation: (name: string) => call<AutomationView>("POST", `${automationPath(name)}/enable`),
   disableAutomation: (name: string) => call<AutomationView>("POST", `${automationPath(name)}/disable`),
-  tryAutomation: (name: string, sessionId?: string) => call<AutomationRun>("POST", `${automationPath(name)}/try`, sessionId ? { sessionId } : {}),
+  tryAutomation: (name: string, sessionId?: string, allow: string[] = []) =>
+    call<AutomationRun>("POST", `${automationPath(name)}/try`, { ...(sessionId ? { sessionId } : {}), ...(allow.length ? { allow } : {}) }),
   automationRuns: (name: string) => call<AutomationRun[]>("GET", `${automationPath(name)}/runs`),
   automationRunLog: async (name: string, id: string) =>
     (await send("GET", `${automationPath(name)}/runs/${encodeURIComponent(id)}/log`)).text(),
   cancelAutomationRun: (name: string, id: string) =>
     call<AutomationRun>("POST", `${automationPath(name)}/runs/${encodeURIComponent(id)}/cancel`),
+  // plans (D.27): a plan (a draft, or a file of an agent's folder: a session's, its agent's) read,
+  // approved by the digest read and run; the plans approved, run again from a step, cancelled,
+  // deleted (runner: the agent chosen on review to run its steps, instead of its `Agent:` line);
+  // the drafts, made for a project or from a plan, saved over the text read, thrown away
+  readPlan: (where: PlanSource, runner?: string) => call<PlanRead>("POST", "/v1/plans/read", { ...where, ...(runner ? { runnerId: runner } : {}) }),
+  approvePlan: (where: PlanSource, digest: string, runner?: string) =>
+    call<PlanView>("POST", "/v1/plans", { ...where, digest, ...(runner ? { runnerId: runner } : {}) }),
+  planDrafts: (projectId?: string) => call<PlanDraft[]>("GET", `/v1/plan-drafts${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
+  planDraft: (id: string) => call<PlanDraft>("GET", `/v1/plan-drafts/${encodeURIComponent(id)}`),
+  createPlanDraft: (from: { projectId: string } | { fromPlan: string }) => call<PlanDraft>("POST", "/v1/plan-drafts", from),
+  savePlanDraft: (id: string, text: string, digest: string) => call<PlanDraft>("PUT", `/v1/plan-drafts/${encodeURIComponent(id)}`, { text, digest }),
+  deletePlanDraft: (id: string) => call<void>("DELETE", `/v1/plan-drafts/${encodeURIComponent(id)}`),
+  plans: (projectId?: string) => call<PlanView[]>("GET", `/v1/plans${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
+  plan: (id: string) => call<PlanView>("GET", `/v1/plans/${encodeURIComponent(id)}`),
+  runPlan: (id: string, from: number, allow: string[] = []) => call<PlanView>("POST", `/v1/plans/${encodeURIComponent(id)}/run`, { from, ...(allow.length ? { allow } : {}) }),
+  cancelPlan: (id: string) => call<PlanView>("POST", `/v1/plans/${encodeURIComponent(id)}/cancel`),
+  deletePlan: (id: string) => call<void>("DELETE", `/v1/plans/${encodeURIComponent(id)}`),
   sessionAutomationRuns: (sessionId: string) =>
     call<AutomationRun[]>("GET", `/v1/sessions/${encodeURIComponent(sessionId)}/automation-runs`),
   // its folder (F.8): what changed since it started, a folder, a file; paths relative to it
@@ -381,7 +436,6 @@ export const api = {
   project: (id: string) => call<Project>("GET", `/v1/projects/${id}`),
   createProject: (body: CreateProjectRequest) => call<Project>("POST", "/v1/projects", body),
   updateProject: (id: string, body: ProjectSettingsRequest) => call<Project>("PUT", `/v1/projects/${id}`, body),
-  pinProject: (id: string, pinned: boolean) => call<Project>("PUT", `/v1/projects/${id}/pinned`, { pinned }),
   deleteProject: (id: string) => call<void>("DELETE", `/v1/projects/${id}`),
 
   // every agent, whatever its home (D.1): a project, an app or Chat, none (Other folders)
@@ -395,19 +449,18 @@ export const api = {
   egressEvents: (id: string) => call<EgressEvent[]>("GET", `/v1/agents/${id}/egress-events`),
 
   sessions: () => call<Session[]>("GET", "/v1/sessions"),
-  agentSessions: (agentId: string) => call<Session[]>("GET", `/v1/sessions?agentId=${encodeURIComponent(agentId)}`),
   // the runs on a skill (D.18)
   skillRuns: (name: string) => call<Session[]>("GET", `/v1/sessions?subject=${encodeURIComponent(`skill:${name}`)}`),
   // a run of an agent with an interface (D.18); `fromSkill`: a folderless agent's session starting as that skill
   startRun: (agentId: string, input: SessionInput, model?: ModelAccess) =>
     call<Session>("POST", "/v1/sessions", { agentId, input, model, origin: "ui" }),
-  createSessionFromSkill: (agentId: string, fromSkill: string, model?: ModelAccess) =>
-    call<Session>("POST", "/v1/sessions", { agentId, fromSkill, model, origin: "ui" }),
+  createSessionFromSkill: (agentId: string, fromSkill: string) =>
+    call<Session>("POST", "/v1/sessions", { agentId, fromSkill, origin: "ui" }),
   session: (id: string) => call<Session>("GET", `/v1/sessions/${id}`),
   // `prompt`: the request the daemon sends first (after the agent's instructions); `model`: one
   // of the agent's (default: its first, D.1)
-  createSession: (agentId: string, acpSessionId?: string, prompt?: string, model?: ModelAccess) =>
-    call<Session>("POST", "/v1/sessions", { agentId, acpSessionId, prompt, model, origin: "ui" }),
+  createSession: (agentId: string, prompt?: string, model?: ModelAccess) =>
+    call<Session>("POST", "/v1/sessions", { agentId, prompt, model, origin: "ui" }),
   stopSession: (id: string) => call<Session>("POST", `/v1/sessions/${id}/stop`),
   // its turn cancelled; a run waiting for its turn does not start (D.18)
   cancelSession: (id: string) => call<Session>("POST", `/v1/sessions/${id}/cancel`),
@@ -416,6 +469,9 @@ export const api = {
   // a draft opened (H.16): its code at its own address, on copies, until used or thrown away
   openAppDraft: (sessionId: string) => call<DraftPreview>("POST", `/v1/apps/from-draft/${encodeURIComponent(sessionId)}/open`),
   createAppDraft: (agentId: string, app?: string) => call<Session>("POST", "/v1/sessions", { agentId, appDraft: app ? { app } : {} }),
+  // the plan builder's session on a plan draft (D.27); model: one of its project's area, when its own is not
+  buildPlan: (agentId: string, draftId: string, model?: ModelAccess) =>
+    call<Session>("POST", "/v1/sessions", { agentId, planDraft: draftId, ...(model ? { model } : {}) }),
   /** A session's draft used: the app's next version, or a new app (`added`). */
   useAppDraft: async (sessionId: string): Promise<{ app: App; added: boolean }> => {
     const response = await send("POST", `/v1/apps/from-draft/${encodeURIComponent(sessionId)}`);

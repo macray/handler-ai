@@ -1,0 +1,5 @@
+apiVersion = "handler.system-package/v1"
+name = "chromium"
+version = 1
+description = "Chromium and its fonts: a browser for web development and browser automation (the playwright tool)"
+provides = ["chromium"]

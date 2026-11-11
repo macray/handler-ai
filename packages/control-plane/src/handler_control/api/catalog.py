@@ -13,11 +13,13 @@ from handler_contracts import (
     AddonInfo,
     AddonSlot,
     AddonSlotInfo,
+    ChooseRuntimeRequest,
     CreateDirectoryRequest,
     CreateKnowledgeFolderRequest,
     HarnessDescriptor,
     HarnessInfo,
     Health,
+    SandboxRuntime,
     SetKnowledgeRootRequest,
 )
 from handler_harness import addons as addon_catalog
@@ -25,13 +27,17 @@ from handler_harness import catalog, images
 
 from .. import (
     __version__,
+    addon_folders,
     addon_install,
     display,
     folders,
     knowledge,
     runtime,
+    sandbox_process,
+    toolbox,
     webui,
 )
+from ..builds import BuildStore
 from ..settings import Settings
 from .common import (
     Context,
@@ -42,12 +48,59 @@ from .common import (
 )
 
 
+def running(ctx: Context) -> str:
+    """What runs in the current runtime, in words; "" when nothing does."""
+    found = []
+    if (
+        ctx.sessions.live
+        or ctx.sessions.starting
+        or any(a.connections for a in ctx.registry.agents.values())
+    ):
+        found.append("agents")
+    if ctx.apps.live or ctx.apps.starting:
+        found.append("apps")
+    if ctx.builds.running:
+        found.append("an image build")
+    return ", ".join(found)
+
+
 def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
     authed = [Depends(ctx.require_auth)]
 
     @app.get("/v1/runtime", dependencies=authed)
     async def runtime_check() -> Response:
         """Can this host run sandboxes (A.8): `handler setup` and the web UI show it."""
+        return dump(await asyncio.to_thread(runtime.check))
+
+    @app.get("/v1/runtimes", dependencies=authed)
+    async def list_runtimes() -> Response:
+        """The sandbox runtimes installed here, the one in use marked, each with its host check
+        (A.8): what switching to it would give (D.2)."""
+        current = sandbox_process.current()
+        names = sorted({*sandbox_process.installed(), current})
+        checks = await asyncio.gather(*(asyncio.to_thread(runtime.check_of, n) for n in names))
+        return dump(
+            [
+                SandboxRuntime(name=n, current=n == current, check=c)
+                for n, c in zip(names, checks, strict=True)
+            ]
+        )
+
+    @app.put("/v1/runtime", dependencies=authed)
+    async def choose_runtime(request: Request) -> Response:
+        """Use another runtime (D.2): refused while anything runs in the current one, whose
+        sandboxes and images the other does not see. Its host check (A.8) is the answer."""
+        body = parse_body(ChooseRuntimeRequest, await request.body())
+        if body.name != sandbox_process.current():
+            if busy := running(ctx):
+                raise ProblemError(409, "sandboxes running", f"stop them first: {busy}")
+            try:
+                runtime.choose(ctx.settings, body.name)
+            except runtime.ForAnotherSystemError as e:
+                raise ProblemError(404, "runtime for another system", str(e)) from None
+            except runtime.RuntimeChoiceError as e:
+                raise ProblemError(404, "runtime not installed", str(e)) from None
+            ctx.updates.runtime_chosen()  # its own images: the filter, the tools in use (D.4)
         return dump(await asyncio.to_thread(runtime.check))
 
     @app.get("/v1/health")
@@ -64,11 +117,16 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.get("/v1/addons", dependencies=authed)
     async def list_addons() -> Response:
-        return dump(await asyncio.to_thread(addon_infos, ctx.settings))
+        return dump(await asyncio.to_thread(addon_infos, ctx.settings, ctx.builds))
 
     @app.get("/v1/knowledge", dependencies=authed)
     def list_knowledge() -> Response:
         return dump(knowledge.listing(*knowledge.root(ctx.settings)))
+
+    @app.get("/v1/knowledge/check", dependencies=authed)
+    def check_knowledge_root(path: str) -> Response:
+        with knowledge_problems():
+            return dump(knowledge.check_root(path))
 
     @app.put("/v1/knowledge/root", dependencies=authed)
     async def set_knowledge_root(request: Request) -> Response:
@@ -94,12 +152,23 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
         with knowledge_problems():
             return dump(knowledge.read_note(knowledge.root(ctx.settings)[0], path))
 
+    add_directory_routes(app, ctx)
+
+
+def add_directory_routes(app: FastAPI, ctx: Context) -> None:
+    """The folder pickers' (D.13): a folder's sub-folders, those changed last, a new folder."""
+    authed = [Depends(ctx.require_auth)]
+
     @app.get("/v1/directories", dependencies=authed)
     def list_directories(path: str | None = None) -> Response:
         try:
             return dump(webui.list_directories(folders.roots(ctx.settings), path))
         except webui.OutsideRootsError as e:
             raise ProblemError(403, "path not allowed", str(e)) from None
+
+    @app.get("/v1/directories/recent", dependencies=authed)
+    def recent_directories() -> Response:
+        return dump(webui.recent_directories(folders.roots(ctx.settings)))
 
     @app.post("/v1/directories", dependencies=authed)
     async def create_directory(request: Request) -> Response:
@@ -113,11 +182,11 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
             raise ProblemError(409, "folder exists", str(e)) from None
 
 
-def addon_infos(settings: Settings) -> list[AddonInfo]:
+def addon_infos(settings: Settings, builds: BuildStore) -> list[AddonInfo]:
     infos = []
     for name in addon_catalog.names():
         with contextlib.suppress(addon_catalog.UnknownAddonError):  # removed since listed
-            infos.append(addon_info(settings, name))
+            infos.append(addon_info(settings, builds, name))
     return infos
 
 
@@ -150,8 +219,8 @@ def login_file(descriptor: HarnessDescriptor) -> str | None:
     return os.path.basename(descriptor.state_slots[login.file].target)
 
 
-def addon_info(settings: Settings, name: str) -> AddonInfo:
-    """An addon and what `:latest` of its image holds — blocking calls to the runtime."""
+def addon_info(settings: Settings, builds: BuildStore, name: str) -> AddonInfo:
+    """An addon, what its folder holds (its image extracted, addon_folders), its state (G.5)."""
     directory = str(addon_catalog.locate(name))
     try:
         addon = addon_catalog.get(name)
@@ -163,6 +232,8 @@ def addon_info(settings: Settings, name: str) -> AddonInfo:
         description=m.description,
         image=m.image,
         commands=m.commands,
+        needs=m.needs,
+        caches=m.caches,
         skills=[s.name for s in addon.skills],
         settings=[slot_info(n, slot) for n, slot in sorted(m.settings.items())],
         secret_slots=[slot_info(n, slot) for n, slot in sorted(m.secret_slots.items())],
@@ -172,16 +243,35 @@ def addon_info(settings: Settings, name: str) -> AddonInfo:
         overrides_builtin=addon.overrides_builtin,
         **installed_from(settings, addon),
     )
+    built = m.image is None or addon_folders.built(settings, name)
+    record = toolbox.read_record(settings)
+    lacking = [c for c in m.needs if record is None or c not in record.commands]
+    state, detail = builds.addon_state(name, built and not lacking)
+    if state == "installed":
+        detail = not_ready(settings, lacking, built)
+    info = info.model_copy(update={"state": state, "state_detail": detail})
     if m.image is None:
         return info
-    latest = runtime.inspect(images.ref(m.image, images.LATEST))
     return info.model_copy(
         update={
-            "image_present": latest is not None,
-            "version": runtime.version(latest.id, images.version_file(addon)) if latest else None,
-            "built_at": latest.created if latest else None,
+            "image_present": addon_folders.built(settings, name),
+            "version": addon_folders.version(settings, addon),
+            "built_at": addon_folders.built_at(settings, name),
         }
     )
+
+
+def not_ready(settings: Settings, lacking: list[str], built: bool) -> str | None:
+    """Why an addon no build prepares is not ready: what the toolbox lacks of its needs (and
+    what would give it), its tool not built."""
+    if lacking:
+        found = toolbox.to_add(settings, [toolbox.Need((c,), "") for c in lacking])
+        why = [f"{', '.join(c)}: turn on the system package {n}" for n, c in found.adds.items()]
+        why += [f"{c}: no system package gives it, add it to your lines" for c in found.unprovided]
+        if not why:  # given by what is on, not applied yet
+            return f"needs {', '.join(lacking)}: apply the toolbox"
+        return f"the toolbox lacks {'; '.join(why)}"
+    return None if built else "not built yet"
 
 
 def installed_from(settings: Settings, addon: addon_catalog.Addon) -> dict[str, Any]:

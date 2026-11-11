@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
-  "description": "Remote control of shared handler sessions from a phone or tablet: served by the gateway, talks to handler only through end-to-end encrypted envelopes (docs/dev/design/remote.md).",
+  "description": "Remote control of shared handler sessions from a phone or tablet: served by the gateway, talks to handler only through end-to-end encrypted envelopes (remote design).",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

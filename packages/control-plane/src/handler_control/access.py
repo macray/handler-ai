@@ -39,7 +39,7 @@ def resolve(
             raise ValueError(f"account '{account}': {loaded.error}")
         spec = AgentSpec.resolve(harness, model, account=(account, loaded.account))
         login = descriptor.login
-        if login and login.file and sources.credentials is not None:
+        if login and login.file:
             kept = accounts.credential_file(sources.credentials, account)
             if kept.is_file():
                 spec = spec.model_copy(update={"account_login": str(kept)})

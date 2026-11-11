@@ -1,4 +1,5 @@
-"""Sources (D.26): git repositories Handler reads to offer apps, agents and addons to install.
+"""Sources (D.26): git repositories Handler reads to offer apps, agents and tools to install, and
+the system packages (B.7) their tools need, installed with them.
 The official one is Handler's (Settings.official_source); the person adds others, trusting them.
 A source only offers: installing goes through each kind's own path and its page (addons G.5,
 apps H.15, agents files D.23), never by itself.
@@ -8,7 +9,8 @@ apps H.15, agents files D.23), never by itself.
       fetched.json              url, commit, fetchedAt, error (the last fetch's, when it failed:
                                 the tree is then the one read before), skipped (an item → why it
                                 cannot be offered)
-      tree/                     the commit's handler-source.toml, apps/, agents/ and addons/
+      tree/                     the commit's handler-source.toml, apps/, agents/, tools/ and
+                                system-packages/
 
 A repository is read with dulwich, shallow and bare: nothing of it runs (no hooks, filters,
 submodules, LFS). Its files are written out here, never a link: an item holding one, or a
@@ -40,7 +42,12 @@ from handler_contracts import OFFICIAL_SOURCE, SOURCE_MANIFEST, SourceKind, Sour
 from . import files
 from .settings import Settings
 
-ROOTS: dict[SourceKind, str] = {"app": "apps", "agents": "agents", "addon": "addons"}
+ROOTS: dict[SourceKind, str] = {
+    "app": "apps",
+    "agents": "agents",
+    "addon": "tools",
+    "system-package": "system-packages",
+}
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")  # an item's folder
 MAX_FILES, MAX_BYTES = 50_000, 1024 * 2**20  # what a source's tree may hold
 FETCH_TIMEOUT = 60  # seconds, each HTTP request

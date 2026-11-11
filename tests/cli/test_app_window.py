@@ -1,4 +1,4 @@
-"""`handler app open`: which window an app opens in (docs/dev/design/apps.md §5.1), with
+"""`handler app open`: which window an app opens in (apps design §5.1), with
 fake browsers."""
 
 import time
@@ -25,6 +25,7 @@ def path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return bin_dir
 
 
+@pytest.mark.rule("app.opens-in-its-own-window")
 def test_firefox_first_with_its_own_profile(path: Path, tmp_path: Path) -> None:
     record = tmp_path / "argv"
     fake(path, "firefox", record)
@@ -43,6 +44,7 @@ def test_firefox_first_with_its_own_profile(path: Path, tmp_path: Path) -> None:
     assert "#nav-bar" in (profile / "chrome" / "userChrome.css").read_text()
 
 
+@pytest.mark.rule("app.opens-in-its-own-window")
 def test_chromium_app_mode(path: Path, tmp_path: Path) -> None:
     fake(path, "chromium", tmp_path / "unused")
     assert app_window.choose() == "chromium"
@@ -54,6 +56,7 @@ def test_chromium_app_mode(path: Path, tmp_path: Path) -> None:
     ]  # fmt: skip
 
 
+@pytest.mark.rule("app.opens-in-its-own-window")
 def test_default_browser_otherwise(
     path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

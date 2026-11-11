@@ -4,7 +4,7 @@ backend, so handler knows which app is asking without any token. Only with `need
 `needs.agents`.
 
     POST /notify  {title, body?, person?}                → 200 {id} · 400 · 403 · 429
-    POST /runs    {agent, project?, fields?, start}      → 202 AppRun · 400 · 403 · 409 · 429
+    POST /runs    {agent, fields?, start}                → 202 AppRun · 400 · 403 · 409 · 429
     GET  /runs/{id}                                      → 200 AppRun · 404
     POST /runs/{id}/cancel                               → 200 AppRun · 404 · 409
 

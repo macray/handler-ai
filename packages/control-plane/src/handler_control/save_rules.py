@@ -1,17 +1,21 @@
 """The rules an agent or a project must pass before it is saved — whoever asks (the Control API
 today): what it runs as (E1), its folder (D.13, A2), its tools (G3), knowledge (D.5), display
-(A.6), permission mode, what a save widens (risks, D.8), skills (D.17), agents set up from a
-definition (D.18, D.23, H.2), one project per folder and agent names (D.8).
+(A.6), permission mode, what a save widens (risks, D.8), what it adds to the toolbox (B.6),
+skills (D.17), agents set up from a definition (D.18, D.23, H.2), one project per folder and
+agent names (D.8).
 
 Errors say which check failed (`title`, the problem title clients see) and what is wrong:
 CheckError (the request is wrong), ForbiddenError (outside what handler allows), ConflictError (with
 the current state, or a risk not confirmed).
 """
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 
 from handler_contracts import (
+    ABILITIES,
+    Ability,
+    AddonUse,
     AgentInterface,
     AgentOrigin,
     AgentRequest,
@@ -28,14 +32,15 @@ from . import (
     agents_files,
     areas,
     compose,
-    display,
     folders,
     handler_needs,
     interfaces,
     knowledge,
     llm,
     model_agent,
+    runtime,
     skills,
+    toolbox,
 )
 from .agents import AgentRecord, AgentRegistry, CheckedSettings, NotAgentsModelError, RunsAs
 from .projects import ProjectRecord, ProjectRegistry
@@ -58,40 +63,68 @@ class ConflictError(CheckError):
     """In conflict with the current state, or widening what an agent may do unconfirmed."""
 
 
+class ToolboxChangesError(ConflictError):
+    """The save needs system packages the toolbox lacks, not confirmed (`toolboxAdds`)."""
+
+    def __init__(self, adds: dict[str, list[str]]) -> None:
+        listed = ", ".join(f"{name} (for {', '.join(c)})" for name, c in adds.items())
+        super().__init__(
+            "toolbox changes not confirmed",
+            f"saving adds to the toolbox, for every agent, then rebuilds it: {listed}",
+        )
+        self.adds = list(adds)
+
+
 # ── agents ──────────────────────────────────────────────────────────────
 
 
 def checked_settings(
-    settings: Settings, body: AgentSettings, folder: str | None
+    settings: Settings, body: AgentSettings, folder: str | None, given: Sequence[AddonUse] = ()
 ) -> CheckedSettings:
     """An agent's settings in `folder`, checked: its model's harness with its account or provider
     (E1; the account's harness by default), the folder in the work folders (D.13, A2; None: a
-    folderless agent, D.18), bindings (G3), knowledge folders (D.5), display (A.6), permission
-    mode (one its harness offers), interface (D.18: a job never asks). On the model alone (D.18):
-    its provider, and its knowledge not more than a call takes."""
+    folderless agent, D.18), its addons with those its project gives (`given`, G3: not one of
+    them), knowledge folders (D.5), display (A.6), permission mode (one its harness offers),
+    interface (D.18: a job never asks). On the model alone (D.18): its provider, and its
+    knowledge not more than a call takes."""
     if body.model_alone:
         model = checked_model_alone(settings, body.model)
     else:
         model = checked_model(settings, body.model)
         check_permissions(body.permissions, model)
-    try:
-        scope = compose.check_scope(folders.roots(settings), folder) if folder else None
-    except compose.ScopeError as e:
-        raise ForbiddenError("scope not allowed", str(e)) from None
+    scope = checked_folder(settings, folder) if folder else None
     if body.interface is not None:
         check_interface(body.interface, body.permissions)
-    try:
-        addons.check(settings.bindings_dir, body.bindings)
-    except addons.SelectionError as e:
-        raise CheckError("bindings unusable", str(e)) from None
+    if twice := sorted({u.addon for u in body.addons} & {u.addon for u in given}):
+        raise CheckError("given by its project", f"{', '.join(twice)}: its project gives it")
     notes = checked_knowledge(settings, body.knowledge, body.model_alone)
-    if body.display:
+    if not body.model_alone:  # no sandbox, no addons (its project's do not reach it)
         try:
-            display.wayland_socket()
-        except display.DisplayError as e:
-            raise ConflictError("no display", str(e)) from None
+            addons.check(settings.bindings_dir, [*body.addons, *given])
+        except addons.SelectionError as e:
+            raise CheckError("tools unusable", str(e)) from None
+        check_runtime_gives(body)
     own = body.model_dump(include=set(AgentSettings.model_fields) - {"model"})
     return CheckedSettings(**own | {"model": model, "scope": scope, "knowledge": notes})
+
+
+def check_runtime_gives(body: AgentSettings) -> None:
+    """The abilities its sandboxes would need that the runtime lacks on this computer (A.8) are
+    refused now, not when the agent starts (A1). Nothing is refused when the runtime cannot say
+    (it cannot run)."""
+    supported = runtime.supports()
+    if supported is None:
+        return
+    needed: set[Ability] = set()
+    if body.confinement != "strict":
+        needed.add(body.confinement)
+    if body.display:
+        needed.add("display")
+    if missing := needed - set(supported.abilities):
+        words = ", ".join(ABILITIES[a] for a in sorted(missing))
+        raise ConflictError(
+            "not on this computer", f"not on this computer: {words} (handler setup says why)"
+        )
 
 
 def check_interface(interface: AgentInterface, permissions: str) -> None:
@@ -118,9 +151,9 @@ def checked_knowledge(settings: Settings, folders: list[str], model_alone: bool)
         if model_alone:
             model_agent.knowledge_prompt(knowledge.notes(root, checked))
     except knowledge.KnowledgeError as e:
-        raise CheckError("knowledge unusable", str(e)) from None
+        raise CheckError("notes unusable", str(e)) from None
     except model_agent.KnowledgeTooLargeError as e:
-        raise CheckError("knowledge too large", str(e)) from None
+        raise CheckError("notes too large", str(e)) from None
     return checked
 
 
@@ -225,6 +258,20 @@ def check_risks(old: AgentSettings | None, new: AgentSettings, body: AgentReques
         raise ConflictError("risks not confirmed", "; ".join(found))
 
 
+def check_toolbox(
+    settings: Settings,
+    agents: Sequence[tuple[AgentSettings, Sequence[AddonUse], str]],
+    confirmed: Collection[str],
+) -> None:
+    """Refused unless the client confirmed the system packages the save adds to the toolbox for
+    what the agents need (B.6): `agents` are each one's settings, its project's addons and who it
+    is. A need no system package provides is not refused: its addon says what it lacks."""
+    needs = [n for a, given, by in agents for n in toolbox.agent_needs(a, given, by)]
+    adds = toolbox.to_add(settings, needs).adds
+    if any(name not in confirmed for name in adds):
+        raise ToolboxChangesError(adds)
+
+
 def agent_name(body: AgentRequest, project: ProjectRecord | None) -> str | None:
     """Its name as typed: required in a project (its goal, D.8), else optional (its folder's)."""
     name = (body.name or "").strip() or None
@@ -245,6 +292,14 @@ def check_instructions(instructions: str | None, interface: AgentInterface | Non
         interfaces.check_instructions(instructions, interface)
     except interfaces.InterfaceError as e:
         raise CheckError("instructions invalid", str(e)) from None
+
+
+def check_project_addons(settings: Settings, uses: list[AddonUse]) -> None:
+    """A project gives addons that fit together (G3), whatever its agents are."""
+    try:
+        addons.check(settings.bindings_dir, uses)
+    except addons.SelectionError as e:
+        raise CheckError("tools unusable", str(e)) from None
 
 
 def check_project_skills(settings: Settings, names: list[str]) -> None:
@@ -334,6 +389,14 @@ def check_outside_identity(
         raise ConflictError("agent exists", f"agent {taken.id} ({called}) works {where}")
 
 
+def checked_folder(settings: Settings, folder: str) -> str:
+    """A folder agents work in, checked: inside the work folders, links resolved (D.13, A2)."""
+    try:
+        return compose.check_scope(folders.roots(settings), folder)
+    except compose.ScopeError as e:
+        raise ForbiddenError("scope not allowed", str(e)) from None
+
+
 # ── projects ────────────────────────────────────────────────────────────
 
 
@@ -359,17 +422,20 @@ def check_area(settings: Settings, area: str | None, agents: list[CheckedSetting
 def new_project_agents(
     settings: Settings, projects: ProjectRegistry, body: CreateProjectRequest
 ) -> list[CheckedSettings]:
-    """A new project's agents, checked, in its folder."""
+    """A new project's agents (none, or more), checked, in its folder."""
     for a in body.agents:
         if a.project_id is not None or a.app is not None or a.chat or a.scope is not None:
             raise CheckError("a new project's agent", "its home and folder are the project's")
-    checked = [checked_settings(settings, a, body.folder) for a in body.agents]
+    checked = [checked_settings(settings, a, body.folder, body.addons) for a in body.agents]
     for a, agent in zip(body.agents, checked, strict=True):
         check_risks(None, agent, a)
         check_skills(settings, a, None)
         check_instructions(a.instructions, a.interface)
+    named = [(c, body.addons, f"agent:{a.name}") for a, c in zip(body.agents, checked, strict=True)]
+    check_toolbox(settings, named, body.toolbox_adds)
     check_area(settings, body.area, checked)
     check_project_skills(settings, body.skills)
+    check_project_addons(settings, body.addons)
     return checked
 
 
@@ -385,8 +451,20 @@ def project_folder(
     agents = projects.agents(project)
     if body.default_agent is not None and body.default_agent not in {a.id for a in agents}:
         raise CheckError("unknown agent", body.default_agent)
-    checked = [checked_settings(settings, a.settings, body.folder) for a in agents]
+    given = {u.addon for u in body.addons}  # an agent that picked one drops it (give_addons)
+    checked = [
+        checked_settings(
+            settings,
+            a.settings.model_copy(update={"addons": [u for u in a.addons if u.addon not in given]}),
+            body.folder,
+            body.addons,
+        )
+        for a in agents
+    ]
     check_area(settings, body.area, checked)
     check_project_skills(settings, body.skills)
+    check_project_addons(settings, body.addons)
+    named = [(c, body.addons, f"agent:{a.id}") for a, c in zip(agents, checked, strict=True)]
+    check_toolbox(settings, named, body.toolbox_adds)
     scopes = [c.scope for c in checked]
-    return scopes[0] or body.folder if scopes else body.folder
+    return scopes[0] or body.folder if scopes else checked_folder(settings, body.folder)

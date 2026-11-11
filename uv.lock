@@ -12,6 +12,9 @@ members = [
     "handler-contracts",
     "handler-control-plane",
     "handler-harness-adapters",
+    "handler-sandbox-apple",
+    "handler-sandbox-docker",
+    "handler-sandbox-kit",
     "handler-sandbox-podman",
     "handler-workspace",
 ]
@@ -375,7 +378,6 @@ wheels = [
 
 [[package]]
 name = "handler-cli"
-version = "0.1.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "handler-contracts" },
@@ -446,15 +448,60 @@ dependencies = [
 requires-dist = [{ name = "handler-contracts", editable = "packages/contracts" }]
 
 [[package]]
-name = "handler-sandbox-podman"
+name = "handler-sandbox-apple"
 version = "0.1.0"
-source = { editable = "packages/sandbox-podman" }
+source = { editable = "packages/sandbox-apple" }
+dependencies = [
+    { name = "handler-contracts" },
+    { name = "handler-sandbox-kit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "handler-contracts", editable = "packages/contracts" },
+    { name = "handler-sandbox-kit", editable = "packages/sandbox-kit" },
+]
+
+[[package]]
+name = "handler-sandbox-docker"
+version = "0.1.0"
+source = { editable = "packages/sandbox-docker" }
+dependencies = [
+    { name = "handler-contracts" },
+    { name = "handler-sandbox-kit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "handler-contracts", editable = "packages/contracts" },
+    { name = "handler-sandbox-kit", editable = "packages/sandbox-kit" },
+]
+
+[[package]]
+name = "handler-sandbox-kit"
+version = "0.1.0"
+source = { editable = "packages/sandbox-kit" }
 dependencies = [
     { name = "handler-contracts" },
 ]
 
 [package.metadata]
 requires-dist = [{ name = "handler-contracts", editable = "packages/contracts" }]
+
+[[package]]
+name = "handler-sandbox-podman"
+version = "0.1.0"
+source = { editable = "packages/sandbox-podman" }
+dependencies = [
+    { name = "handler-contracts" },
+    { name = "handler-sandbox-kit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "handler-contracts", editable = "packages/contracts" },
+    { name = "handler-sandbox-kit", editable = "packages/sandbox-kit" },
+]
 
 [[package]]
 name = "handler-workspace"
@@ -465,6 +512,9 @@ dependencies = [
     { name = "handler-contracts" },
     { name = "handler-control-plane" },
     { name = "handler-harness-adapters" },
+    { name = "handler-sandbox-apple" },
+    { name = "handler-sandbox-docker" },
+    { name = "handler-sandbox-kit" },
     { name = "handler-sandbox-podman" },
 ]
 
@@ -485,6 +535,9 @@ requires-dist = [
     { name = "handler-contracts", editable = "packages/contracts" },
     { name = "handler-control-plane", editable = "packages/control-plane" },
     { name = "handler-harness-adapters", editable = "packages/harness-adapters" },
+    { name = "handler-sandbox-apple", editable = "packages/sandbox-apple" },
+    { name = "handler-sandbox-docker", editable = "packages/sandbox-docker" },
+    { name = "handler-sandbox-kit", editable = "packages/sandbox-kit" },
     { name = "handler-sandbox-podman", editable = "packages/sandbox-podman" },
 ]
 

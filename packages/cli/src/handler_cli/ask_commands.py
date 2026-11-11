@@ -34,9 +34,9 @@ def dispatch(args: argparse.Namespace) -> int:
             return told(daemon, answer)
         if answer["kind"] == "none":
             print(answer["summary"])
-            if answer.get("asks"):
+            if answer.get("actions"):
                 print("\nwhat you can ask:")
-                for o in answer["asks"]:
+                for o in answer["actions"]:
                     print(f"  {o['app']} · {o['description']}")
             return 1
         print(answer["question"])
@@ -49,7 +49,7 @@ def dispatch(args: argparse.Namespace) -> int:
 def told(daemon: Daemon, answer: dict[str, Any]) -> int:
     """The pick, then how it went: at once, or once its agent's run ends."""
     why = f"  ({answer['why']})" if answer.get("why") else ""
-    print(f"→ {answer['app']} · {answer['ask']}{why}")
+    print(f"→ {answer['app']} · {answer['action']}{why}")
     run = answer["run"]
     deadline = time.monotonic() + WAIT
     if run["state"] == "running":
@@ -57,7 +57,7 @@ def told(daemon: Daemon, answer: dict[str, Any]) -> int:
     while run["state"] == "running" and time.monotonic() < deadline:
         time.sleep(1)
         run = daemon.call(
-            "GET", f"/v1/apps/{answer['app']}/asks/{answer['ask']}/runs/{run['runId']}"
+            "GET", f"/v1/apps/{answer['app']}/actions/{answer['action']}/runs/{run['runId']}"
         )
     if run["state"] == "running":
         print("still running: its answer will be in your inbox (handler inbox)")

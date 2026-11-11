@@ -1,5 +1,5 @@
 // The harnesses handlerd knows (contract B), asked once per page load: their product names for every
-// label ("Claude Code", never `claude-code`, docs/dev/ui-ux.md) and their session modes.
+// label ("Claude Code", never `claude-code`, UI-UX guide) and their session modes.
 import { api } from "./api";
 import type { HarnessInfo } from "./contracts.gen";
 

@@ -1,7 +1,7 @@
 """A5 from paired devices: calls queued at the gateway while the host is off (taken once, only
 for routes the app declares queued, until they expire: 7 days), notifications listed for the
 device's person, Web Push subscriptions. A real gateway, a Python device, the coach test app in
-podman."""
+a real sandbox."""
 
 import base64
 import json
@@ -12,14 +12,27 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from ..apps.conftest import api, call_app, copy_fixture, requires_podman
+from ..apps.conftest import (
+    api,
+    call_app,
+    copy_fixture,
+    real_sandbox_env,
+    requires_app_runtime,
+)
 from ..apps.test_apps_coach import install, manifest
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
 from ..support.remote import Device, DeviceError, Gateway, start_gateway
 
-pytestmark = requires_podman
+
+def b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+pytestmark = requires_app_runtime
 S = "app:coach"
 
 
@@ -38,8 +51,8 @@ def data_root() -> Iterator[Path]:
 
 @pytest.fixture(scope="module")
 def daemon(gateway: Gateway, data_root: Path) -> Iterator[Daemon]:
-    env = {"HANDLER_DATA_DIR": str(data_root / "handler")} | dev_env.home_env()  # its agenda.md
-    for d in start_daemon(extra_env=env):
+    env = {"HANDLER_DATA_DIR": str(data_root / "handler")}
+    for d in start_daemon(extra_env=env | real_sandbox_env()):
         body = {"gatewayUrl": gateway.url, "hostToken": gateway.host_token}
         assert api(d, "PUT", "/v1/remote/gateway", body).status_code == 200
         agenda = data_root / "agenda.md"
@@ -83,6 +96,7 @@ def checkins(phone: Device) -> list[str]:
     return json.loads(base64.b64decode(result["body"]))
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires", "queue.only-declared-routes")
 def test_queued_call_runs_once(phone: Device) -> None:
     assert [a["queued"] for a in phone.request(None, "_handler/remote/list_apps")["apps"]] == [
         ["POST /api/checkin"]
@@ -101,6 +115,7 @@ def test_queued_call_runs_once(phone: Device) -> None:
     assert checkins(phone) == ["owner:done:q-1"]
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires", "queue.only-declared-routes")
 def test_old_or_unqueued_calls_are_refused(phone: Device) -> None:
     old = phone.queue([checkin("late", "q-old")], lifetime=-1)  # its 7 days are over
     phone.wait_until(lambda: any(r["id"] == old["id"] for r in phone.rejected))
@@ -109,6 +124,7 @@ def test_old_or_unqueued_calls_are_refused(phone: Device) -> None:
     assert checkins(phone) == ["owner:done:q-1"]
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires")
 def test_a_live_call_handed_over_again_as_queued_is_refused(phone: Device) -> None:
     """A hostile gateway keeps a live call and puts it in the queue later: it expired with its
     own (short) lifetime, so it does not run again, however long handler remembers ids."""
@@ -122,6 +138,7 @@ def test_a_live_call_handed_over_again_as_queued_is_refused(phone: Device) -> No
     assert checkins(phone) == [*before, "owner:live:q-live"]
 
 
+@pytest.mark.rule("push.only-to-a-browser-push-service", "push.the-person-s-devices-only")
 def test_inbox_and_push(daemon: Daemon, phone: Device) -> None:
     assert call_app(daemon, "morning", "coach", "POST /api/cron/morning")["state"] == "succeeded"
     messages = phone.request(None, "_handler/remote/inbox")["messages"]
@@ -129,11 +146,20 @@ def test_inbox_and_push(daemon: Daemon, phone: Device) -> None:
 
     public = phone.request(None, "_handler/remote/push_key")["publicKey"]
     assert len(base64.urlsafe_b64decode(public + "==")) == 65  # an uncompressed P-256 point
+    browser = ec.generate_private_key(ec.SECP256R1()).public_key()
+    point = browser.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    keys = {"p256dh": b64(point), "auth": b64(b"s" * 16)}
+
+    def subscribe(endpoint: str, keys: dict[str, str] = keys) -> dict[str, Any]:
+        subscription = {"endpoint": endpoint, "keys": keys}
+        return phone.request(None, "_handler/remote/push_subscribe", {"subscription": subscription})
+
     with pytest.raises(DeviceError):
-        phone.request(None, "_handler/remote/push_subscribe", {"endpoint": "http://push.test/x"})
+        subscribe("http://push.test/x")
     with pytest.raises(DeviceError):  # not a push service: an address of your network, say
-        phone.request(None, "_handler/remote/push_subscribe", {"endpoint": "https://10.0.0.1/x"})
-    endpoint = {"endpoint": "https://updates.push.services.mozilla.com/wpush/v2/test"}
-    ok = phone.request(None, "_handler/remote/push_subscribe", endpoint)
-    assert ok == {"subscribed": True}
+        subscribe("https://10.0.0.1/x")
+    mozilla = "https://updates.push.services.mozilla.com/wpush/v2/test"
+    with pytest.raises(DeviceError):  # no keys to encrypt to
+        subscribe(mozilla, {"p256dh": "x", "auth": "y"})
+    assert subscribe(mozilla) == {"subscribed": True}
     assert phone.request(None, "_handler/remote/push_subscribe", {}) == {"subscribed": False}

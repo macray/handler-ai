@@ -8,48 +8,13 @@
 // through this module, ProjectEditor.svelte and AgentEditor.svelte.
 import { accessOf, noAccess, requested, type ModelAccess } from "./access";
 import { api } from "./api";
-import type { Agent, AgentInterface, AgentOrigin, AgentRequest, Project, ProjectSettingsRequest } from "./contracts.gen";
+import type { AccountInfo, AddonUse, Agent, AgentInterface, AgentOrigin, AgentRequest, ModelAccess as RequestedModel, Project, ProjectSettingsRequest, ProviderInfo } from "./contracts.gen";
 import { folderName } from "./agents";
-
-/** How an agent is contained: its own, never inherited (D.8). */
-export type Sandbox = Required<Pick<AgentRequest, "network" | "egress" | "confinement" | "permissions">>;
-
-/** Presets: how a new project's first agent is contained, copied into it, never linked to it.
- *  Guarded (filtered network, enforced; auto-approve) is also what any new agent starts with (the
- *  daemon's defaults). Log only is not a preset: the network panel turns it on to learn hosts. */
-export const PRESETS: { id: string; label: string; hint: string; sandbox: Sandbox }[] = [
-  {
-    id: "locked",
-    label: "Locked down",
-    hint: "No network, asks before acting",
-    sandbox: { network: "none", egress: "enforce", confinement: "strict", permissions: "ask" },
-  },
-  {
-    id: "guarded",
-    label: "Guarded",
-    hint: "Only the hosts it is allowed (its model's and addons' already are), never asks",
-    sandbox: { network: "filtered", egress: "enforce", confinement: "strict", permissions: "bypass" },
-  },
-  {
-    id: "open",
-    label: "Open",
-    hint: "Any host, never asks",
-    sandbox: { network: "open", egress: "enforce", confinement: "strict", permissions: "bypass" },
-  },
-];
-
-/** The preset an agent's sandbox settings are exactly, if any; otherwise its settings are its own. */
-export function presetOf(s: { network?: string | null; egress?: string | null; confinement?: string | null; permissions?: string | null }):
-  | (typeof PRESETS)[number]
-  | undefined {
-  return PRESETS.find(
-    (p) =>
-      s.network === p.sandbox.network &&
-      (s.egress ?? "enforce") === p.sandbox.egress &&
-      (s.confinement ?? "strict") === p.sandbox.confinement &&
-      s.permissions === p.sandbox.permissions,
-  );
-}
+import { withEntry, withList, type OwnHosts } from "./hosts";
+import { NEW_AGENT, type Sandbox } from "./safety";
+import { allows } from "./areas.svelte";
+import { interfaceOf, newJob, switchedTo } from "./interface";
+import { freeName } from "./text";
 
 /** What an agent is set to: the body of create and of a full update. */
 export type AgentSpec = Sandbox & {
@@ -59,7 +24,8 @@ export type AgentSpec = Sandbox & {
   instructions: string;
   display: boolean;
   allow: string[];
-  bindings: string[];
+  blocked: string[]; // the hosts the person keeps blocked, never also allowed (A.3)
+  addons: AddonUse[]; // its own, not those its project gives (G.3)
   knowledge: string[];
   default: boolean;
   remoteStart: boolean; // your paired devices may start sessions with it
@@ -84,10 +50,11 @@ export function emptyAgent(model: ModelAccess = noAccess()): AgentSpec {
     name: "",
     description: "",
     instructions: "",
-    ...PRESETS[1]!.sandbox,
+    ...NEW_AGENT,
     display: false,
     allow: [],
-    bindings: [],
+    blocked: [],
+    addons: [],
     knowledge: [],
     default: false,
     remoteStart: false,
@@ -99,17 +66,18 @@ export function emptyAgent(model: ModelAccess = noAccess()): AgentSpec {
 }
 
 /** Who works, switched (D.18). The model alone has no sandbox: its settings go back to the
- *  defaults of new agents (Guarded, which the daemon expects of it), with no addons, skills or
+ *  defaults of new agents (only the sites it needs, which the daemon expects of it), with no addons, skills or
  *  display, and its model kept when on a provider, without a program; an agent program starts from
  *  those defaults too, its model to choose again. */
 export function withModelAlone(spec: AgentSpec, alone: boolean): AgentSpec {
   const kept = spec.model.provider ? { ...spec.model, harness: null } : noAccess();
   return {
     ...spec,
-    ...PRESETS[1]!.sandbox,
+    ...NEW_AGENT,
     modelAlone: alone,
     allow: [],
-    bindings: alone ? [] : spec.bindings,
+    blocked: [],
+    addons: alone ? [] : spec.addons,
     skills: alone ? [] : spec.skills,
     display: false,
     model: alone ? kept : noAccess(),
@@ -129,7 +97,8 @@ export function agentSpec(agent: Agent, project: Pick<Project, "defaultAgent">):
     permissions: agent.permissions,
     display: agent.display ?? false,
     allow: [...(agent.allow ?? [])],
-    bindings: [...(agent.bindings ?? [])],
+    blocked: [...(agent.blocked ?? [])],
+    addons: (agent.addons ?? []).map((u) => ({ ...u })),
     knowledge: [...(agent.knowledge ?? [])],
     default: project.defaultAgent === agent.id,
     remoteStart: agent.remoteStart ?? false,
@@ -152,7 +121,7 @@ export function parseInterface(text: string): AgentInterface | null {
 
 /** The body that creates or replaces an agent in its home (D.2). Of a project, its name is its
  *  goal (required, D.8), and it may be its default or be started from a phone; elsewhere neither. */
-export function agentBody(spec: AgentSpec, home: Home, confirmRisks = false): AgentRequest {
+export function agentBody(spec: AgentSpec, home: Home, confirmRisks = false, toolboxAdds: string[] = []): AgentRequest {
   const text = (value: string) => value.trim() || null;
   const { model, default: isDefault, remoteStart, ...rest } = spec;
   const ofProject = !!home.projectId;
@@ -167,6 +136,7 @@ export function agentBody(spec: AgentSpec, home: Home, confirmRisks = false): Ag
     default: ofProject && isDefault,
     remoteStart: ofProject && remoteStart,
     confirmRisks,
+    toolboxAdds,
   };
 }
 
@@ -179,20 +149,29 @@ export type ProjectSpec = {
   caches: NonNullable<ProjectSettingsRequest["caches"]>; // the toolbox's caches for its agents
   area: string | null; // its area (D.19): the accounts and providers it runs
   skills: string[]; // the skills it gives to all its agents (D.17)
+  addons: AddonUse[]; // the addons it gives to all its agents (G.3)
 };
 
 export function emptyProject(folder = ""): ProjectSpec {
-  return { name: "", description: "", folder, defaultAgent: null, caches: "project", area: null, skills: [] };
+  return { name: "", description: "", folder, defaultAgent: null, caches: "project", area: null, skills: [], addons: [] };
 }
 
 /** A copy of an agent's settings for a new agent of the same project ("Duplicate"): nothing stays
  *  linked to the original. */
 export function duplicateAgent(agent: Agent, taken: string[]): AgentSpec {
   const spec = agentSpec(agent, { defaultAgent: null });
-  const base = `${agentLabel(agent)}-copy`;
-  let name = base;
-  for (let i = 2; taken.some((t) => t.toLowerCase() === name.toLowerCase()); i++) name = `${base}-${i}`;
+  const name = freeName(`${agentLabel(agent)}-copy`, taken);
   return { ...spec, model: { ...spec.model }, name, origin: null }; // a copy is set up from nothing
+}
+
+/** A job made from an agent (Talk or Brief) for an automation to run: its copy, named
+ *  `<name>-job`, with a job's form and result (its brief's form kept) and never asking (no one is
+ *  there to answer: Auto-approve, confirmed on save as any widening). */
+export function jobFrom(agent: Agent, taken: string[]): AgentSpec {
+  const spec = duplicateAgent(agent, taken);
+  const name = freeName(`${agentLabel(agent)}-job`, taken);
+  const iface = spec.interface ? switchedTo("job", spec.interface) : JSON.stringify(interfaceOf(newJob()), null, 2);
+  return { ...spec, name, interface: iface, permissions: "bypass" };
 }
 
 export function projectSpec(p: Project): ProjectSpec {
@@ -204,6 +183,7 @@ export function projectSpec(p: Project): ProjectSpec {
     caches: p.caches ?? "project",
     area: p.area ?? null,
     skills: p.skills ?? [],
+    addons: (p.addons ?? []).map((u) => ({ ...u })),
   };
 }
 
@@ -211,10 +191,37 @@ export function projectBody(spec: ProjectSpec): ProjectSettingsRequest {
   return { ...spec, name: spec.name.trim() || null, description: spec.description.trim() || null };
 }
 
-/** The hosts an agent's sandboxes allow on top of the required ones: its own (D.8). */
-export async function saveHosts(agent: Agent, allow: string[]): Promise<Agent> {
+/** An agent's own hosts (D.8): those its sandboxes allow on top of the required ones, and those
+ *  the person keeps blocked (A.3), applied to its running sandboxes at once. */
+export async function saveHosts(agent: Agent, hosts: OwnHosts): Promise<Agent> {
   const project = agent.projectId ? await api.project(agent.projectId) : { defaultAgent: null };
-  const saved = await api.updateAgent(agent.id, agentBody({ ...agentSpec(agent, project), allow }, homeOf(agent)));
+  const saved = await api.updateAgent(agent.id, agentBody({ ...agentSpec(agent, project), ...hosts }, homeOf(agent)));
+  if (agent.projectId) await projects.refresh();
+  return saved;
+}
+
+/** Hosts refused to a run of the agent (F.9) put in one of its lists, off the other: *Keep
+ *  blocked* on a plan's step or an automation's run. */
+export async function decideHosts(agentId: string, hosts: string[], list: keyof OwnHosts): Promise<Agent> {
+  const agent = await api.agent(agentId);
+  const own = { allow: agent.allow ?? [], blocked: agent.blocked ?? [] };
+  return saveHosts(agent, withList(own, list, hosts.reduce((l, h) => withEntry(l, h), own[list])));
+}
+
+/** Its permissions switched to Auto-approve (bypass), the rest of its settings as they are: the
+ *  review of a plan's fix (D.27). It widens what the agent may do: the caller confirmed it. */
+export async function switchToBypass(agent: Agent): Promise<Agent> {
+  const project = agent.projectId ? await api.project(agent.projectId) : { defaultAgent: null };
+  const spec: AgentSpec = { ...agentSpec(agent, project), permissions: "bypass" };
+  const saved = await api.updateAgent(agent.id, agentBody(spec, homeOf(agent), true));
+  if (agent.projectId) await projects.refresh();
+  return saved;
+}
+
+/** Make a model picked for one session the agent's own (D.1): "Make Opus Dev's default". */
+export async function makeModelDefault(agent: Agent, model: RequestedModel): Promise<Agent> {
+  const project = agent.projectId ? await api.project(agent.projectId) : { defaultAgent: null };
+  const saved = await api.updateAgent(agent.id, agentBody({ ...agentSpec(agent, project), model: accessOf(model) }, homeOf(agent)));
   if (agent.projectId) await projects.refresh();
   return saved;
 }
@@ -243,15 +250,47 @@ export function byRecentUse(list: Project[]): Project[] {
   return [...list].sort((a, b) => key(b).localeCompare(key(a)));
 }
 
+/** What a project's suggested first agent runs on ("An agent to work with you here"): what the
+ *  default agent of the project used last runs on, when ready and made for `area`; else the only
+ *  account or provider ready for it. None when two or more could be: the person chooses, in the
+ *  agent form (never the wrong account by default). */
+export function suggestedAccess(
+  all: Project[],
+  accounts: AccountInfo[],
+  providers: ProviderInfo[],
+  area: string | null | undefined,
+): ModelAccess | null {
+  const account = (name?: string | null) => accounts.find((a) => a.name === name && a.status === "ready" && allows(area, a.areas));
+  const provider = (name?: string | null) => providers.find((p) => p.name === name && p.status === "ready" && allows(area, p.areas));
+  for (const p of byRecentUse(all)) {
+    const used = p.agents.find((a) => a.id === p.defaultAgent);
+    if (!used || used.modelAlone) continue;
+    if (account(used.model.account) || (provider(used.model.provider) && used.model.harness)) return accessOf(used.model);
+  }
+  const ready = [
+    ...accounts.filter((a) => a.harness && account(a.name)).map((a) => ({ ...noAccess(), harness: a.harness ?? null, account: a.name })),
+    ...providers.filter((p) => p.harnesses?.length && provider(p.name)).map((p) => ({ ...noAccess(), harness: p.harnesses![0]!, provider: p.name })),
+  ];
+  return ready.length === 1 ? ready[0]! : null;
+}
+
 /** By name: a list where each project keeps its place (the Projects page, the menu's pinned). */
 export function byName(list: Project[]): Project[] {
   return [...list].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Search: every word of `query` in its name, folder, description or agents. */
-export function matches(p: Project, query: string): boolean {
-  const agents = p.agents.flatMap((a) => [a.name, a.model.account, a.model.provider, a.model.harness]);
-  const text = [p.name, p.folder, p.description, ...agents].join(" ").toLowerCase();
+/** A folder as a row says it: `~` for the home (/home/<you>, /Users/<you>), and past four parts
+ *  the middle cut (`~/Documents/…/thesis`); the whole path is in its tooltip. */
+export function shortFolder(folder: string): string {
+  const path = folder.replace(/\/+$/, "").replace(/^\/(home|Users)\/[^/]+(?=\/|$)/, "~");
+  const parts = path.split("/");
+  return parts.length > 4 ? [parts[0], parts[1], "…", parts.at(-1)].join("/") : path;
+}
+
+/** Whether the Projects filter keeps a project: each word in what its row shows (its name,
+ *  description, folder), so a match is never hidden. */
+export function matches(p: Pick<Project, "name" | "folder" | "description">, query: string): boolean {
+  const text = [p.name, p.folder, p.description].join(" ").toLowerCase();
   return query
     .toLowerCase()
     .split(/\s+/)
@@ -283,22 +322,16 @@ class ProjectStore {
   list = $state<Project[]>([]);
   loaded = $state(false);
   error = $state<string | null>(null);
-
   async refresh(): Promise<void> {
     try {
-      this.list = await api.projects();
+      const list = await api.projects();
+      this.list = list;
       this.error = null;
     } catch (e) {
       this.error = (e as Error).message;
     } finally {
       this.loaded = true;
     }
-  }
-
-  /** Pin a project to the menu, or take it off. */
-  async setPinned(id: string, pinned: boolean): Promise<void> {
-    const changed = await api.pinProject(id, pinned);
-    this.list = this.list.map((p) => (p.id === id ? changed : p));
   }
 
   get(id: string | null | undefined): Project | undefined {

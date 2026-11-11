@@ -2,6 +2,34 @@
   "$id": "urn:handler.control/v1/agent-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "AddonUse": {
+      "description": "An addon an agent or a project uses (G.3): by its name, with the binding filling its\nslots when it has some (G.2); one without slots has no binding.",
+      "properties": {
+        "addon": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Addon",
+          "type": "string"
+        },
+        "binding": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Binding"
+        }
+      },
+      "required": [
+        "addon"
+      ],
+      "title": "AddonUse",
+      "type": "object"
+    },
     "AgentInterface": {
       "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
       "properties": {
@@ -199,6 +227,14 @@
       "title": "Allow",
       "type": "array"
     },
+    "blocked": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocked",
+      "type": "array"
+    },
     "confinement": {
       "default": "strict",
       "enum": [
@@ -219,13 +255,12 @@
       "title": "Permissions",
       "type": "string"
     },
-    "bindings": {
+    "addons": {
       "default": [],
       "items": {
-        "pattern": "^[a-z0-9][a-z0-9_.-]*$",
-        "type": "string"
+        "$ref": "#/$defs/AddonUse"
       },
-      "title": "Bindings",
+      "title": "Addons",
       "type": "array"
     },
     "knowledge": {
@@ -375,6 +410,15 @@
       "default": false,
       "title": "Confirmrisks",
       "type": "boolean"
+    },
+    "toolboxAdds": {
+      "default": [],
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "type": "string"
+      },
+      "title": "Toolboxadds",
+      "type": "array"
     }
   },
   "required": [

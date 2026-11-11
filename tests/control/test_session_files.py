@@ -4,6 +4,8 @@ import os
 import time
 from typing import Any
 
+import pytest
+
 from ..support.daemon import Daemon
 from .test_projects import create_project
 
@@ -19,6 +21,7 @@ def running(daemon: Daemon, session_id: str) -> dict[str, Any]:
         time.sleep(0.1)
 
 
+@pytest.mark.rule("files.changes-are-since-the-session-started")
 def test_session_folder_and_changes(daemon: Daemon) -> None:
     scope = daemon.make_scope()
     (scope / "src").mkdir()
@@ -69,6 +72,7 @@ def test_session_folder_and_changes(daemon: Daemon) -> None:
         assert c.delete(f"/v1/sessions/{sid}").status_code == 204
 
 
+@pytest.mark.rule("files.access-lists-what-the-sandbox-sees")
 def test_what_the_sandbox_sees(daemon: Daemon) -> None:
     """Every mount of its last start listed; knowledge read like its folder, never caches."""
     root = daemon.make_scope()
@@ -87,15 +91,15 @@ def test_what_the_sandbox_sees(daemon: Daemon) -> None:
         by_kind = {m["kind"]: m for m in seen["mounts"]}
         assert by_kind["scope"] | {"readOnly": False, "browsable": True} == by_kind["scope"]
         knowledge = by_kind["knowledge"]
-        assert (knowledge["target"], knowledge["readOnly"]) == ("/knowledge/notes", True)
+        assert (knowledge["target"], knowledge["readOnly"]) == ("/notes/notes", True)
         assert knowledge["browsable"] and knowledge["source"] == str(root / "notes")
         cache = by_kind["cache"]  # the fake harness has no state of its own
         assert not cache["browsable"]
 
-        query = {"mount": "/knowledge/notes", "path": "me.md"}
+        query = {"mount": "/notes/notes", "path": "me.md"}
         note = c.get(f"/v1/sessions/{sid}/file", params=query).json()
         assert (note["text"], note.get("change")) == ("# me\n", None)
-        listing = c.get(f"/v1/sessions/{sid}/folder", params={"mount": "/knowledge/notes"})
+        listing = c.get(f"/v1/sessions/{sid}/folder", params={"mount": "/notes/notes"})
         assert [e["name"] for e in listing.json()["entries"]] == ["me.md"]
         hidden = c.get(f"/v1/sessions/{sid}/folder", params={"mount": cache["target"]})
         assert hidden.status_code == 404

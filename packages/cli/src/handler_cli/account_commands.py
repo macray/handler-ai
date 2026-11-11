@@ -29,25 +29,19 @@ handler account rm NAME              it and its login (refused while an agent us
 
 import argparse
 import contextlib
-import fcntl
 import getpass
 import os
-import pty
 import pwd
-import select
 import shlex
 import shutil
-import signal
-import struct
 import subprocess
 import sys
 import tempfile
-import termios
-import tty
 from pathlib import Path
 from typing import Any
 
 from .client import ClientError, Daemon
+from .on_terminal import on_terminal
 from .output import table
 
 
@@ -267,48 +261,3 @@ def login_path() -> str:
         if printed:
             return printed.splitlines()[-1]  # after what its shell profile may print
     return ""
-
-
-def on_terminal(argv: list[str], env: dict[str, str], cwd: str) -> int:
-    """Run `argv` on a terminal of its own, relayed to this one (raw while it runs, resized with
-    it): its exit code."""
-    pid, master = pty.fork()
-    if pid == 0:  # the child, on the new terminal
-        os.chdir(cwd)
-        os.execve(argv[0], argv, env)
-    interactive = sys.stdin.isatty()
-    saved = termios.tcgetattr(0) if interactive else None
-
-    def resize(*_: object) -> None:
-        cols, rows = shutil.get_terminal_size()
-        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-
-    resize()
-    inputs = [0, master]
-    try:
-        if interactive:
-            tty.setraw(0)
-            signal.signal(signal.SIGWINCH, resize)
-        while True:
-            ready, _, _ = select.select(inputs, [], [])
-            if master in ready:
-                try:
-                    data = os.read(master, 65536)
-                except OSError:  # EIO: the command and all it started are gone
-                    data = b""
-                if not data:
-                    break
-                os.write(1, data)
-            if 0 in ready:
-                data = os.read(0, 4096)
-                if data:
-                    os.write(master, data)
-                else:  # stdin ended (piped): the command goes on without it
-                    inputs.remove(0)
-    finally:
-        if saved is not None:
-            termios.tcsetattr(0, termios.TCSADRAIN, saved)
-            signal.signal(signal.SIGWINCH, signal.SIG_DFL)
-        os.close(master)
-    _, status = os.waitpid(pid, 0)
-    return os.waitstatus_to_exitcode(status)

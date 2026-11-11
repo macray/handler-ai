@@ -3,13 +3,9 @@
 import contextlib
 import os
 import subprocess
-from pathlib import Path
 
 PROXY_IMAGE = "localhost/handler-ai-proxy:2"
-MANAGED_LABEL = "handler.managed"
-SANDBOX_LABEL = "handler.sandbox"
-LAUNCHER_LABEL = "handler.launcher"  # the launcher process: `<pid>:<start time>` (launcher_label)
-IMAGE_MOUNT_LABEL_PREFIX = "handler.image-mount."  # + the id of an image the instance mounts (A6)
+NESTED_DEVICES = ("/dev/fuse", "/dev/net/tun")  # inner podman's storage and network (A.5)
 
 
 class PodmanError(RuntimeError):
@@ -24,28 +20,6 @@ def podman(*args: str, check: bool = True, timeout: float = 120) -> str:
         detail = (proc.stderr or proc.stdout).strip().splitlines()
         raise PodmanError(f"podman {args[0]} failed: {detail[-1] if detail else proc.returncode}")
     return proc.stdout.strip()
-
-
-def launcher_label() -> str:
-    """This process, as the value of LAUNCHER_LABEL: its pid alone could later name another
-    process (pids are reused, after a reboot from the first ones), its pid and start time not."""
-    return f"{os.getpid()}:{_start_time(os.getpid())}"
-
-
-def launcher_alive(label: str) -> bool:
-    """The launcher a LAUNCHER_LABEL value names still runs."""
-    pid, _, started = label.partition(":")
-    return pid.isdigit() and _start_time(int(pid)) == started
-
-
-def _start_time(pid: int) -> str | None:
-    """When process `pid` started (clock ticks since boot, /proc/<pid>/stat field 22), None
-    when there is no such process."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
-        return None
-    return stat.rsplit(")", 1)[1].split()[19]  # after the name (field 2, may hold ")")
 
 
 def quiet(*args: str) -> None:
@@ -101,8 +75,10 @@ def _userns_size(kind: str) -> int:
 
 def subid_file(kind: str) -> str:
     """/etc/subuid or /etc/subgid for the agent (confinement "nested"): inner rootless podman maps
-    every id of the sandbox's user namespace except the agent's own, which newuidmap maps itself."""
-    own = agent_ids()[0 if kind == "uid" else 1]
+    every id of the sandbox's user namespace except the agent's own, which newuidmap maps itself.
+    Both files are keyed by the user (its uid), /etc/subgid too, whatever its gid."""
+    uid, gid = agent_ids()
+    own = uid if kind == "uid" else gid
     size = _userns_size(kind)
     ranges = [(1, own - 1), (own + 1, size - own - 1)]
-    return "".join(f"{own}:{start}:{count}\n" for start, count in ranges if count > 0)
+    return "".join(f"{uid}:{start}:{count}\n" for start, count in ranges if count > 0)

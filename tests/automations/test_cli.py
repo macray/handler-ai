@@ -3,11 +3,20 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from ..cli.test_cli import handler
 from ..support.daemon import Daemon
 from .test_automations import conversation
 
 
+@pytest.mark.rule(
+    "automation.a-folder-of-yours",
+    "automation.off-until-you-turn-it-on",
+    "automation.says-what-it-does",
+    "automation.deleting-it-stops-and-removes-all",
+    "try.now-on-or-off",
+)
 def test_the_cli_drives_an_automation(daemon: Daemon, knowledge: Path) -> None:
     assert "env-issues" in handler(daemon, "automation", "examples").stdout
     made = handler(daemon, "automation", "new", "by-cli", "--from", "env-issues")
@@ -47,6 +56,7 @@ def test_the_cli_drives_an_automation(daemon: Daemon, knowledge: Path) -> None:
     assert "by-cli" not in handler(daemon, "automation", "list").stdout
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once", "try.now-on-or-off", "inbox.keeps-the-last-200")
 def test_the_cli_shows_a_schedule_and_the_inbox(daemon: Daemon) -> None:
     folder = daemon.config_dir / "automations" / "cli-hourly"
     folder.mkdir(parents=True)

@@ -1,0 +1,6 @@
+# A system package of a source (B.7), installed with the addons needing what it provides.
+apiVersion = "handler.system-package/v1"
+name = "fake-cc"
+version = 1
+description = "A C compiler, for the tests"
+provides = ["fake-cc"]

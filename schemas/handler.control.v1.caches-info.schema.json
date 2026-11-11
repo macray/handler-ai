@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "CacheInfo": {
-      "description": "A cache the toolbox declares (B.6), as Settings \u2192 Caches shows it (D.8).",
+      "description": "A cache (B.6), as Settings \u2192 Caches shows it (D.8).",
       "properties": {
         "name": {
           "title": "Name",
@@ -14,7 +14,6 @@
           "type": "string"
         },
         "about": {
-          "default": "",
           "title": "About",
           "type": "string"
         },
@@ -22,11 +21,32 @@
           "default": false,
           "title": "General",
           "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
+        },
+        "declaredBy": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declaredby",
+          "type": "array"
         }
       },
       "required": [
         "name",
-        "target"
+        "target",
+        "about",
+        "declaredBy"
       ],
       "title": "CacheInfo",
       "type": "object"

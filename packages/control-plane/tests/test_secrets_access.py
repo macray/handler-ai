@@ -13,12 +13,13 @@ from handler_contracts import (
     StoreSecret,
 )
 from handler_control import access, accounts, launcher, providers, secrets
-from handler_control.settings import TEMPLATES, Settings, Sources
+from handler_control.settings import Settings, Sources
 from handler_harness import catalog
 
 STORE = secrets.SecretStore(Path("/nonexistent"))  # empty: for the other kinds of reference
 
 
+@pytest.mark.rule("secrets.never-read-back", "secrets.kept-for-you-only")
 def test_store_put_get_list_delete(tmp_path: Path) -> None:
     store = secrets.SecretStore(tmp_path)
     store.put("providers/or/apiKey", "sk-1", "OpenRouter key")
@@ -38,6 +39,7 @@ def test_store_put_get_list_delete(tmp_path: Path) -> None:
     assert notes_other.path == "apps/notes/OTHER"
 
 
+@pytest.mark.rule("secrets.a-reference-is-read-when-used")
 def test_store_secret(tmp_path: Path) -> None:
     store = secrets.SecretStore(tmp_path)
     ref = StoreSecret(secret="providers/or/apiKey")
@@ -47,27 +49,32 @@ def test_store_secret(tmp_path: Path) -> None:
     assert secrets.resolve(ref, store) == "sk-1"
 
 
+@pytest.mark.rule("secrets.a-reference-is-read-when-used")
 def test_env_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HANDLER_T_SECRET", "v1")
     assert secrets.resolve(EnvSecret(env="HANDLER_T_SECRET"), STORE) == "v1"
 
 
+@pytest.mark.rule("secrets.a-reference-is-read-when-used")
 def test_missing_env_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HANDLER_T_MISSING", raising=False)
     with pytest.raises(secrets.SecretError, match="not set"):
         secrets.resolve(EnvSecret(env="HANDLER_T_MISSING"), STORE)
 
 
+@pytest.mark.rule("secrets.a-reference-is-read-when-used")
 def test_file_secret_first_line(tmp_path: Path) -> None:
     f = tmp_path / "key"
     f.write_text("  sk-123  \nsecond line\n")
     assert secrets.resolve(FileSecret(file=str(f)), STORE) == "sk-123"
 
 
+@pytest.mark.rule("secrets.a-reference-is-read-when-used")
 def test_command_secret() -> None:
     assert secrets.resolve(CommandSecret(command=["echo", "from-cmd"]), STORE) == "from-cmd"
 
 
+@pytest.mark.rule("secrets.never-read-back", "secrets.a-reference-is-read-when-used")
 def test_failing_command_secret_does_not_leak_output() -> None:
     with pytest.raises(secrets.SecretError) as e:
         secrets.resolve(CommandSecret(command=["sh", "-c", "echo leaked; exit 3"]), STORE)
@@ -89,9 +96,10 @@ id = "m1"
 
 
 def sources(tmp_path: Path) -> Sources:
-    return Sources(tmp_path / "accounts", tmp_path / "providers")
+    return Sources(tmp_path / "accounts", tmp_path / "providers", tmp_path / "logins")
 
 
+@pytest.mark.rule("access.one-account-or-one-provider")
 def test_resolve_with_its_account_or_provider(tmp_path: Path) -> None:
     source = sources(tmp_path)
     for folder in (source.accounts, source.providers):
@@ -122,6 +130,7 @@ def test_resolve_with_its_account_or_provider(tmp_path: Path) -> None:
         access.resolve(source, "claude-code", provider="gone")
 
 
+@pytest.mark.rule("access.one-account-or-one-provider")
 def test_a_provider_the_harness_cannot_speak_or_a_model_it_lacks_is_refused(
     tmp_path: Path,
 ) -> None:
@@ -140,6 +149,13 @@ def test_a_provider_the_harness_cannot_speak_or_a_model_it_lacks_is_refused(
         access.resolve(source, "pi", provider="api")
 
 
+@pytest.mark.rule(
+    "access.its-secrets-follow-it",
+    "account.of-a-harness-that-signs-in",
+    "account.no-start-without-its-login",
+    "account.its-login-file-is-kept-apart",
+    "secrets.kept-for-you-only",
+)
 def test_accounts_and_their_login(tmp_path: Path) -> None:
     """D.9: an account is its harness and a description; handler keeps its login."""
     folder, credentials, store = (
@@ -185,6 +201,7 @@ def test_accounts_and_their_login(tmp_path: Path) -> None:
     assert not (folder / "y.toml").exists()
 
 
+@pytest.mark.rule("account.no-start-without-its-login", "secrets.a-reference-is-read-when-used")
 def test_a_token_by_reference_is_checked_at_launch(tmp_path: Path) -> None:
     """D.9: a token handler only knows where to find is checked when an agent starts on it."""
     settings = Settings(
@@ -210,6 +227,7 @@ def test_a_token_by_reference_is_checked_at_launch(tmp_path: Path) -> None:
     assert launcher.account_login(settings, agent, descriptor, store) == "sk-ant-oat01-x"
 
 
+@pytest.mark.rule("account.of-a-harness-that-signs-in")
 def test_an_account_names_a_harness_that_logs_in(tmp_path: Path) -> None:
     (tmp_path / "a.toml").write_text(ACCOUNT + '[login]\nauth_json = "/x"\n')
     assert "login" in (accounts.get(tmp_path, "a").error or "")  # the login is never in the file
@@ -217,6 +235,9 @@ def test_an_account_names_a_harness_that_logs_in(tmp_path: Path) -> None:
     assert "unknown harness" in (accounts.get(tmp_path, "b").error or "")
 
 
+@pytest.mark.rule(
+    "access.its-status-says-what-is-missing", "provider.its-endpoints-and-models-are-checked"
+)
 def test_provider_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HANDLER_T_KEY", raising=False)
     (tmp_path / "p.toml").write_text('apiKey = { env = "HANDLER_T_KEY" }\n' + PROVIDER)
@@ -231,8 +252,9 @@ def test_provider_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert "http:// or https://" in (providers.get(tmp_path, "bad").error or "")
 
 
+@pytest.mark.rule("provider.its-endpoints-and-models-are-checked")
 def test_provider_templates_are_valid() -> None:
-    found = {t.name: t for t in providers.templates(TEMPLATES)}
+    found = {t.name: t for t in providers.templates()}
     assert set(found) == {
         "anthropic-api",
         "llamacpp",

@@ -1,6 +1,8 @@
 // Knowledge (D.5): what the Knowledge page needs to show a folder of markdown notes.
 // Pure string work, no DOM: unit-tested in tests/logic.test.ts.
 
+import { FRONTMATTER } from "./skillmd";
+
 export interface Frontmatter {
   meta: [string, string][]; // top-level "key: value" lines, in order
   body: string;
@@ -9,7 +11,7 @@ export interface Frontmatter {
 /** Split a leading `---` frontmatter block from a note. Only simple `key: value` lines are
  *  kept for display (lists and nested values are shown as written); no YAML parser needed. */
 export function splitFrontmatter(text: string): Frontmatter {
-  const match = /^---\r?\n([\s\S]*?)\r?\n?---[ \t]*(\r?\n|$)/.exec(text);
+  const match = FRONTMATTER.exec(text);
   if (!match) return { meta: [], body: text };
   const meta: [string, string][] = [];
   for (const line of (match[1] ?? "").split(/\r?\n/)) {

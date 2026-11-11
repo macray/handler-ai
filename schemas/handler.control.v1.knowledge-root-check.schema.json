@@ -1,0 +1,26 @@
+{
+  "$id": "urn:handler.control/v1/knowledge-root-check",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A folder that could become the knowledge root (D.5), checked before it is saved: what the\nweb UI's Change button says (Use this folder / Create this folder).",
+  "properties": {
+    "root": {
+      "title": "Root",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "folder",
+        "missing",
+        "not-a-folder"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root",
+    "state"
+  ],
+  "title": "KnowledgeRootCheck",
+  "type": "object"
+}

@@ -18,8 +18,9 @@ step "lint + format"
 uv run ruff check .
 uv run ruff format --check .
 
-step "typecheck"
+step "typecheck (Linux, then macOS: its own code paths)"
 uv run ty check
+uv run ty check --python-platform darwin
 
 step "shell scripts parse"
 for f in scripts/*.sh; do bash -n "$f"; done

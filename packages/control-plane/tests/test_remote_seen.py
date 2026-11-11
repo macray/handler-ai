@@ -1,4 +1,4 @@
-"""The envelopes taken from devices (docs/dev/design/remote.md §4): before they expire, once,
+"""The envelopes taken from devices (remote design §4): before they expire, once,
 whichever way they came. A gateway may hold one back, or move a live one to the queue."""
 
 from pathlib import Path
@@ -21,6 +21,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return at
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires")
 def test_taken_once_before_it_expires(tmp_path: Path, clock: list[int]) -> None:
     seen = Seen(tmp_path / "seen.json")
     assert seen.take("live", T0 + 5 * MIN) is None
@@ -29,6 +30,7 @@ def test_taken_once_before_it_expires(tmp_path: Path, clock: list[int]) -> None:
     assert seen.take("forever", T0 + 8 * DAY) == "expires too late"
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires")
 def test_a_live_command_moved_to_the_queue_later_is_refused(
     tmp_path: Path, clock: list[int]
 ) -> None:
@@ -40,6 +42,7 @@ def test_a_live_command_moved_to_the_queue_later_is_refused(
     assert Seen(tmp_path / "seen.json").take("cmd", T0 + 5 * MIN) == "expired"
 
 
+@pytest.mark.rule("envelope.taken-once-before-it-expires")
 def test_a_queued_call_is_remembered_as_long_as_it_could_be_taken(
     tmp_path: Path, clock: list[int]
 ) -> None:

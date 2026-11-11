@@ -1,15 +1,17 @@
-"""Opening an app in its own window (docs/dev/design/apps.md §5.1).
+"""Opening an app in its own window (apps design §5.1).
 
 Firefox first (a dedicated profile, `handler-apps`: apps' cookies and storage stay out of normal
 browsing, and its toolbars are hidden, since Firefox has no `--app` mode), then Chromium's app
-mode, then the default browser. `HANDLER_APP_BROWSER` (firefox · chromium · default) forces one.
+mode, then the default browser (on WSL, Windows': browser.py). `HANDLER_APP_BROWSER` (firefox ·
+chromium · default) forces one.
 """
 
 import os
 import shutil
 import subprocess
-import webbrowser
 from pathlib import Path
+
+from . import browser
 
 # the window's app id: GNOME groups app windows apart from the browser
 WINDOW_CLASS = "handler-apps"
@@ -74,7 +76,7 @@ def choose() -> str:
 def open_window(url: str) -> None:
     command = argv(url, choose(), profiles_dir())
     if command is None:
-        webbrowser.open(url)
+        browser.open_url(url)
         return
     subprocess.Popen(
         command,

@@ -13,13 +13,15 @@ from handler_contracts import (
     RevealRequest,
     SessionAppDraft,
     SessionInput,
+    SessionPlanDraft,
     SessionSubject,
     SetSessionRemoteRequest,
 )
 
 from .. import desktop, interfaces, save_rules, session_files, skills
-from ..agents import AgentRecord
-from ..sessions import SessionError, SessionRecord
+from ..agents import AgentRecord, RunsAs
+from ..plan_drafts import DraftError, brief, builder_problems
+from ..sessions import DraftWork, SessionError, SessionRecord
 from .common import (
     Context,
     ProblemError,
@@ -42,24 +44,25 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
         if agent.app is not None:  # H.14: its app starts it (an ask, its screen, its schedule)
             why = f"{agent.name or agent.id} is one of the app {agent.app}'s parts: ask the app"
             raise ProblemError(409, "started by its app only", why)
-        if body.prompt is not None and body.acp_session_id is not None:
-            raise ProblemError(400, "a resumed session has its conversation", "no prompt")
         with check_problems():
             runs = save_rules.session_model(ctx.settings, agent, body.model)
         run, subject = checked_input(ctx, agent, body)
         check_from_skill(ctx, agent, body.from_skill)
         draft = app_draft(ctx, agent, body)
+        work = plan_draft(ctx, agent, body, runs)
         record = ctx.sessions.create(
             agent,
             runs,
-            body.acp_session_id,
             body.prompt,
             origin=body.origin,
             run=run,
             subject=subject,
             from_skill=body.from_skill,
             app_draft=draft,
+            plan_draft=work,
         )
+        if work is not None:
+            ctx.drafts.started(work.draft.id, record.id)
         return out(record, 202)
 
     @app.get("/v1/sessions", dependencies=authed)
@@ -177,7 +180,7 @@ def checked_input(
         if body.input is not None:
             raise ProblemError(400, "input invalid", "this agent has no interface")
         return None, None
-    if body.input is None or body.prompt is not None or body.acp_session_id is not None:
+    if body.input is None or body.prompt is not None:
         raise ProblemError(
             400, "input invalid", "an agent with an interface is started with an input only"
         )
@@ -219,6 +222,35 @@ def app_draft(
             why = f"continue it ({other.title or other.id}), use it or throw it away"
             raise ProblemError(409, f"a draft of {draft.app} is waiting", why)
     return draft, ctx.apps.source(draft.app)
+
+
+def plan_draft(
+    ctx: Context, agent: AgentRecord, body: CreateSessionRequest, runs: RunsAs
+) -> DraftWork | None:
+    """D.27: a plan builder's session works on a plan draft, its project seen read-only
+    (`plan.builder-reads-the-project-only`); only an agent with no more rights than writing it
+    (`plan.builder-has-no-secret`), on a model of the project's area; one session per draft."""
+    if body.plan_draft is None:
+        return None
+    if body.from_skill is not None or body.app_draft is not None:
+        raise ProblemError(400, "one folder", "a plan draft, not a skill's copy or an app's draft")
+    if found := builder_problems(agent):
+        raise ProblemError(409, "it cannot build plans", "; ".join(found))
+    try:
+        draft = ctx.drafts.get(body.plan_draft)
+        folder = ctx.drafts.folder(draft.id)
+    except DraftError as e:
+        raise ProblemError(e.status, e.title, e.detail) from None
+    if draft.session_id is not None and draft.session_id in ctx.sessions.records:
+        raise ProblemError(409, "the draft has its builder session", "continue it")
+    project = ctx.projects.get(draft.project_id)
+    if project is None:
+        raise ProblemError(409, "its project was deleted", "throw the draft away")
+    with check_problems():
+        save_rules.check_for_area(ctx.settings, project.area, runs)
+    runners = [r.name for r in ctx.plans.runners_in(project.folder)]
+    info = SessionPlanDraft(id=draft.id, project_id=project.id, folder=project.folder)
+    return DraftWork(info, folder, brief(project.folder, folder, runners))
 
 
 def subject_of(record: SessionRecord) -> str | None:

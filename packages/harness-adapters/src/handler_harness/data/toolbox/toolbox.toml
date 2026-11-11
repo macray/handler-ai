@@ -1,41 +1,14 @@
-# What the toolbox declares besides its image (contract B.6).
+# Your toolbox (contract B.7), written by Handler: Settings → Sandboxes, `handler toolbox`.
 #
-# caches: the toolchains' state kept between sessions, one table per cache: target, the home
-# path it is mounted at; about, what it holds; general = true for a folder any tool writes to
-# (~/.cache), not one tool's. Each project chooses whether its agents keep their own, use the
-# global ones with other projects (a write channel between projects), or get none (D.8).
+# distro: what the toolbox is built on. systemPackages: those turned on, in the order they were
+# added (the order of their layers). caches: your own, for what your own lines
+# (custom.containerfile) install: target, the home path it is mounted at; about, what it holds;
+# general = true for a folder any tool writes to (~/.cache), not one tool's. Each project
+# chooses whether its agents keep their own, use the global ones with other projects (a write
+# channel between projects), or get none (D.8).
 
-[caches.cargo]
-target = "~/.cargo"
-about = "Rust crates, and the commands cargo installs (on PATH)"
+distro = "fedora"
 
-[caches.rustup]
-target = "~/.rustup"
-about = "Rust toolchains"
+[systemPackages.podman]
 
-[caches.bun]
-target = "~/.bun"
-about = "Bun's packages, and the commands it installs (on PATH)"
-
-[caches.m2]
-target = "~/.m2"
-about = "Maven packages"
-
-[caches.npm]
-target = "~/.npm"
-about = "npm packages"
-
-[caches.cache]
-target = "~/.cache"
-about = "What tools cache: uv and pip packages, Playwright's browsers…"
-general = true
-
-[caches.local]
-target = "~/.local"
-about = "What is installed for the user: uv's tools and Pythons, pip --user, pipx; their commands are on PATH"
-general = true
-
-[caches.podman]
-target = "~/.local/share/containers/storage"
-about = "Container images and build layers (agents that run containers)"
-general = true
+[systemPackages.wl-clipboard]

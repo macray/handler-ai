@@ -4,7 +4,7 @@ bodies, mapping domain errors, and the Context every route gets."""
 import contextlib
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -45,7 +45,10 @@ from ..builds import (
 from ..image_updates import ImageUpdater
 from ..improvements import ImprovementStore
 from ..inbox import Inbox
-from ..projects import ProjectRecord, ProjectRegistry
+from ..plan_drafts import PlanDrafts
+from ..plans import PlanStore
+from ..projects import ProjectRecord, ProjectRegistry, branch_of
+from ..provider_reach import Reaches
 from ..remote import Connector
 from ..sessions import SessionRecord, SessionStore
 from ..settings import Settings
@@ -56,9 +59,16 @@ log = logging.getLogger("handler.api")
 
 
 class ProblemError(Exception):
-    def __init__(self, status: int, title: str, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        title: str,
+        detail: str | None = None,
+        *,
+        toolbox_adds: list[str] | None = None,
+    ) -> None:
         super().__init__(title)
-        self.problem = Problem(title=title, status=status, detail=detail)
+        self.problem = Problem(title=title, status=status, detail=detail, toolbox_adds=toolbox_adds)
 
 
 def dump(model: BaseModel | list[Any], status: int = 200) -> JSONResponse:
@@ -90,14 +100,29 @@ class Context:
     assistant: Assistant
     voice: VoiceStore
     agents: AgentService
+    plans: PlanStore
+    drafts: PlanDrafts
+    ui_links: auth.UiLinks = field(default_factory=auth.UiLinks)
+    reaches: Reaches = field(default_factory=Reaches)  # providers' last tests (D.12)
 
     def require_auth(self, request: Request) -> None:
-        """HTTP auth (invariant 5): allowed Origin (if any) and the bearer token."""
-        if not auth.origin_allowed(request.headers.get("origin"), self.settings.allowed_origins):
+        """HTTP auth (invariant 5): allowed Origin (if any), then the bearer token or the web UI's
+        cookie from its own pages."""
+        allowed = self.settings.allowed_origins
+        if not auth.origin_allowed(request.headers.get("origin"), allowed):
             raise ProblemError(403, "origin not allowed")
-        presented = auth.bearer_from_header(request.headers.get("authorization"))
-        if not auth.token_matches(presented, self.token):
+        if not self.authenticated(request.headers, request.cookies.get(auth.UI_COOKIE)):
             raise ProblemError(401, "missing or invalid token")
+
+    def authenticated(self, headers: Any, cookie: str | None, bearer: str | None = None) -> bool:
+        """The token (a header, or `bearer` from a WebSocket's subprotocols), or the web UI's
+        cookie on a request from its own pages."""
+        presented = bearer or auth.bearer_from_header(headers.get("authorization"))
+        if auth.token_matches(presented, self.token):
+            return True
+        return auth.ui_cookie_matches(cookie, self.token) and auth.from_own_pages(
+            headers, self.settings.allowed_origins
+        )
 
     def get_session(self, session_id: str) -> SessionRecord:
         record = self.sessions.records.get(session_id)
@@ -117,24 +142,19 @@ class Context:
             raise ProblemError(404, "project not found", project_id)
         return project
 
-    def get_project_agent(self, project: ProjectRecord, agent_id: str) -> AgentRecord:
-        record = self.registry.get(agent_id)
-        if record is None or record.project_id != project.id:
-            raise ProblemError(404, "agent not found", agent_id)
-        return record
-
     def to_project(self, p: ProjectRecord) -> Project:
         return Project(
             id=p.id,
             name=p.name,
             description=p.description,
             folder=p.folder,
+            branch=branch_of(p.folder),
             default_agent=p.default_agent,
             caches=p.caches,
             area=p.area,
             skills=p.skills,
+            addons=p.addons,
             apps=self.apps.folder_apps(p.folder),
-            pinned=p.pinned,
             agents=[self.to_agent(a) for a in self.projects.agents(p)],
             created_at=p.created_at,
             last_used_at=self.projects.last_used(p),
@@ -175,7 +195,7 @@ class Context:
 
 def add_error_handlers(app: FastAPI) -> None:
     def problem_response(problem: Problem) -> Response:
-        body = problem.model_dump_json(exclude_none=True)
+        body = problem.model_dump_json(by_alias=True, exclude_none=True)
         return Response(body, status_code=problem.status, media_type="application/problem+json")
 
     @app.exception_handler(ProblemError)
@@ -195,12 +215,14 @@ def text_or_none(value: str | None) -> str | None:
 
 @contextlib.contextmanager
 def check_problems() -> Iterator[None]:
-    """The rules an agent or a project must pass (save_rules.py) → 403 (forbidden), 409 (conflict),
-    400 (anything else)."""
+    """The rules an agent or a project must pass (save_rules.py) → 403 (forbidden), 409 (conflict;
+    the toolbox's changes to confirm with it), 400 (anything else)."""
     try:
         yield
     except save_rules.ForbiddenError as e:
         raise ProblemError(403, e.title, str(e)) from None
+    except save_rules.ToolboxChangesError as e:
+        raise ProblemError(409, e.title, str(e), toolbox_adds=e.adds) from None
     except save_rules.ConflictError as e:
         raise ProblemError(409, e.title, str(e)) from None
     except save_rules.CheckError as e:
@@ -215,9 +237,9 @@ def knowledge_problems() -> Iterator[None]:
     try:
         yield
     except knowledge.KnowledgeConflictError as e:
-        raise ProblemError(409, "knowledge conflict", str(e)) from None
+        raise ProblemError(409, "notes conflict", str(e)) from None
     except knowledge.KnowledgeError as e:
-        raise ProblemError(400, "knowledge unusable", str(e)) from None
+        raise ProblemError(400, "notes unusable", str(e)) from None
 
 
 def parse_body[M: BaseModel](model: type[M], raw: bytes) -> M:

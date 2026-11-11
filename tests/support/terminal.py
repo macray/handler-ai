@@ -36,6 +36,12 @@ class Attached:
         os.write(self.master, line.encode() + b"\r")
 
     def exit_code(self) -> int:
-        _, status = os.waitpid(self.pid, 0)
+        """Read on while waiting: macOS's terminal closes only once what was written is read."""
+        while (pid_status := os.waitpid(self.pid, os.WNOHANG)) == (0, 0):
+            try:
+                self.shown += os.read(self.master, 4096)
+            except OSError:  # nothing yet, or EIO: no process on the terminal any more
+                time.sleep(0.05)
+        _, status = pid_status
         os.close(self.master)
         return os.waitstatus_to_exitcode(status)

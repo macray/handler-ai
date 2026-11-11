@@ -1,9 +1,9 @@
-"""Projects — what you work on: a code folder, its caches setting, the skills it gives to all
-its agents, and its agents.
+"""Projects — what you work on: a code folder, its caches setting, the skills and addons it gives
+to all its agents, and its agents.
 
 An agent of a project is an agent (agents.py) with a `project_id`, so its sessions and sandboxes
 are the same as for an ad-hoc one. Its settings are its own; this module keeps in step
-what it gets from its project: the folder, the caches setting and the project's skills.
+what it gets from its project: the folder, the caches setting, the project's skills and addons.
 
     ProjectRecord     one project, persisted in <state>/projects.json
     ProjectRegistry   load, save, create, update, delete; its agents, resolved
@@ -16,8 +16,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from handler_contracts import CacheSharing, RemoteAgent, RemoteProject
+from handler_contracts import AddonUse, CacheSharing, RemoteAgent, RemoteProject
 
+from . import pins
 from .agents import AgentRecord, AgentRegistry, describe
 
 
@@ -28,10 +29,10 @@ class ProjectRecord:
     folder: str
     description: str | None = None
     skills: list[str] = field(default_factory=list)  # given to all its agents (set by D.17)
+    addons: list[AddonUse] = field(default_factory=list)  # given to all its agents (G.3)
     default_agent: str | None = None
     caches: CacheSharing = "project"  # the toolbox's caches for its agents (caches.py)
     area: str | None = None  # its area: the accounts and providers it runs (areas.py)
-    pinned: bool = True  # in the web UI's menu
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -44,10 +45,12 @@ class ProjectRecord:
             "folder": self.folder,
             "description": self.description,
             "skills": self.skills,
+            "addons": [
+                u.model_dump(mode="json", by_alias=True, exclude_none=True) for u in self.addons
+            ],
             "defaultAgent": self.default_agent,
             "caches": self.caches,
             "area": self.area,
-            "pinned": self.pinned,
             "createdAt": self.created_at.isoformat(),
         }
 
@@ -57,12 +60,12 @@ class ProjectRecord:
             id=r["id"],
             name=r["name"],
             folder=r["folder"],
-            description=r.get("description"),
-            skills=r.get("skills", []),
-            default_agent=r.get("defaultAgent"),
-            caches=r.get("caches", "project"),
-            area=r.get("area"),
-            pinned=r["pinned"],
+            description=r["description"],
+            skills=r["skills"],
+            addons=[AddonUse.model_validate(u) for u in r["addons"]],
+            default_agent=r["defaultAgent"],
+            caches=r["caches"],
+            area=r["area"],
             created_at=datetime.fromisoformat(r["createdAt"]),
         )
 
@@ -79,6 +82,23 @@ def folder_name(folder: str) -> str:
     return folder.rstrip("/").rsplit("/", 1)[-1] or folder
 
 
+def branch_of(folder: str) -> str | None:
+    """The git branch checked out in the folder, as its page shows it: read from `.git/HEAD` (a
+    worktree's `.git` file points to its own), never by running git. None: not a git folder, or
+    no branch (a detached HEAD)."""
+    git = Path(folder) / ".git"
+    try:
+        if git.is_file():
+            pointer = git.read_text().strip()
+            if not pointer.startswith("gitdir: "):
+                return None
+            git = (git.parent / pointer.removeprefix("gitdir: ")).resolve()
+        head = (git / "HEAD").read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return head.removeprefix("ref: refs/heads/") if head.startswith("ref: refs/heads/") else None
+
+
 class ProjectRegistry:
     def __init__(self, state_dir: Path, registry: AgentRegistry) -> None:
         self.file = state_dir / "projects.json"
@@ -87,11 +107,6 @@ class ProjectRegistry:
         if self.file.exists():
             for r in json.loads(self.file.read_text()):
                 self.projects[r["id"]] = ProjectRecord.from_json(r)
-        # what agents.json keeps of their project is a copy: taken again from the project, so a
-        # copy saved before a change of format (or by an older version) is never what they run
-        for project in self.projects.values():
-            for agent in self.agents(project):
-                self.resolve(project, agent)
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
@@ -173,11 +188,12 @@ class ProjectRegistry:
 
     def resolve(self, project: ProjectRecord, agent: AgentRecord) -> None:
         """What the agent gets from its project: its folder, the caches setting, the project's
-        skills and its area."""
+        skills and addons, and its area."""
         agent.scope = project.folder
         agent.caches = project.caches
         agent.area = project.area
         agent.project_skills = list(project.skills)
+        agent.project_addons = list(project.addons)
 
     def add(self, project: ProjectRecord) -> ProjectRecord:
         self.projects[project.id] = project
@@ -205,9 +221,10 @@ class ProjectRegistry:
             self.set_default(project, agent.id)
 
     def delete(self, project: ProjectRecord) -> None:
-        """Remove it (its agents are deleted first, agent_service.py)."""
+        """Remove it (its agents are deleted first, agent_service.py), and its pin."""
         self.projects.pop(project.id, None)
         self.save()
+        pins.forget(self.file.parent, "project", project.id)
 
     def set_default(self, project: ProjectRecord, agent_id: str | None) -> None:
         project.default_agent = agent_id
@@ -254,6 +271,17 @@ class ProjectRegistry:
             p.skills = [s for s in p.skills if s != name]
         for agent in self.skill_users(name):
             agent.skills = [s for s in agent.skills if s != name]
+        self._resolve_all()
+
+    # ── addons (G.3): given by a project to all its agents, as skills ─────
+
+    def give_addons(self, project: ProjectRecord, uses: list[AddonUse]) -> None:
+        """The addons `project` gives to all its agents (checked with them, save_rules): those of
+        its agents that picked one of them drop it."""
+        project.addons = sorted(uses, key=lambda u: u.addon)
+        given = {u.addon for u in project.addons}
+        for agent in self.agents(project):
+            agent.addons = [u for u in agent.addons if u.addon not in given]
         self._resolve_all()
 
     def _resolve_all(self) -> None:

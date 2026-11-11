@@ -61,7 +61,11 @@ for url in urls:
     text = " ".join(c.get("text", "") for c in result.get("content", []))
     report["navigations"][url] = {"error": bool(result.get("isError")), "text": text[:3000]}
 ps = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True, check=False).stdout
-report["browsers"] = [line for line in ps.splitlines() if line.startswith("/usr/lib/chromium")]
+# by its program's name, whatever the distribution's path (Fedora's launcher execs the browser
+# under the name it was started as: /usr/bin/chromium)
+report["browsers"] = [
+    line for line in ps.splitlines() if line and Path(line.split()[0]).name.startswith("chrom")
+]
 print(json.dumps(report))
 server.stdin.close()
 server.terminate()

@@ -144,7 +144,7 @@
       "type": "object"
     }
   },
-  "description": "A starting point for a provider (templates/providers/, D.12).",
+  "description": "A starting point for a provider (templates/providers/, D.12). A local server's has no\nmodel: they are picked from what it serves (`POST /v1/providers/test`).",
   "properties": {
     "name": {
       "title": "Name",
@@ -178,6 +178,7 @@
       "type": "object"
     },
     "models": {
+      "default": [],
       "items": {
         "$ref": "#/$defs/ProviderModel"
       },
@@ -220,8 +221,7 @@
   },
   "required": [
     "name",
-    "endpoints",
-    "models"
+    "endpoints"
   ],
   "title": "ProviderTemplate",
   "type": "object"

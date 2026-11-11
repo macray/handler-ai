@@ -58,11 +58,13 @@ to = "handler/env-issues.md"
 """
 
 
+@pytest.mark.rule("automation.with-problems-never-runs")
 def test_a_good_automation_has_no_problems(env: dict[str, Path]) -> None:
     loaded = write(env, "env", GOOD)
     assert loaded.definition is not None and problems(env, loaded) == []
 
 
+@pytest.mark.rule("automation.with-problems-never-runs", "llm.only-the-models-it-names")
 @pytest.mark.parametrize(
     ("change", "problem"),
     [
@@ -70,7 +72,7 @@ def test_a_good_automation_has_no_problems(env: dict[str, Path]) -> None:
         (("local/small", "local/big"), "not a model of provider local"),
         (("local/small", "resp/small"), "has no openai-chat or anthropic endpoint"),
         (("handler/env-issues.md", "missing/x.md"), "its folder does not exist"),
-        (("handler/env-issues.md", "../x.md"), "outside the knowledge root"),
+        (("handler/env-issues.md", "../x.md"), "outside the notes root"),
         (("handler/env-issues.md", "handler/x.txt"), "not a markdown note"),
         (('when = "session.stopped"', 'when = "nope"'), "automation.toml: when"),
         (("run =", "runs ="), "automation.toml"),
@@ -83,6 +85,7 @@ def test_problems(env: dict[str, Path], change: tuple[str, str], problem: str) -
     assert len(found) == 1 and problem in found[0], found
 
 
+@pytest.mark.rule("automation.a-folder-of-yours")
 def test_names_and_files(env: dict[str, Path]) -> None:
     write(env, "env", GOOD)
     bad = env["automations"] / "Bad_Name"
@@ -117,6 +120,7 @@ def test_state_round_trip(tmp_path: Path) -> None:
     assert (config.state_dir(tmp_path, "x") / "state.json").stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.rule("automation.a-folder-of-yours", "automation.off-until-you-turn-it-on")
 def test_the_shipped_examples_are_valid_and_copied_off(env: dict[str, Path]) -> None:
     assert "env-issues" in [e.name for e in config.examples()]
     for example in config.load_all(config.EXAMPLES):

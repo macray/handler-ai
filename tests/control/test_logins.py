@@ -22,6 +22,7 @@ def daemon(terminal_script: Path) -> Iterator[Daemon]:
     yield from start_daemon(extra_env={"HANDLER_TERMINAL": str(terminal_script)})
 
 
+@pytest.mark.rule("account.the-sign-in-is-yours")
 def test_a_harness_says_where_its_login_leaves_its_file(daemon: Daemon) -> None:
     with daemon.http() as c:
         harnesses = {h["name"]: h for h in c.get("/v1/harnesses").json()}
@@ -30,6 +31,7 @@ def test_a_harness_says_where_its_login_leaves_its_file(daemon: Daemon) -> None:
     assert harnesses["echo-box"].get("loginFile") is None  # a token login
 
 
+@pytest.mark.rule("account.the-sign-in-is-yours", "account.its-login-file-is-kept-apart")
 def test_a_terminal_window_runs_the_login(daemon: Daemon, terminal_script: Path) -> None:
     """The web UI's Log in: handlerd opens a terminal window running `handler account login`, which
     runs the harness's login on the host; the account is logged in when it ends."""
@@ -50,7 +52,7 @@ def test_a_terminal_window_runs_the_login(daemon: Daemon, terminal_script: Path)
     log = Path(f"{terminal_script}.log")
     assert account["status"] == "ready", log.read_text() if log.exists() else "no terminal log"
     assert "account login win --keep-open" in Path(f"{terminal_script}.calls").read_text()
-    kept = daemon.data_dir / "accounts" / "win" / "credential"
+    kept = daemon.data_dir / "accounts" / "win" / "login" / "credential"
     assert kept.read_text().strip() == "terminal-code"
     assert kept.stat().st_mode & 0o777 == 0o600
     assert "win: logged in" in log.read_text()

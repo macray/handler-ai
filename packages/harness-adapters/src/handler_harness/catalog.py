@@ -5,9 +5,9 @@ A harness adapter is a directory `<data>/harnesses/<name>/` containing:
   Containerfile   the image recipe, built FROM the toolbox image
 
 Platform data ships in this package (`data/`, read-only): the harnesses, the built-in addons, the
-default toolbox and `handler-sandbox-env`. The toolbox is the user's:
-`~/.config/handler-ai/toolbox/` (Containerfile + toolbox.toml, whose caches the projects use),
-seeded from the default.
+toolbox's parts (toolbox.py) and `handler-sandbox-env`. The toolbox's choices are the user's:
+`~/.config/handler-ai/toolbox/` (toolbox.toml, written by handler; custom.containerfile, their own
+lines), seeded with the default toolbox.toml.
 """
 
 import json
@@ -41,38 +41,43 @@ def toolbox_dir() -> Path:
 
 
 def seed_toolbox() -> bool:
-    """Copy the default toolbox to the user's toolbox folder if there is none (handlerd's start).
-    True when it did. Afterwards the folder is the user's: never overwritten."""
-    if toolbox_dir().exists():
+    """Write the default toolbox.toml in the user's toolbox folder if there is none (handlerd's
+    start). True when it did. Afterwards it changes only on the user's actions."""
+    if (toolbox_dir() / "toolbox.toml").exists():
         return False
-    shutil.copytree(DEFAULT_TOOLBOX, toolbox_dir())
+    toolbox_dir().mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(DEFAULT_TOOLBOX / "toolbox.toml", toolbox_dir() / "toolbox.toml")
     return True
 
 
 def toolbox() -> ToolboxManifest:
-    """`toolbox.toml` of the toolbox directory (B.6): its caches."""
+    """`toolbox.toml` of the toolbox directory (B.7): the distro, the system packages on, the
+    user's own caches."""
     return ToolboxManifest.model_validate(
         tomllib.loads((toolbox_dir() / "toolbox.toml").read_text())
     )
 
 
 TOOLBOX_TOML_HEADER = """\
-# What the toolbox declares besides its image (contract B.6).
+# Your toolbox (contract B.7), written by Handler: Settings → Sandboxes, `handler toolbox`.
 #
-# caches: the toolchains' state kept between sessions, one table per cache: target, the home
-# path it is mounted at; about, what it holds; general = true for a folder any tool writes to
-# (~/.cache), not one tool's. Each project chooses whether its agents keep their own, use the
-# global ones with other projects (a write channel between projects), or get none (D.8).
+# distro: what the toolbox is built on. systemPackages: those turned on, in the order they were
+# added (the order of their layers). caches: your own, for what your own lines
+# (custom.containerfile) install: target, the home path it is mounted at; about, what it holds;
+# general = true for a folder any tool writes to (~/.cache), not one tool's. Each project
+# chooses whether its agents keep their own, use the global ones with other projects (a write
+# channel between projects), or get none (D.8).
 """
 
 
 def save_toolbox(manifest: ToolboxManifest) -> None:
-    """Write `toolbox.toml` (the caches, from Settings → Caches); its comments are handler's."""
-    text = TOOLBOX_TOML_HEADER
-    for name, cache in manifest.caches.items():
-        text += f"\n[caches.{name}]\ntarget = {json.dumps(cache.target)}\n"
-        if cache.about:
-            text += f"about = {json.dumps(cache.about, ensure_ascii=False)}\n"
+    """Write `toolbox.toml`; its comments are handler's."""
+    text = TOOLBOX_TOML_HEADER + f"\ndistro = {json.dumps(manifest.distro)}\n"
+    for name in manifest.system_packages:
+        text += f"\n[systemPackages.{name}]\n"
+    for cache in manifest.caches:
+        text += f"\n[[caches]]\ntarget = {json.dumps(cache.target)}\n"
+        text += f"about = {json.dumps(cache.about, ensure_ascii=False)}\n"
         if cache.general:
             text += "general = true\n"
     (toolbox_dir() / "toolbox.toml").write_text(text)

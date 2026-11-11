@@ -13,6 +13,14 @@
       ],
       "default": null,
       "title": "Sessionid"
+    },
+    "allow": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allow",
+      "type": "array"
     }
   },
   "title": "TryAutomationRequest",

@@ -96,3 +96,10 @@ class Provider(StrictDocument):
     @classmethod
     def from_toml(cls, text: str) -> Self:
         return cls.model_validate(tomllib.loads(text))
+
+
+class TemplateProvider(Provider):
+    """A template's provider (D.12): a provider but for its models, which a local server's has
+    none of yet: they are picked from what the server serves."""
+
+    models: list[ProviderModel] = []

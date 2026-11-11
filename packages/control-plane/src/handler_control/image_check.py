@@ -1,6 +1,6 @@
 """Checking a freshly built harness image before agents get it (contract D.4), an addon image
-(G.4, `check_addon`), and what Handler needs from a new toolbox but does not stop it for (B.6,
-`check_toolbox`, at the end).
+(G.4, `check_addon`), and a new toolbox (B.7, at the end): its system packages' checks and the
+commands it gives (`toolbox_commands`, the record).
 
 The image is started through the real pipeline (render → compose → sandbox), with no network and a
 dummy value in every secret slot: a harness with a token login on an account (a dummy token), any
@@ -34,10 +34,12 @@ from handler_contracts import (
     AgentSpec,
     HarnessDescriptor,
     Provider,
+    SandboxExit,
     SandboxSpec,
     StdioMcpServer,
 )
 from handler_harness import addons, catalog, render
+from handler_harness import toolbox as toolbox_parts
 
 from . import compose, sandbox_process
 from .policy import parse
@@ -105,7 +107,6 @@ async def _check_session(descriptor: HarnessDescriptor, image: str, checked: str
     launch = render(
         descriptor,
         agent,
-        checked,
         {},
         account_token=token,
         provider_key=key,
@@ -161,9 +162,10 @@ async def _check_session(descriptor: HarnessDescriptor, image: str, checked: str
 
 def mcp_probe(path: str) -> StdioMcpServer:
     """A stdio MCP server that writes the environment it was started with to `path`, then
-    waits (it never answers: the check only needs it started)."""
+    waits, reading what the harness sends without answering or echoing it (a request echoed back
+    reads as one from the server: Vibe logs it as invalid). The check only needs it started."""
     return StdioMcpServer(
-        name="handler-check-probe", command="sh", args=["-c", f"env > {path}; exec cat"]
+        name="handler-check-probe", command="sh", args=["-c", f"env > {path}; exec cat > /dev/null"]
     )
 
 
@@ -240,22 +242,31 @@ async def _request(proc: asyncio.subprocess.Process, method: str, params: Any) -
     raise ImageCheckError(f"the agent exited during {method} (exit code {await proc.wait()})")
 
 
-async def _forward_stderr(proc: asyncio.subprocess.Process, log: Log, prefix: str) -> None:
+async def _forward_stderr(
+    proc: asyncio.subprocess.Process, log: Log, prefix: str, said: list[str] | None = None
+) -> None:
+    """Its lines to the log; those of the launcher itself (why it did not start) also to
+    `said`."""
     assert proc.stderr is not None
+    own = sandbox_process.launcher_prefix()
     async for raw in proc.stderr:
-        log(f"{prefix}: " + raw.decode(errors="replace").rstrip())
+        line = raw.decode(errors="replace").rstrip()
+        if said is not None and line.startswith(own):
+            said.append(line.removeprefix(own))
+        log(f"{prefix}: {line}")
 
 
 # ── addon images (G.4) ──────────────────────────────────────────────────
 
 
 async def check_addon(
-    settings: Settings, addon: addons.Addon, image: str, toolbox: str, log: Log
+    settings: Settings, addon: addons.Addon, folder: str, toolbox: str, log: Log
 ) -> str:
-    """G.4: mount the addon image into the toolbox as agents get it (through the sandbox: no
-    network, `strict`, the host user) and check that `bin/` holds exactly the declared commands,
-    that the toolbox does not already provide one of them, that `version` is readable, and that
-    the manifest's `check` succeeds with the addon on PATH. Returns the version line."""
+    """G.4: mount the addon's folder (its image extracted) into the toolbox as agents get it
+    (through the sandbox: no network, `strict`, the host user) and check that `bin/` holds
+    exactly the declared commands, that the toolbox does not already provide one of them but has
+    all it needs, that `version` is readable, and that the manifest's `check` succeeds with the
+    addon on PATH. Returns the version line."""
     manifest = addon.manifest
     target = manifest.mount_target
     with _scratch_scope(settings, f"addon-{manifest.name}-") as scope:
@@ -264,15 +275,15 @@ async def check_addon(
             spec = compose.addon_check_spec(
                 name=f"handler-check-{uuid.uuid4().hex[:8]}",
                 toolbox=toolbox,
-                image=image,
+                source=folder,
                 target=target,
                 scope=scope,
                 argv=["sh", "-c", f"exec 2>&1\n{script}", "sh", *args],
-                path_append=[manifest.bin_dir] if on_path else None,
+                path=manifest.bin_dir if on_path else None,
             )
             return await _run_check(spec, log)
 
-        log(f"check: {image} mounted at {target} in {toolbox} (no network, as agents get it)")
+        log(f"check: its folder mounted at {target} in {toolbox} (no network, as agents get it)")
         code, listing = await run(f'ls -1A "{target}/bin"')
         found = sorted(listing.splitlines()) if code == 0 else []
         if found != sorted(manifest.commands):
@@ -285,8 +296,16 @@ async def check_addon(
         if shadowed:
             raise ImageCheckError(
                 f"the toolbox already provides {', '.join(shadowed.splitlines())}: "
-                "it would hide the addon's command (addons come last on PATH)"
+                "it would hide the tool's command (tools come last on PATH)"
             )
+        if manifest.needs:
+            _, lacking = await run(
+                'for c; do command -v "$c" >/dev/null || echo "$c"; done', *manifest.needs
+            )
+            if lacking:
+                raise ImageCheckError(
+                    f"the toolbox lacks {', '.join(lacking.splitlines())}, which the tool needs"
+                )
         code, version = await run(f'cat "{target}/{ADDON_VERSION_FILE}"')
         if code != 0 or not version:
             raise ImageCheckError(f"{target}/{ADDON_VERSION_FILE} is missing or empty")
@@ -295,42 +314,62 @@ async def check_addon(
         if manifest.check:
             code, out = await run('exec "$@"', *manifest.check, on_path=True)
             for line in out.splitlines():
-                log(f"addon: {line}")
+                log(f"tool: {line}")
             if code != 0:
                 raise ImageCheckError(f"'{' '.join(manifest.check)}' exited with {code}")
     log("check: commands, version and check ok")
     return version
 
 
-async def check_toolbox(settings: Settings, toolbox: str, log: Log) -> list[str]:
-    """B.6: the toolbox has Bun, which the agents that write apps build and test them with (any
-    version: an app's tests run again on the apps' own when it is deployed, H.6). The toolbox is
-    the person's: without it, a warning (the rebuild still switches), for those agents only."""
+async def _in_toolbox(settings: Settings, toolbox: str, script: str, log: Log) -> tuple[int, str]:
+    """`script` run by `sh -eu` in the toolbox alone, as agents get it: its exit code and what it
+    printed (stderr included)."""
     with _scratch_scope(settings, "toolbox-") as scope:
         spec = compose.toolbox_check_spec(
             name=f"handler-check-{uuid.uuid4().hex[:8]}",
             toolbox=toolbox,
             scope=scope,
-            argv=["sh", "-c", "command -v bun"],
+            argv=["sh", "-euc", f"exec 2>&1\n{script}"],
         )
-        code, found = await _run_check(spec, log)
-    if code == 0:
-        log(f"check: Bun at {found}")
-        return []
-    log(f"warning: {NO_BUN}")
-    return [NO_BUN]
+        return await _run_check(spec, log)
 
 
-NO_BUN = "The toolbox has no Bun: agents cannot build or test apps."
+async def check_system_packages(
+    settings: Settings, toolbox: str, packages: list[toolbox_parts.SystemPackage], log: Log
+) -> None:
+    """B.7: each system package's check.sh in the new toolbox (static: files, capabilities,
+    versions). One failing fails the build."""
+    for package in packages:
+        code, out = await _in_toolbox(settings, toolbox, package.check, log)
+        for line in out.splitlines():
+            log(f"{package.name}: {line}")
+        if code != 0:
+            raise ImageCheckError(f"system package {package.name}: its check exited with {code}")
+        log(f"check: system package {package.name} ok")
+
+
+async def toolbox_commands(
+    settings: Settings, toolbox: str, commands: list[str], log: Log
+) -> dict[str, str]:
+    """B.6, the record: where `command -v` finds each of `commands` in the toolbox."""
+    script = 'for c; do p=$(command -v "$c") && printf "%s\\t%s\\n" "$c" "$p"; done; true'
+    code, out = await _in_toolbox(settings, toolbox, f"set -- {' '.join(commands)}\n{script}", log)
+    if code != 0:
+        raise ImageCheckError(f"the toolbox's commands could not be listed (exit code {code})")
+    found = dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+    log(f"check: the toolbox gives {len(found)} of {len(commands)} known commands")
+    return found
 
 
 async def _run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:
     """One check command in its sandbox: its exit code and what it printed. The sandbox's own
-    lines (stderr) go to the log."""
+    lines (stderr) go to the log. A sandbox that did not start (A.1: refused, invalid, its setup
+    failed) is said as such, its launcher's reason with it, not as the command's failure."""
     proc = await sandbox_process.start_async(spec, line_limit=DEFAULT_MAX_MESSAGE_BYTES)
     assert proc.stdin is not None and proc.stdout is not None
     proc.stdin.close()
-    stderr = asyncio.create_task(_forward_stderr(proc, log, "sandbox"))
+    said: list[str] = []
+    stderr = asyncio.create_task(_forward_stderr(proc, log, "sandbox", said))
     try:
         async with asyncio.timeout(CHECK_TIMEOUT):
             out = await proc.stdout.read()
@@ -342,4 +381,9 @@ async def _run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:
         stderr.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await stderr
+    if (
+        code in (SandboxExit.UNENFORCEABLE, SandboxExit.INVALID_SPEC, SandboxExit.SETUP_FAILED)
+        and said
+    ):
+        raise ImageCheckError(f"its sandbox did not start: {said[-1]}")
     return code, out.decode(errors="replace").strip()

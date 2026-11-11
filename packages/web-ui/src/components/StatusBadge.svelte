@@ -17,17 +17,14 @@
     ask: "asks first",
     "accept-edits": "auto edits",
     bypass: "auto-approve",
-    "preset-locked": "Locked down",
-    "preset-guarded": "Guarded",
-    "preset-open": "Open",
   };
 
   const tone = $derived(
-    ["succeeded", "completed", "ok", "enforce", "container", "strict", "filtered", "none", "on", "preset-locked", "preset-guarded"].includes(status)
+    ["succeeded", "completed", "done", "ok", "enforce", "container", "strict", "filtered", "none", "on"].includes(status)
       ? "bg-ok"
       : ["failed", "timed_out", "privileged", "open"].includes(status)
         ? "bg-danger"
-        : ["running", "in_progress", "pending", "attention", "log-only", "cancelled", "nested", "bypass", "preset-open"].includes(status)
+        : ["running", "in_progress", "pending", "attention", "log-only", "cancelled", "nested", "bypass"].includes(status)
           ? "bg-warn"
           : "bg-muted-foreground",
   );

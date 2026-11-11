@@ -1,7 +1,45 @@
 {
   "$id": "urn:handler.control/v1/inbox-message",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "What handler tells a person (the person's inbox, like mail): an app's notification\n(H.9), an automation's result or failure (I.3). Shown on the computer and pushed to the\nperson's phones (content-free: the text travels encrypted when the phone asks for it).",
+  "$defs": {
+    "RefusedHost": {
+      "description": "A host the network filter refused to a run, or to a session while nobody could answer, and\nthe agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your\nanswer (as the agent's lists say now).",
+      "properties": {
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "enum": [
+                "allowed",
+                "kept blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision"
+        }
+      },
+      "required": [
+        "host",
+        "count"
+      ],
+      "title": "RefusedHost",
+      "type": "object"
+    }
+  },
+  "description": "What handler tells a person (the person's inbox, like mail): an app's notification\n(H.9), an automation's result or failure (I.3), a plan stopped or a step that completed\nwith hosts refused (D.27), the hosts refused to a session while nobody could answer (F.9).\nShown on the computer and pushed to the person's phones (content-free: the text travels\nencrypted when the phone asks for it).",
   "properties": {
     "id": {
       "title": "Id",
@@ -10,7 +48,9 @@
     "source": {
       "enum": [
         "app",
-        "automation"
+        "automation",
+        "plan",
+        "session"
       ],
       "title": "Source",
       "type": "string"
@@ -30,6 +70,62 @@
       ],
       "default": null,
       "title": "Agent"
+    },
+    "agentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    },
+    "planId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Planid"
+    },
+    "step": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step"
+    },
+    "refused": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RefusedHost"
+      },
+      "title": "Refused",
+      "type": "array"
+    },
+    "said": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Said"
     },
     "person": {
       "title": "Person",

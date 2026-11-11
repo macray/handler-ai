@@ -24,7 +24,7 @@ from ..automations import (
 from .common import Context, ProblemError, dump, parse_body
 
 
-def add_automation_routes(app: FastAPI, ctx: Context) -> None:
+def add_automation_routes(app: FastAPI, ctx: Context) -> None:  # noqa: PLR0915 — one per route
     authed = [Depends(ctx.require_auth)]
     automations = ctx.automations
 
@@ -106,18 +106,19 @@ def add_automation_routes(app: FastAPI, ctx: Context) -> None:
     async def try_it(name: str, request: Request) -> Response:
         body = parse_body(TryAutomationRequest, await request.body())
         with problems("cannot try it"):
+            if body.allow:
+                await automations.allow(name, body.allow)
             return dump(automations.try_run(name, body.session_id), status=202)
 
     @app.get("/v1/automations/{name}/runs", dependencies=authed)
     def list_runs(name: str) -> Response:
         with problems("automation"):
-            automations.get(name)
-            return dump(automations.runs(name))
+            return dump(automations.with_answers(name, automations.runs(name)))
 
     @app.get("/v1/automations/{name}/runs/{run_id}", dependencies=authed)
     def get_run(name: str, run_id: str) -> Response:
         with problems("run"):
-            return dump(automations.get_run(name, run_id))
+            return dump(automations.with_answers(name, [automations.get_run(name, run_id)])[0])
 
     @app.get("/v1/automations/{name}/runs/{run_id}/log", dependencies=authed)
     def run_log(name: str, run_id: str) -> Response:

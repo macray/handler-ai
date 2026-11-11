@@ -43,10 +43,6 @@ def get(name: str) -> HandlerNeed | None:
     return read(found) if skills.NAME.fullmatch(name) and found.is_dir() else None
 
 
-def origin(need: HandlerNeed) -> AgentOrigin:
-    return AgentOrigin(kind="handler-need", name=need.name, version=need.version)
-
-
 def folder(origin: AgentOrigin) -> Path:
     """The definition an origin sets up (its current version only)."""
     need = get(origin.name)

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from handler_contracts import AddonUse
 from handler_control import agents
 from handler_control.agents import (
     AgentRecord,
@@ -29,6 +30,7 @@ def add(registry: AgentRegistry, settings: CheckedSettings, **fields: Any) -> Ag
     return registry.add(AgentRecord(**settings.model_dump(), **fields))
 
 
+@pytest.mark.rule("agent.outside-projects-it-is-its-folder-and-name")
 def test_an_agent_outside_projects_is_its_folder_and_its_name(tmp_path: Path) -> None:
     """Whatever its settings (D.1); names without case, no name being one too; an app's agent
     is no agent outside projects."""
@@ -45,10 +47,13 @@ def test_an_agent_outside_projects_is_its_folder_and_its_name(tmp_path: Path) ->
 
 def test_lists_are_normalized(tmp_path: Path) -> None:
     registry = AgentRegistry(tmp_path)
-    shop = add(registry, claude(bindings=["shop", "logs", "b", "b"], knowledge=["me"]))
-    assert shop.bindings == ["b", "logs", "shop"]
+    uses = [AddonUse(addon="shopify", binding="shop"), AddonUse(addon="logs")]
+    shop = add(registry, claude(addons=uses, knowledge=["me", "me"]))
+    assert [u.addon for u in shop.addons] == ["logs", "shopify"]
     loaded = AgentRegistry(tmp_path).agents
-    assert (loaded[shop.id].bindings, loaded[shop.id].knowledge) == (["b", "logs", "shop"], ["me"])
+    assert (loaded[shop.id].addons, loaded[shop.id].knowledge) == (shop.addons, ["me"])
+    with pytest.raises(ValueError, match="'logs' is used twice"):
+        claude(addons=[AddonUse(addon="logs"), AddonUse(addon="logs")])
 
 
 def test_update_keeps_the_id(tmp_path: Path) -> None:
@@ -118,7 +123,11 @@ def test_a_live_change_waits_for_a_launcher_still_starting(
         calls.append(sandbox)
         return "fresh is not a running filtered sandbox" if len(calls) < 3 else None
 
+    async def set_blocked(_sandbox: str, _blocked: list[str]) -> str | None:
+        return None
+
     monkeypatch.setattr(agents.sandbox_process, "set_allow", set_allow)
+    monkeypatch.setattr(agents.sandbox_process, "set_blocked", set_blocked)
     now = datetime.now(UTC)
     fresh = LiveConnection("c1", "fresh", now, Launcher(), egress_base=[])
     record.connections = {"c1": fresh}

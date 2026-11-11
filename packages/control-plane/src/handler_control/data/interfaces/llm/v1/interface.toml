@@ -1,4 +1,4 @@
-# The `llm/v1` service (docs/dev/design/services.md, contracts I.5): one model call. Its tools are
+# The `llm/v1` service (services design, contracts I.5): one model call. Its tools are
 # in tools.json (input LlmRequest, output LlmResponse of handler_contracts.automation: a unit test
 # keeps them equal). Served by handlerd's router; its connector (handler_control/llm.py) is built
 # in, its bindings are the providers.

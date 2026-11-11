@@ -1,30 +1,42 @@
-// The sections of Settings, one page each, grouped as the Settings page lists them: what agents
-// run on and are given (model access first: nothing runs without it), then this computer.
+// The sections of Settings, one page each, as the Settings page lists them: the everyday ones
+// (model access first: nothing runs without it), then Expert, folded until opened once.
 
-export type SettingsSection = "models" | "areas" | "secrets" | "helpers" | "voice" | "folders" | "caches" | "remote" | "images" | "sources" | "appearance";
+export type SettingsSection = "models" | "helpers" | "folders" | "phone" | "appearance" | "areas" | "secrets" | "voice" | "caches" | "sandboxes" | "sources";
 
-export const SETTINGS_GROUPS: { label: string; sections: { id: SettingsSection; label: string }[] }[] = [
-  {
-    label: "Agents",
-    sections: [
-      { id: "models", label: "Model access" },
-      { id: "areas", label: "Areas" },
-      { id: "secrets", label: "Secrets" },
-      { id: "helpers", label: "Helpers" },
-      { id: "voice", label: "Voice" },
-    ],
-  },
-  {
-    label: "This computer",
-    sections: [
-      { id: "folders", label: "Folders" },
-      { id: "caches", label: "Caches" },
-      { id: "remote", label: "Remote" },
-      { id: "images", label: "Images" },
-      { id: "sources", label: "Sources" },
-      { id: "appearance", label: "Appearance" },
-    ],
-  },
+export const SETTINGS_MAIN: { id: SettingsSection; label: string }[] = [
+  { id: "models", label: "Model access" },
+  { id: "helpers", label: "Helpers" },
+  { id: "folders", label: "Folders" },
+  { id: "phone", label: "Your phone" },
+  { id: "appearance", label: "Appearance" },
 ];
 
-export const SETTINGS_SECTIONS = SETTINGS_GROUPS.flatMap((g) => g.sections);
+export const SETTINGS_EXPERT: { id: SettingsSection; label: string }[] = [
+  { id: "areas", label: "Areas" },
+  { id: "secrets", label: "Secrets" },
+  { id: "voice", label: "Voice" },
+  { id: "caches", label: "Caches" },
+  { id: "sandboxes", label: "Sandboxes" },
+  { id: "sources", label: "Sources" },
+];
+
+export const SETTINGS_SECTIONS = [...SETTINGS_MAIN, ...SETTINGS_EXPERT];
+
+/** Expert stays open once opened (this browser). */
+const EXPERT_KEY = "handler.settings.expert";
+
+export function expertOpened(): boolean {
+  try {
+    return localStorage.getItem(EXPERT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function openExpert(): void {
+  try {
+    localStorage.setItem(EXPERT_KEY, "1");
+  } catch {
+    // not kept: folded again next time
+  }
+}

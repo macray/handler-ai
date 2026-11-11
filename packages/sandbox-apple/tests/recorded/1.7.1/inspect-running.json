@@ -1,0 +1,146 @@
+[
+  {
+    "configuration": {
+      "capAdd": [
+        "CAP_SETUID",
+        "CAP_SETGID",
+        "CAP_SETPCAP",
+        "CAP_CHOWN"
+      ],
+      "capDrop": [
+        "ALL"
+      ],
+      "creationDate": "2026-11-09T12:56:09Z",
+      "id": "handler-c9-248bf4a978",
+      "image": {
+        "descriptor": {
+          "annotations": {
+            "com.apple.containerization.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+            "io.containerd.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+            "org.opencontainers.image.created": "2026-11-09T12:55:50Z",
+            "org.opencontainers.image.ref.name": "0d67d927f6cc"
+          },
+          "digest": "sha256:0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+          "mediaType": "application/vnd.oci.image.index.v1+json",
+          "size": 375
+        },
+        "reference": "localhost/handler-ai-pi:latest"
+      },
+      "initProcess": {
+        "arguments": [
+          "--user",
+          "501:20",
+          "--host",
+          "/var/host-services/ssh-auth.sock",
+          "--listen",
+          "tcp:127.42.0.1:3128=egress",
+          "--",
+          "sh",
+          "-c",
+          "sleep 25"
+        ],
+        "environment": [
+          "FBR=f44",
+          "HTTPS_PROXY=http://127.42.0.1:3128",
+          "HTTP_PROXY=http://127.42.0.1:3128",
+          "HOME=/home/agent",
+          "https_proxy=http://127.42.0.1:3128",
+          "PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+          "http_proxy=http://127.42.0.1:3128",
+          "NO_PROXY=localhost,127.0.0.1,::1",
+          "DISTTAG=f44container",
+          "no_proxy=localhost,127.0.0.1,::1",
+          "LANG=C.UTF-8",
+          "FGC=f44"
+        ],
+        "executable": "/run/handler/relay-bin/handler-relay",
+        "rlimits": [],
+        "supplementalGroups": [],
+        "terminal": false,
+        "user": {
+          "id": {
+            "gid": 0,
+            "uid": 0
+          }
+        },
+        "workingDirectory": "/Users/me/code/rec"
+      },
+      "labels": {
+        "handler.launcher": "13087:lun.-9-nov.-13:56:08-2026",
+        "handler.managed": "1",
+        "handler.sandbox": "handler-c9-248bf4a978"
+      },
+      "mounts": [
+        {
+          "destination": "/tmp",
+          "options": [],
+          "source": "tmpfs",
+          "type": {
+            "tmpfs": {}
+          }
+        },
+        {
+          "destination": "/home/agent",
+          "options": [],
+          "source": "tmpfs",
+          "type": {
+            "tmpfs": {}
+          }
+        },
+        {
+          "destination": "/run/handler",
+          "options": [
+            "ro"
+          ],
+          "source": "/Users/me/.local/state/handler-ai/sandboxes/handler-c9-248bf4a978/own/0",
+          "type": {
+            "virtiofs": {}
+          }
+        },
+        {
+          "destination": "/run/handler/relay-bin",
+          "options": [
+            "ro"
+          ],
+          "source": "/Users/me/.local/state/handler-ai/relay",
+          "type": {
+            "virtiofs": {}
+          }
+        },
+        {
+          "destination": "/Users/me/code/rec",
+          "options": [],
+          "source": "/Users/me/code/rec",
+          "type": {
+            "virtiofs": {}
+          }
+        }
+      ],
+      "networks": [],
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      "publishedPorts": [],
+      "publishedSockets": [],
+      "readOnly": true,
+      "resources": {
+        "cpuOverhead": 1,
+        "cpus": 4,
+        "memoryInBytes": 1073741824
+      },
+      "rosetta": false,
+      "runtimeHandler": "container-runtime-linux",
+      "ssh": true,
+      "sysctls": {},
+      "useInit": true,
+      "virtualization": false
+    },
+    "id": "handler-c9-248bf4a978",
+    "status": {
+      "networks": [],
+      "startedDate": "2026-11-09T12:56:10Z",
+      "state": "running"
+    }
+  }
+]

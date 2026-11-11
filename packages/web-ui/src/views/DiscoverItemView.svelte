@@ -15,25 +15,26 @@
   import PageHeader from "../components/PageHeader.svelte";
   import When from "../components/When.svelte";
   import { api } from "../lib/api";
-  import type { SourceItemDetail } from "../lib/contracts.gen";
+  import type { AddonInfo, SourceItemDetail } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
-  import { actionWords, fromWords, itemFacts, takeItem, type KindPath } from "../lib/sources";
+  import { actionWords, fromWords, itemFacts, takeItem, type KindPath, type OfferedKind } from "../lib/sources";
 
   let { source, kind, name }: { source: string; kind: KindPath; name: string } = $props();
 
   let detail = $state<SourceItemDetail | null>(null);
+  let addons = $state<AddonInfo[]>([]); // the tools installed: what its agents' tools still ask
   let error = $state<string | null>(null);
   let busy = $state(false);
 
   $effect(() => {
-    api.sourceItem(source, kind, name).then(
-      (d) => (detail = d),
+    Promise.all([api.sourceItem(source, kind, name), api.addons()]).then(
+      ([d, installed]) => ([detail, addons] = [d, installed]),
       (e: Error) => (error = e.message),
     );
   });
 
   const ICON = { app: AppWindow, agents: Bot, addon: Puzzle };
-  const facts = $derived(detail ? itemFacts(detail) : { mayDo: [], needs: [] });
+  const facts = $derived(detail ? itemFacts(detail, addons) : { mayDo: [], needs: [] });
   const item = $derived(detail?.item);
   const action = $derived(item ? actionWords(item) : null);
   const kindWords = $derived.by(() => {
@@ -43,7 +44,7 @@
       const n = detail.agents?.agents.length ?? 0;
       return `Agents for a project · ${n} ${n === 1 ? "agent" : "agents"} · version ${item.version}`;
     }
-    return "Tool for agents (an addon)";
+    return "Tool for your agents";
   });
 
   async function take(): Promise<void> {
@@ -60,17 +61,16 @@
   }
 </script>
 
-<PageHeader titled title={name} parent={{ label: "Discover", href: href({ view: "discover" }) }} />
+<PageHeader width="max-w-5xl" title={name} parent={kind === "agents" ? { label: "Projects", href: href({ view: "projects" }) } : { label: kind === "apps" ? "Library › Apps" : "Library › Tools", href: href({ view: "library", shelf: kind === "apps" ? "apps" : "tools", more: true }) }} />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-5xl space-y-6 px-8 py-10" data-testid="discover-item-page">
     {#if error}<p class="text-sm text-danger" data-testid="discover-item-error">{error}</p>{/if}
     {#if detail && item}
-      {@const Icon = ICON[item.kind]}
+      {@const Icon = ICON[item.kind as OfferedKind]}
       <div class="flex flex-wrap items-center gap-4">
         <span class="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Icon class="size-7" /></span>
         <div class="min-w-0 flex-1">
-          <h1 class="text-2xl font-semibold">{item.name}</h1>
-          <p class="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <span>{kindWords}</span>
             {#if detail.source.official}
               <span class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary"><ShieldCheck class="size-3" />from Handler</span>

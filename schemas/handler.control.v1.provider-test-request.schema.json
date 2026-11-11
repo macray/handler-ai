@@ -1,0 +1,62 @@
+{
+  "$id": "urn:handler.control/v1/provider-test-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "POST /v1/providers/test (D.12): ask a provider's server for its models, from where a\nsandbox would. The endpoints typed in a form, or a saved provider's; the key typed, or the\nsaved provider's (sent only to its own endpoints' hosts).",
+  "properties": {
+    "endpoints": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": [
+              "anthropic",
+              "openai-chat",
+              "responses",
+              "transcriptions"
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Endpoints"
+    },
+    "key": {
+      "anyOf": [
+        {
+          "maxLength": 16384,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Key"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider"
+    }
+  },
+  "title": "ProviderTestRequest",
+  "type": "object"
+}

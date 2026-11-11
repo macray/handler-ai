@@ -1,6 +1,8 @@
 """D.14 through a real handlerd: secrets set, described and deleted through the API, never read
 back, and resolved from a `{ secret = … }` reference."""
 
+import pytest
+
 from ..support.daemon import Daemon
 from .test_model_access import PROVIDER
 
@@ -8,6 +10,12 @@ KEY = "providers/remote2/apiKey"
 VALUE = "sk-test-not-a-real-key"
 
 
+@pytest.mark.rule(
+    "access.its-status-says-what-is-missing",
+    "secrets.never-read-back",
+    "secrets.set-by-their-owner",
+    "secrets.kept-for-you-only",
+)
 def test_secrets(daemon: Daemon) -> None:
     provider = daemon.providers_dir / "remote2.toml"
     provider.write_text(f'apiKey = {{ secret = "{KEY}" }}\n' + PROVIDER)
@@ -41,6 +49,7 @@ def test_secrets(daemon: Daemon) -> None:
     assert (daemon.data_dir / "secrets.json").stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.rule("secrets.never-read-back", "secrets.every-one-is-listed")
 def test_every_secret_and_how_agents_get_it(daemon: Daemon) -> None:
     """D.14, E3: the store's secrets and those kept elsewhere, each with what it belongs to, the
     agents that get it, and how: handler adds it to their requests to its hosts, or they read it."""

@@ -24,8 +24,9 @@ ZENSICAL = "zensical==0.0.69"
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "docs-site" / "src"
 
-# a Markdown link's target: [text](target) or [text](target "title")
-LINK = re.compile(r"(\]\()([^)\s]+)")
+# a link's target: Markdown's [text](target) or [text](target "title"), or HTML's href="target"
+# and src="target" (README.md's header is HTML)
+LINK = re.compile(r"(\]\(|(?:href|src)=\")([^)\"\s]+)")
 
 
 def pages() -> dict[Path, Path]:

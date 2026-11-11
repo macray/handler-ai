@@ -1,0 +1,12 @@
+apiVersion = "handler.system-package/v1"
+name = "docker"
+version = 1
+description = "Docker, for agents that run containers in their sandbox"
+provides = ["docker", "dockerd-rootless.sh"]
+
+# The sandbox's own rootless Docker daemon, started before the agent in the sandboxes that can run
+# containers; its socket is given to the agent's programs (the docker command, Testcontainers…).
+[[daemons]]
+command = "handler-dockerd"
+abilities = ["nested", "privileged"]
+env = { DOCKER_HOST = "unix:///tmp/handler-docker/docker.sock" }

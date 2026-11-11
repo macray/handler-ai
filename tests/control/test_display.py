@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 import pytest
 
+from ..sandbox.conftest import requires_podman
 from ..support.daemon import Daemon, start_daemon
 
 SOCKET_DIR = Path(tempfile.mkdtemp(prefix="handler-display-"))
@@ -44,6 +45,13 @@ def seen_display(daemon: Daemon, ad_hoc: dict[str, Any], scope: Path) -> str | N
         client.close()
 
 
+@requires_podman  # the fake hands `check` to handler-sandbox-podman: whether a display is given
+@pytest.mark.rule(
+    "display.only-when-asked",
+    "display.found-where-handlerd-runs",
+    "runtime.declares-only-what-it-gives",
+    "runtime.an-agent-needing-more-is-refused-when-saved",
+)
 def test_display_only_for_agents_that_ask(daemon: Daemon, display: socket.socket) -> None:
     assert httpx.get(f"{daemon.base_url}/v1/health").json()["display"] is True
     scope = daemon.make_scope()
@@ -58,8 +66,11 @@ def test_display_only_for_agents_that_ask(daemon: Daemon, display: socket.socket
     SOCKET.unlink()  # the Wayland session ended
     assert httpx.get(f"{daemon.base_url}/v1/health").json()["display"] is False
     with daemon.http() as c:
+        found = c.get("/v1/runtime").json()  # checked again: the runtime finds none (A.8)
+        assert "display" not in found["supports"]["abilities"]
         r = c.post(
             "/v1/agents",
-            json={"model": {"account": "fake"}, "scope": str(scope), "display": True},
-        )
-    assert r.status_code == 409 and "no Wayland display" in r.json()["detail"]
+            json={"model": {"account": "fake"}, "scope": str(scope), "display": True,
+                  "name": "again"},
+        )  # fmt: skip
+    assert r.status_code == 409 and "windows on your screen" in r.json()["detail"]

@@ -5,6 +5,7 @@
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import BookOpen from "@lucide/svelte/icons/book-open";
   import Box from "@lucide/svelte/icons/box";
+  import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
   import Database from "@lucide/svelte/icons/database";
   import FileSearch from "@lucide/svelte/icons/file-search";
   import FolderSearch from "@lucide/svelte/icons/folder-search";
@@ -19,10 +20,13 @@
   import X from "@lucide/svelte/icons/x";
   import { untrack } from "svelte";
   import { Button } from "$lib/components/ui/button";
+  import ListChecks from "@lucide/svelte/icons/list-checks";
   import { api } from "../lib/api";
+  import { href } from "../lib/router.svelte";
   import type { SessionChanges, SessionFile, SessionFileChange, SessionFolder, SessionMount, SessionMounts } from "../lib/contracts.gen";
   import Diff from "@handler/acp-view/components/Diff.svelte";
   import When from "./When.svelte";
+  import { formatBytes } from "../lib/text";
 
   let {
     sessionId,
@@ -49,12 +53,13 @@
   const MOUNT: Record<SessionMount["kind"], { label: string; icon: typeof Folder }> = {
     scope: { label: "This session's folder", icon: Folder },
     subject: { label: "What this run works on", icon: FileSearch },
-    knowledge: { label: "Knowledge folder", icon: BookOpen },
+    knowledge: { label: "Notes folder", icon: BookOpen },
     config: { label: "Skill", icon: Sparkles },
     state: { label: "The agent's own settings and history", icon: Settings },
     cache: { label: "Cache kept between sessions", icon: Database },
-    tools: { label: "Addon tools", icon: Package },
+    tools: { label: "Tools", icon: Package },
     app: { label: "App", icon: Box },
+    paste: { label: "What you paste in its terminal", icon: ClipboardPaste },
   };
 
   let tab = $state<"changes" | "all" | "access">("changes");
@@ -80,6 +85,8 @@
   const changed = $derived(new Map(reading ? [] : files.map((c) => [c.path, c])));
   const crumbs = $derived(at ? at.split("/") : []);
   // the open file's last change: shown again when it changes
+  // the open file of its folder is a plan (D.27): reviewed, then approved, in Handler
+  const isPlan = $derived(!reading && open?.endsWith(".md") && /^\s*# Plan:/.test(file?.text ?? ""));
   const openVersion = $derived(open ? `${changed.get(open)?.change}:${changed.get(open)?.at}` : "");
 
   $effect(() => {
@@ -159,13 +166,6 @@
 
   function nameOf(path: string): string {
     return path.slice(path.lastIndexOf("/") + 1);
-  }
-
-  function size(bytes: number | null | undefined): string {
-    if (bytes == null) return "";
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   /** Shown in the computer's file manager (selected in its folder, not opened). */
@@ -263,6 +263,11 @@
           </Button>
         </div>
         {#if revealError}<p class="text-xs text-danger">{revealError}</p>{/if}
+        {#if isPlan && open}
+          <Button size="sm" variant="outline" href={href({ view: "review-plan", session: sessionId, path: open })} data-testid="review-plan"
+            ><ListChecks />Review this plan</Button
+          >
+        {/if}
         {#if fileError}
           <p class="text-danger">{fileError}</p>
         {:else if !file}
@@ -284,7 +289,7 @@
           {:else if file.image}
             <img src={file.image} alt={open} class="max-w-full rounded border" />
           {:else if file.change !== "deleted"}
-            <p class="text-muted-foreground">This file cannot be shown here: it is not text, or larger than 1 MB ({size(file.size)}).</p>
+            <p class="text-muted-foreground">This file cannot be shown here: it is not text, or larger than 1 MB{file.size == null ? "" : ` (${formatBytes(file.size)})`}.</p>
           {/if}
         {/if}
       </div>
@@ -363,7 +368,7 @@
                   <FileIcon class="size-4 shrink-0 text-muted-foreground" />
                   <span class="min-w-0 flex-1 truncate">{entry.name}</span>
                   {#if changed.get(path)}{@render chip(changed.get(path)!.change)}{/if}
-                  <span class="shrink-0 text-xs text-muted-foreground tabular-nums">{size(entry.size)}</span>
+                  <span class="shrink-0 text-xs text-muted-foreground tabular-nums">{entry.size == null ? "" : formatBytes(entry.size)}</span>
                 </button>
               {:else}
                 <div class="row cursor-default" title="A link: not opened here">
@@ -418,7 +423,7 @@
         </ul>
         {#if mounts.mounts.some((m) => !m.browsable)}
           <p class="border-t px-3 py-2 text-xs text-muted-foreground">
-            Not shown here: the agent's own settings and history (they hold your account's sign-in), caches and addon tools. Hover one to
+            Not shown here: the agent's own settings and history (they hold your account's sign-in), caches and tools. Hover one to
             see where it is.
           </p>
         {/if}

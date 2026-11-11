@@ -1,6 +1,6 @@
 """D.4 end to end: rebuild a real harness image through handlerd, check it, switch.
 
-Needs podman, the toolbox and vibe images (`handler image rebuild toolbox`) and the internet (the
+Needs the default runtime (Podman; Apple container on a Mac), the toolbox and vibe images (`handler image rebuild toolbox`) and the internet (the
 rebuild fetches Vibe's latest release). Vibe is used because its image is the quickest to rebuild.
 """
 
@@ -17,6 +17,7 @@ from handler_harness import images
 
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
+from ..support.runtimes import real_sandbox_env
 from .conftest import image_present
 
 REPO = "localhost/handler-ai-vibe"
@@ -39,7 +40,7 @@ def daemon() -> Iterator[Daemon]:
     # the image check's scope lives in the state dir: the sandbox uid must reach it (dev_env)
     state = dev_env.make_scope()
     try:
-        yield from start_daemon(extra_env={"HANDLER_STATE_DIR": str(state)})
+        yield from start_daemon(extra_env={"HANDLER_STATE_DIR": str(state)} | real_sandbox_env())
     finally:
         dev_env.remove_scope(state)
 
@@ -61,6 +62,7 @@ def wait_for_end(c: httpx.Client, build_id: str, timeout: float = 900) -> tuple[
     raise TimeoutError(f"build {build_id} still running:\n{log[-2000:]}")
 
 
+@pytest.mark.rule("image.latest-is-the-last-that-passed", "image.built-only-from-what-is-on-disk")
 def test_cancelled_rebuild_leaves_latest_alone(daemon: Daemon) -> None:
     before = image_id(LATEST)
     with daemon.http() as c:
@@ -73,6 +75,11 @@ def test_cancelled_rebuild_leaves_latest_alone(daemon: Daemon) -> None:
     assert image_id(LATEST) == before
 
 
+@pytest.mark.rule(
+    "image.latest-is-the-last-that-passed",
+    "image.checked-against-its-descriptor",
+    "image.records-what-it-installed",
+)
 def test_rebuild_checks_then_switches(daemon: Daemon) -> None:
     before = image_id(LATEST)
     with daemon.http() as c:
@@ -80,15 +87,18 @@ def test_rebuild_checks_then_switches(daemon: Daemon) -> None:
         assert r.status_code == 202, r.text
         build, log = wait_for_end(c, r.json()["id"])
         assert build["state"] == "succeeded", f"{build.get('error')}\n{log[-3000:]}"
-        assert build["versions"]["vibe"].startswith("Mistral Vibe ")
+        assert build["versions"].get("vibe", "").startswith("Mistral Vibe "), log[-3000:]
         assert "STEP 1/" in log and "check: session/new ok" in log
 
         assert image_id(LATEST) != before
-        assert before is None or image_id(before) is None  # the replaced image is removed
+        # the replaced image is removed, or kept and said why: in use (the parallel suite's other
+        # tests may run vibe containers on it)
+        assert before is None or image_id(before) is None or f"{before[:12]} kept: " in log
         info = next(h for h in c.get("/v1/harnesses").json() if h["name"] == "vibe")
         assert info["version"] == build["versions"]["vibe"]
 
 
+@pytest.mark.rule("image.built-only-from-what-is-on-disk")
 def test_unknown_target_and_build(daemon: Daemon) -> None:
     with daemon.http() as c:
         assert c.post("/v1/harnesses/nope/rebuild").status_code == 404

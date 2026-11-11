@@ -1,5 +1,5 @@
-"""The `image` verbs (contract A.7): build, inspect, read, tag, remove and pull images; the
-egress proxy's own image, whose recipe and name are this runtime's (`proxy`, `build-proxy`).
+"""The `image` verbs (contract A.7): build, inspect, read, extract, tag, remove and pull images;
+the egress proxy's own image, whose recipe and name are this runtime's (`proxy`, `build-proxy`).
 
 Exit 0 when done, 1 otherwise (no such image or file, an image still in use, a failed build or
 pull), with the reason on stderr. The builds and `pull` pass podman's output through.
@@ -11,24 +11,24 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from datetime import datetime
 from importlib import resources
 from pathlib import Path, PurePosixPath
 
 from handler_contracts import ImageInfo, ProxyImage
+from handler_sandbox_kit import egress
+from handler_sandbox_kit.launcher import LAUNCHER_LABEL, MANAGED_LABEL, launcher_label
 
 from .podman import (
-    IMAGE_MOUNT_LABEL_PREFIX,
-    LAUNCHER_LABEL,
-    MANAGED_LABEL,
     PROXY_IMAGE,
     PodmanError,
-    launcher_label,
     podman,
     quiet,
 )
 
 MAX_READ_BYTES = 1024 * 1024
+COPY_TRIES, COPY_WAIT = 4, 0.5  # `podman cp` (read, extract), when its mount is busy: _busy
 
 
 def _fail(message: str) -> int:
@@ -97,7 +97,7 @@ def build_proxy() -> int:
     """Build the egress proxy's image from the recipe shipped here (proxy/): its base pulled
     again and no cache, for their security updates; it must start before it is tagged. The image
     it replaces is removed unless a running proxy still uses it."""
-    context = resources.files("handler_sandbox_podman") / "proxy"
+    context = egress.proxy_dir()
     with tempfile.TemporaryDirectory() as tmp, resources.as_file(context) as path:
         iidfile = Path(tmp) / "iid"
         argv = ["podman", "build", f"--iidfile={iidfile}", "--pull=always", "--no-cache"]
@@ -146,26 +146,74 @@ def _copy_out(container: str, ref: str, path: str) -> int:
     """`podman cp` streams a tar archive: for a regular file, one member named as the file;
     anything else (a folder, possibly the whole image: its members, without an entry for `/`) is
     refused at its first member, not read."""
-    cp = subprocess.Popen(["podman", "cp", f"{container}:{path}", "-"], stdout=subprocess.PIPE)
-    assert cp.stdout is not None
+    for attempt in range(1, COPY_TRIES + 1):
+        cp = subprocess.Popen(
+            ["podman", "cp", f"{container}:{path}", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )  # fmt: skip
+        assert cp.stdout is not None and cp.stderr is not None
+        try:
+            with tarfile.open(fileobj=cp.stdout, mode="r|") as archive:
+                member = archive.next()
+                name = PurePosixPath(path).name
+                if member is None or member.name != name or not member.isfile():
+                    return _fail(f"{path} in {ref} is not a regular file")
+                if member.size > MAX_READ_BYTES:
+                    return _fail(f"{path} in {ref} is larger than {MAX_READ_BYTES} bytes")
+                content = archive.extractfile(member)
+                assert content is not None
+                data = content.read()
+        except tarfile.ReadError:  # no archive: podman says why
+            error = cp.stderr.read().decode().strip()
+            if "could not be found" in error:
+                return _fail(f"no file {path} in {ref}")
+            if _busy(error) and attempt < COPY_TRIES:
+                time.sleep(COPY_WAIT)
+                continue
+            return _fail(f"cannot read {path} in {ref}: {error}")
+        finally:
+            cp.kill()
+            cp.wait()
+        sys.stdout.buffer.write(data)
+        return 0
+    raise AssertionError("unreachable: the last try returns")
+
+
+def extract(ref: str, path: str, folder: Path) -> int:
+    """Copy the folder `path` of image `ref` to `folder` (made here: it must not exist), its
+    files the host user's, without running anything in the image (an addon image is FROM
+    scratch)."""
+    if folder.exists() or not folder.parent.is_dir():
+        return _fail(f"{folder} exists, or its parent folder does not")
     try:
-        with tarfile.open(fileobj=cp.stdout, mode="r|") as archive:
-            member = archive.next()
-            name = PurePosixPath(path).name
-            if member is None or member.name != name or not member.isfile():
-                return _fail(f"{path} in {ref} is not a regular file")
-            if member.size > MAX_READ_BYTES:
-                return _fail(f"{path} in {ref} is larger than {MAX_READ_BYTES} bytes")
-            content = archive.extractfile(member)
-            assert content is not None
-            data = content.read()
-    except tarfile.ReadError:  # no archive: podman found no such path
-        return _fail(f"no file {path} in {ref}")
+        container = podman(
+            "create", "--label", f"{MANAGED_LABEL}=1",
+            "--label", f"{LAUNCHER_LABEL}={launcher_label()}",  # sweep removes it if we die
+            "--entrypoint", "/none", ref,
+        )  # fmt: skip
+    except PodmanError:
+        return _fail(f"no image {ref}")
+    try:
+        for attempt in range(1, COPY_TRIES + 1):
+            try:
+                podman("cp", f"{container}:{path}", str(folder), timeout=1800)
+                break
+            except PodmanError as e:
+                if not (_busy(str(e)) and attempt < COPY_TRIES):
+                    return _fail(f"no folder {path} in {ref}: {e}")
+                time.sleep(COPY_WAIT)
     finally:
-        cp.kill()
-        cp.wait()
-    sys.stdout.buffer.write(data)
+        quiet("rm", "--force", container)
+    if not folder.is_dir():
+        return _fail(f"{path} in {ref} is not a folder")
     return 0
+
+
+def _busy(error: str) -> bool:
+    """podman could not mount the image's layers for `cp`: the kernel's overlay said busy, as
+    it does now and then while another build commits (rootless; 1 copy in ~200 with builds
+    running). It passes: the copy is tried again."""
+    return "device or resource busy" in error
 
 
 def tag(source: str, target: str) -> int:
@@ -177,16 +225,7 @@ def tag(source: str, target: str) -> int:
 
 
 def remove(image_id: str) -> int:
-    """Remove an image nothing uses. Podman refuses while a container runs from it, not while one
-    only mounts it (A6): that is told by the instance's label."""
-    try:
-        mounted = podman(
-            "ps", "-a", "-q", "--filter", f"label={IMAGE_MOUNT_LABEL_PREFIX}{image_id}"
-        )
-    except PodmanError as e:
-        return _fail(str(e))
-    if mounted:
-        return _fail(f"{image_id[:12]} is in use: a container mounts it")
+    """Remove an image nothing uses (podman refuses while a container runs from it)."""
     try:
         podman("image", "rm", image_id)
     except PodmanError as e:

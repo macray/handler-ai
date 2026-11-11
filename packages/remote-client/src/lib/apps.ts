@@ -1,10 +1,11 @@
-// Apps on the phone (handler's docs/dev/design/apps.md §5.2): the app's page comes from
+// Apps on the phone (handler's apps design §5.2): the app's page comes from
 // handler over the `app:<name>` channel (inlined, one HTML page), is kept for when the host is
 // offline, and runs in the sandboxed /appframe.html. Its backend calls reach this client by
 // postMessage and go to handler sealed, like everything else; only /api/… of that app is
 // reachable.
 import type { Mailbox } from "./mailbox.svelte";
 import type { AppHttpAnswer, AppHttpParams, AppUi, AppUiParams, SharedApp } from "./remote.gen";
+import { unb64 } from "./crypto"; // the standard alphabet too
 
 /** A call left at the gateway while the host was off; `done` once handler answered it. */
 export interface QueuedCall {
@@ -107,14 +108,10 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function fromBase64(text: string): Uint8Array {
-  return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-}
-
 /** One backend call from the frame, carried to handler; network-like failures become `error`. A call
  *  to a route the app declares queued, while the host is off, is left at the gateway instead and
  *  answered 202 `{queued: true, id}` at once: handler runs it when it is back
- *  (docs/dev/design/apps.md §5.3). */
+ *  (apps design §5.3). */
 export async function carry(mailbox: Mailbox, shared: SharedApp, m: FrameFetch): Promise<FrameAnswer> {
   const name = shared.name;
   const url = new URL(m.path, "http://app");
@@ -149,7 +146,7 @@ export async function carry(mailbox: Mailbox, shared: SharedApp, m: FrameFetch):
   }
   try {
     const r = await mailbox.request<AppHttpAnswer>("_handler/app/http", params, CALL_TIMEOUT, `app:${name}`);
-    return { type: "handler-app-response", id: m.id, status: r.status, headers: r.headers, body: fromBase64(r.body) };
+    return { type: "handler-app-response", id: m.id, status: r.status, headers: r.headers, body: unb64(r.body) };
   } catch (e) {
     return { type: "handler-app-response", id: m.id, error: (e as Error).message };
   }

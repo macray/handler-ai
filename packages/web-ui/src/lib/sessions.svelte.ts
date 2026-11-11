@@ -11,7 +11,6 @@ import { SvelteSet } from "svelte/reactivity";
 import { AcpConnection } from "@handler/acp-view/lib/connection.svelte";
 import type { Prompt, PromptImage } from "@handler/acp-view/lib/images";
 import { websocketTransport } from "./acp/transport";
-import { token } from "./auth";
 import { api, ApiError } from "./api";
 import type { Agent, ModelAccess, Session } from "./contracts.gen";
 
@@ -97,19 +96,15 @@ class SessionStore {
   /** The session on screen (set by its view): turns ending there are not "unread". */
   viewing = $state<string | null>(null);
 
-  get attention(): number {
-    return this.list.filter((s) => s.status === "needs-you" || s.status === "replied").length;
-  }
-
   get(key: string): LiveSession | undefined {
     return this.list.find((s) => s.key === key);
   }
 
-  /** A new chat session with an agent (or one resuming an ACP session).
+  /** A new chat session with an agent.
    *  `prompt`: the request, sent by the daemon once the agent runs; `model`: one of the agent's
    *  (default: its first, D.1). */
-  async start(agent: Agent, resume?: string, prompt?: string, model?: ModelAccess): Promise<LiveSession> {
-    return this.open(await api.createSession(agent.id, resume, prompt, model), agent);
+  async start(agent: Agent, prompt?: string, model?: ModelAccess): Promise<LiveSession> {
+    return this.open(await api.createSession(agent.id, prompt, model), agent);
   }
 
   /** Show a daemon session in the sidebar and attach to it (restarting it if stopped). */
@@ -193,7 +188,7 @@ class SessionStore {
     const conn = new AcpConnection();
     conn.onTurnEnded = () => this.turnEnded(session);
     try {
-      await conn.connect(websocketTransport(session.info.acpUrl, token() ?? "")); // answered once the agent runs
+      await conn.connect(websocketTransport(session.info.acpUrl)); // answered once the agent runs
       session.startup = { ...startup, step: "conversation" };
       session.info = await api.session(session.key);
       await conn.loadSession(session.info.acpSessionId ?? "", session.info.scope);

@@ -1,4 +1,4 @@
-// The phone's side of an app's backend calls (docs/dev/design/apps.md §5.2–5.3).
+// The phone's side of an app's backend calls (apps design §5.2–5.3).
 import { beforeEach, describe, expect, it } from "vitest";
 import { carry, queuedCalls, type FrameFetch } from "../src/lib/apps";
 import type { Mailbox } from "../src/lib/mailbox.svelte";
@@ -13,7 +13,6 @@ function mailbox(online: boolean) {
     hostOnline: online,
     async queue(frames: unknown[]) {
       sent.queued.push(...frames);
-      return "envelope-id";
     },
     async request(_method: string, params: unknown) {
       sent.requests.push(params);

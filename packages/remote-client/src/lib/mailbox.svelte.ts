@@ -1,4 +1,4 @@
-// The device's link to its host, through the gateway (docs/dev/design/remote.md §4–5): sealed
+// The device's link to its host, through the gateway (remote design §4–5): sealed
 // envelopes posted to /v1/device/down, and a long poll of /v1/device/poll for what the host sends
 // back.
 //
@@ -77,7 +77,6 @@ export class Mailbox {
   onControl: ((method: string, params: Message) => void) | null = null;
   /** The answer to a call queued while the host was off (its id is "q-…"), arriving later. */
   onQueuedAnswer: ((id: string, m: Message) => void) | null = null;
-  queued = $state<string[]>([]); // ids of this device's envelopes still waiting at the gateway
 
   private cursor = "";
   private channels = new Map<string, (m: AnyMessage) => void>();
@@ -153,12 +152,10 @@ export class Mailbox {
   }
 
   /** Leave frames at the gateway for when the host is back (only its "queued" routes). */
-  async queue(frames: Frame[]): Promise<string> {
+  async queue(frames: Frame[]): Promise<void> {
     const envelope = await seal(this.device.seal, this.device, "down", { expires: Date.now() + QUEUED, frames });
     const r = await fetch("/v1/device/queue", { method: "POST", headers: this.headers(), body: JSON.stringify(envelope) });
     if (!r.ok) throw new Error(`the gateway refused it (${r.status})`);
-    this.queued = [...this.queued, envelope.id];
-    return envelope.id;
   }
 
   async notify(method: string, params: object = {}): Promise<void> {
@@ -214,9 +211,7 @@ export class Mailbox {
           envelopes: Envelope[];
           fetched: string[];
           hostSeen: number | null;
-          queued?: string[];
         };
-        this.queued = data.queued ?? [];
         this.reachable = true;
         this.unauthorized = false;
         this.error = null;

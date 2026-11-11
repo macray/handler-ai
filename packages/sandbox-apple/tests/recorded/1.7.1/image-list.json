@@ -1,0 +1,536 @@
+[
+  {
+    "configuration": {
+      "creationDate": "2026-11-09T12:55:47Z",
+      "descriptor": {
+        "annotations": {
+          "com.apple.containerization.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "io.containerd.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "org.opencontainers.image.created": "2026-11-09T12:55:50Z",
+          "org.opencontainers.image.ref.name": "0d67d927f6cc"
+        },
+        "digest": "sha256:0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "size": 375
+      },
+      "name": "localhost/handler-ai-build:0d67d927f6cc"
+    },
+    "id": "0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+    "variants": [
+      {
+        "config": {
+          "architecture": "arm64",
+          "config": {
+            "Cmd": [
+              "/bin/bash"
+            ],
+            "Env": [
+              "PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "DISTTAG=f44container",
+              "FGC=f44",
+              "FBR=f44",
+              "LANG=C.UTF-8",
+              "HOME=/home/agent"
+            ],
+            "Labels": {
+              "maintainer": "Clement Verna <cverna@fedoraproject.org>",
+              "org.opencontainers.image.title": "handler-ai-pi"
+            },
+            "WorkingDir": "/"
+          },
+          "created": "2026-11-09T12:55:47.240735921Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "LABEL maintainer=Clement Verna <cverna@fedoraproject.org>",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ENV DISTTAG=f44container FGC=f44 FBR=f44",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ADD fedora-20260826.tar / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "CMD [\"/bin/bash\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:15.399986759Z",
+              "created_by": "RUN /bin/sh -c dnf -y upgrade     && dnf -y install --setopt=install_weak_deps=False         git openssh-clients ca-certificates curl wget unzip zip tar         ripgrep fd-find jq less which diffutils findutils procps-ng file patch         python3 python3-pip python-unversioned-command uv         nodejs npm     && dnf clean all # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "ENV LANG=C.UTF-8 HOME=/home/agent PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-toolbox",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "RUN /bin/sh -c npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp pi-mcp-adapter     && npm cache clean --force     && command -v pi     && command -v pi-acp     && modules=\"$(npm root -g)\"     && test -f \"$modules/pi-mcp-adapter/index.ts\"     && printf '#!/bin/sh\\nexec pi --extension %s \"$@\"\\n' \"$modules/pi-mcp-adapter\" > /usr/local/bin/handler-pi     && chmod 755 /usr/local/bin/handler-pi     && pi_version=\"$(jq -er .version \"$modules/@earendil-works/pi-coding-agent/package.json\")\"     && acp_version=\"$(jq -er .version \"$modules/pi-acp/package.json\")\"     && mcp_version=\"$(jq -er .version \"$modules/pi-mcp-adapter/package.json\")\"     && mkdir -p /usr/share/handler     && echo \"pi ${pi_version} (pi-acp ${acp_version}, pi-mcp-adapter ${mcp_version})\" > /usr/share/handler/version     && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent) # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-pi",
+              "empty_layer": true
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:121832a7edf8b8d6dcfd46c8c189a1a7491511e7f736d43c08024437542509c0",
+              "sha256:b7ed0841e28286b6b7f9b2f1109f80f95a932ba6a8e9f13eb8b8bfb7c4abeff3",
+              "sha256:c0b13bd82d8626bf6ba08b27ba9d97fa74c82ac4cf90fd3a3f0b4fb85bfab5a1",
+              "sha256:a8743119a54afc3cf6bfd073da815874d7e5badbb57ff60dc29a197183efe8f7",
+              "sha256:3bcf7cc9d10d5c92021908eaa27a0b8abe08b9430490ae8a4288b8e103176e43"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:3e4bfb70f67c658e85654e1d928b8a6dec41d1f6a7565b1ce1afc463956570b0",
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        },
+        "size": 292070320
+      }
+    ]
+  },
+  {
+    "configuration": {
+      "creationDate": "2026-11-09T12:55:47Z",
+      "descriptor": {
+        "annotations": {
+          "com.apple.containerization.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "io.containerd.image.name": "localhost/handler-ai-build:0d67d927f6cc",
+          "org.opencontainers.image.created": "2026-11-09T12:55:50Z",
+          "org.opencontainers.image.ref.name": "0d67d927f6cc"
+        },
+        "digest": "sha256:0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "size": 375
+      },
+      "name": "localhost/handler-ai-pi:latest"
+    },
+    "id": "0f78ff7803d2e63667ce85416cc480846aade0ba5bb5196893702e66a8bc4723",
+    "variants": [
+      {
+        "config": {
+          "architecture": "arm64",
+          "config": {
+            "Cmd": [
+              "/bin/bash"
+            ],
+            "Env": [
+              "PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "DISTTAG=f44container",
+              "FGC=f44",
+              "FBR=f44",
+              "LANG=C.UTF-8",
+              "HOME=/home/agent"
+            ],
+            "Labels": {
+              "maintainer": "Clement Verna <cverna@fedoraproject.org>",
+              "org.opencontainers.image.title": "handler-ai-pi"
+            },
+            "WorkingDir": "/"
+          },
+          "created": "2026-11-09T12:55:47.240735921Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "LABEL maintainer=Clement Verna <cverna@fedoraproject.org>",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ENV DISTTAG=f44container FGC=f44 FBR=f44",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "ADD fedora-20260826.tar / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-08-26T18:36:06.987752635Z",
+              "created_by": "CMD [\"/bin/bash\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:15.399986759Z",
+              "created_by": "RUN /bin/sh -c dnf -y upgrade     && dnf -y install --setopt=install_weak_deps=False         git openssh-clients ca-certificates curl wget unzip zip tar         ripgrep fd-find jq less which diffutils findutils procps-ng file patch         python3 python3-pip python-unversioned-command uv         nodejs npm     && dnf clean all # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "ENV LANG=C.UTF-8 HOME=/home/agent PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:23.283177846Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "RUN /bin/sh -c . /etc/os-release && test \"$ID\" = fedora     && cd /run/handler-package && sh -eu install-fedora.sh # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-01T18:20:29.242007001Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-toolbox",
+              "empty_layer": true
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "RUN /bin/sh -c npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp pi-mcp-adapter     && npm cache clean --force     && command -v pi     && command -v pi-acp     && modules=\"$(npm root -g)\"     && test -f \"$modules/pi-mcp-adapter/index.ts\"     && printf '#!/bin/sh\\nexec pi --extension %s \"$@\"\\n' \"$modules/pi-mcp-adapter\" > /usr/local/bin/handler-pi     && chmod 755 /usr/local/bin/handler-pi     && pi_version=\"$(jq -er .version \"$modules/@earendil-works/pi-coding-agent/package.json\")\"     && acp_version=\"$(jq -er .version \"$modules/pi-acp/package.json\")\"     && mcp_version=\"$(jq -er .version \"$modules/pi-mcp-adapter/package.json\")\"     && mkdir -p /usr/share/handler     && echo \"pi ${pi_version} (pi-acp ${acp_version}, pi-mcp-adapter ${mcp_version})\" > /usr/share/handler/version     && rm -rf /home/agent  # build-time npm logs (npm runs as root with HOME=/home/agent) # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2026-11-09T12:55:47.240735921Z",
+              "created_by": "LABEL org.opencontainers.image.title=handler-ai-pi",
+              "empty_layer": true
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:121832a7edf8b8d6dcfd46c8c189a1a7491511e7f736d43c08024437542509c0",
+              "sha256:b7ed0841e28286b6b7f9b2f1109f80f95a932ba6a8e9f13eb8b8bfb7c4abeff3",
+              "sha256:c0b13bd82d8626bf6ba08b27ba9d97fa74c82ac4cf90fd3a3f0b4fb85bfab5a1",
+              "sha256:a8743119a54afc3cf6bfd073da815874d7e5badbb57ff60dc29a197183efe8f7",
+              "sha256:3bcf7cc9d10d5c92021908eaa27a0b8abe08b9430490ae8a4288b8e103176e43"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:3e4bfb70f67c658e85654e1d928b8a6dec41d1f6a7565b1ce1afc463956570b0",
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        },
+        "size": 292070320
+      }
+    ]
+  },
+  {
+    "configuration": {
+      "creationDate": "2024-12-11T08:31:20Z",
+      "descriptor": {
+        "digest": "sha256:2db4e6a8fd6a0e4d0db5828b2722cf6db15c3005178a4c65588b903e4784ba11",
+        "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+        "size": 953
+      },
+      "name": "quay.io/curl/curl:8.11.1"
+    },
+    "id": "2db4e6a8fd6a0e4d0db5828b2722cf6db15c3005178a4c65588b903e4784ba11",
+    "variants": [
+      {
+        "config": {
+          "architecture": "386",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-386:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T08:31:20.882080519Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-x86.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T08:31:20.439747897Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-386:8.11.1",
+              "created": "2024-12-11T08:31:20.882616188Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:c6a070ed96419f6c9d1fb77cb468e6ed2f956e7b363c66a20d9ab03a26ea2a29",
+              "sha256:85910ef3e48ee266b07a76d3b32bb78fabea44d861c6a3d282be248c715943f2",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:4ba0ab590a4a67c21355f27c1ee8edf0f669233eaa21bcd8f299e516561fe470",
+        "platform": {
+          "architecture": "386",
+          "os": "linux"
+        },
+        "size": 9783210
+      },
+      {
+        "config": {
+          "architecture": "amd64",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-amd64:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T08:46:58.23132687Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-x86_64.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T08:46:57.652382891Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-amd64:8.11.1",
+              "created": "2024-12-11T08:46:58.231941011Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:3e01818d79cd3467f1d60e54224f3f6ce5170eceb54e265d96bb82344b8c24e7",
+              "sha256:47f700d46e8a78ec5278107460349b8392e454014ed0bb48a1cd04fe1781f69d",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:d3080967fe7b6292998cb7adcc66b0b5c30724ee56cc8645d497f2dc814ecdb9",
+        "platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "size": 9684142
+      },
+      {
+        "config": {
+          "architecture": "arm64",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-arm64:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T09:02:00.343897135Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-aarch64.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T09:01:59.880989323Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-arm64:8.11.1",
+              "created": "2024-12-11T09:02:00.344415155Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:977340364f395522c48194db0cf2a81b7643d1bd1378a4c16dc848095a39de7d",
+              "sha256:61b0f675ffd666bf7020ca0529727631decac429228607ab9663c78f589d2dbd",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:47a920a1f2730a71a70e21477df52c7d4063ed36be90a09363c641f829562228",
+        "platform": {
+          "architecture": "arm64",
+          "os": "linux"
+        },
+        "size": 9934060
+      },
+      {
+        "config": {
+          "architecture": "ppc64le",
+          "config": {
+            "Cmd": [
+              "curl"
+            ],
+            "Entrypoint": [
+              "/entrypoint.sh"
+            ],
+            "Env": [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "CURL_CA_BUNDLE=/cacert.pem"
+            ],
+            "Labels": {
+              "docker.cmd": "podman run -it quay.io/curl/:8.11.1",
+              "io.buildah.version": "1.23.1",
+              "maintainer": "James Fuller <jim.fuller@webcomposite.com>",
+              "name": "curl-linux-ppc64le:8.11.1",
+              "org.opencontainers.image.description": "minimal image for curl",
+              "org.opencontainers.image.licenses": "MIT",
+              "org.opencontainers.image.source": "https://github.com/curl/curl-container",
+              "version": "8.11.1"
+            },
+            "User": "curl_user",
+            "WorkingDir": "/home/curl_user"
+          },
+          "created": "2024-12-11T09:16:53.686284749Z",
+          "history": [
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "ADD alpine-minirootfs-3.21.0-ppc64le.tar.gz / # buildkit"
+            },
+            {
+              "comment": "buildkit.dockerfile.v0",
+              "created": "2024-12-05T12:49:04Z",
+              "created_by": "CMD [\"/bin/sh\"]",
+              "empty_layer": true
+            },
+            {
+              "comment": "FROM docker.io/library/alpine:3.21.0",
+              "created": "2024-12-11T09:16:53.215767337Z",
+              "created_by": "/bin/sh"
+            },
+            {
+              "comment": "FROM localhost/curl-base-linux-ppc64le:8.11.1",
+              "created": "2024-12-11T09:16:53.686830846Z",
+              "created_by": "/bin/sh"
+            }
+          ],
+          "os": "linux",
+          "rootfs": {
+            "diff_ids": [
+              "sha256:2e5e498a11b35313940e50e6e3de47f98cb5541106005921937affb2f43ec3ab",
+              "sha256:ce54960548c14f8bc34b36ccdf957c275486f960479ecbd656f10f6599d88414",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ],
+            "type": "layers"
+          }
+        },
+        "digest": "sha256:8573dc4114b95b0f7dedc51b8572352f54b31e8c08d5977020abd392b1b4054d",
+        "platform": {
+          "architecture": "ppc64le",
+          "os": "linux"
+        },
+        "size": 9921598
+      }
+    ]
+  }
+]

@@ -1,6 +1,6 @@
 # remote-client — drive shared sessions from a phone
 
-**Implements:** the device side of remote control ([`docs/dev/design/remote.md`](../../docs/dev/design/remote.md)):
+**Implements:** the device side of remote control:
 pairing from Handler's QR code, envelopes sealed with WebCrypto, and a plain ACP client over them.
 Served by the gateway (`remote-gateway/`, v1); talks only to the gateway it is served from, and
 through it only to Handler — end to end encrypted.
@@ -24,4 +24,4 @@ bun run dev     # hot reload, proxies /v1 to a gateway (HANDLER_GATEWAY_URL, def
 
 Security: agent output is rendered by acp-view's sanitizer; the gateway serves the page with a
 strict Content-Security-Policy. Whoever serves this JavaScript could misuse the device key: see
-`docs/dev/design/remote.md` §2 and §8 (v3: another trust domain).
+[your phone, security](../../docs/phone.md#security) (serving it from elsewhere is planned).

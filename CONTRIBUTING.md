@@ -25,7 +25,6 @@ notes say whose idea it was.
 ## How the repository works
 
 Each commit here is one release; what changed is in [`CHANGELOG.md`](CHANGELOG.md), with the issues each release fixes.
-The design is meant to be
-read: [`docs/dev/architecture.md`](docs/dev/architecture.md), [`docs/dev/contracts.md`](docs/dev/contracts.md)
-(the normative specs), [`docs/dev/code-map.md`](docs/dev/code-map.md), and [`CLAUDE.md`](CLAUDE.md) (also
-`AGENTS.md`), the instructions the coding agents work with: point yours at it to explore the code.
+To explore the code: [`CLAUDE.md`](CLAUDE.md) (also `AGENTS.md`), the instructions the coding
+agents work with (point yours at it), then each package's README (what it implements, what it may
+depend on) and its tests (what it promises).

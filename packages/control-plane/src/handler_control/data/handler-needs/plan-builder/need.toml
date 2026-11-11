@@ -1,0 +1,4 @@
+# One of Handler's needs (D.18): what the agent given for it does for Handler, and the
+# version of the definition beside this file (one more on each change of it).
+description = "Writes a plan with you for a project it sees read-only: each session works on a draft kept by Handler, which you review and approve."
+version = 1

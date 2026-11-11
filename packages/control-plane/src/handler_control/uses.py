@@ -1,9 +1,9 @@
 """What uses what (D.22): every link between the things Handler keeps, in one place, computed
 from them each time (nothing stored). A link is (user, used, how):
 
-    an agent      picks a skill, reads a knowledge folder, uses an addon configuration, runs on
-                  an account or a provider
-    a project     gives a skill to all its agents (each of them then uses it too)
+    an agent      picks a skill, reads a knowledge folder, uses an addon, runs on an account or
+                  a provider
+    a project     gives a skill or an addon to all its agents (each of them then uses it too)
     an automation runs an agent, runs when an agent's sessions stop, appends to notes of a
                   knowledge folder
     an app        is given an agent for one of its needs
@@ -64,6 +64,8 @@ class UseGraph:
             ref = UseRef(kind="project", id=project.id, label=project.name, how="")
             for skill in project.skills:
                 found.append(Link(ref, thing("skill", skill), "gives it to all its agents"))
+            for use in project.addons:
+                found.append(Link(ref, thing("addon", use.addon), "gives it to all its agents"))
         found += self.automation_links()
         for app in self.apps.views():
             ref = UseRef(kind="app", id=app.name, label=app.name, how="")
@@ -100,7 +102,9 @@ class UseGraph:
         found += [Link(me, thing("skill", s), "given by its project") for s in agent.project_skills]
         reads = "puts it into each call" if agent.model_alone else "reads it"
         found += [Link(me, thing("knowledge", k), reads) for k in agent.knowledge]
-        found += [Link(me, thing("addon", b), "uses it") for b in agent.bindings]
+        found += [Link(me, thing("addon", u.addon), "uses it") for u in agent.addons]
+        given = "given by its project"
+        found += [Link(me, thing("addon", u.addon), given) for u in agent.project_addons]
         if (m := agent.model).account:
             found.append(Link(me, thing("account", m.account), "runs on it"))
         elif m.provider:

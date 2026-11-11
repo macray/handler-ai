@@ -5,10 +5,11 @@
 ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
 FROM ${TOOLBOX_IMAGE}
 
+# Fedora's uv downloads no Python by itself (python-downloads = manual): this build fetches 3.12
 ENV UV_TOOL_DIR=/opt/uv-tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python
-RUN uv tool install --python 3.12 mistral-vibe \
+RUN UV_PYTHON_DOWNLOADS=automatic uv tool install --python 3.12 mistral-vibe \
     && command -v vibe-acp \
     && version="$(uv tool list | sed -n 's/^mistral-vibe v//p')" \
     && test -n "$version" \

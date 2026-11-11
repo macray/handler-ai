@@ -6,7 +6,7 @@
   import * as Card from "$lib/components/ui/card";
   import * as NativeSelect from "$lib/components/ui/native-select";
   import PageHeader from "../components/PageHeader.svelte";
-  import PageTitle from "../components/PageTitle.svelte";
+  import RefusedHosts from "../components/RefusedHosts.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import When from "../components/When.svelte";
   import { api } from "../lib/api";
@@ -14,7 +14,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
   import Trash from "@lucide/svelte/icons/trash-2";
   import type { AutomationRun, AutomationView, Session } from "../lib/contracts.gen";
-  import { projects } from "../lib/projects.svelte";
+  import { decideHosts, projects } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
 
   let { name }: { name: string } = $props();
@@ -123,7 +123,7 @@
   }
 </script>
 
-<PageHeader titled title={name} parent={{ label: "Automations", href: href({ view: "automations" }) }}>
+<PageHeader width="max-w-4xl" title={name} parent={{ label: "Library › Automations", href: href({ view: "automations" }) }}>
   {#snippet meta()}
     {#if view}<StatusBadge status={view.enabled ? "on" : "off"} />{/if}
   {/snippet}
@@ -145,8 +145,7 @@
 </PageHeader>
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-4xl space-y-6 px-8 py-10">
-    <PageTitle title={name} description={view?.description ?? undefined} />
-    {#if error}<p class="text-sm text-danger" data-testid="automation-error">{error}</p>{/if}
+        {#if error}<p class="text-sm text-danger" data-testid="automation-error">{error}</p>{/if}
 
     {#if view && deleting}
       <div class="space-y-2 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm" role="alertdialog" aria-labelledby="delete-title" data-testid="automation-confirm-delete">
@@ -314,6 +313,18 @@
               </div>
               {#if missedSentence(run)}<p class="text-xs text-warn" data-testid="automation-run-missed">{missedSentence(run)}.</p>{/if}
               {#if run.error}<p class="text-xs text-danger">{run.error}</p>{/if}
+              {#if run.refused?.length && view.agentId}
+                {@const agentId = view.agentId}
+                <RefusedHosts
+                  hosts={run.refused}
+                  said={run.said}
+                  completed={run.state === "succeeded"}
+                  {busy}
+                  again="Allow and run again"
+                  onallow={(hosts) => act(async () => (trial = await api.tryAutomation(name, run.sessionId ?? undefined, hosts)))}
+                  onkeep={(hosts) => act(() => decideHosts(agentId, hosts, "blocked"))}
+                />
+              {/if}
               {#if logs[run.id] !== undefined}
                 <pre class="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap">{logs[run.id] || "(no output)"}</pre>
               {/if}

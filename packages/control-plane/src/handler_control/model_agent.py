@@ -52,7 +52,7 @@ def knowledge_prompt(notes: list[knowledge.Note]) -> str:
     size = sum(len(n.text.encode()) for n in notes)
     if size > KNOWLEDGE_MAX:
         raise KnowledgeTooLargeError(
-            f"its knowledge is {size // 1024} KiB: the model alone takes {KNOWLEDGE_MAX // 1024} "
+            f"its notes are {size // 1024} KiB: the model alone takes {KNOWLEDGE_MAX // 1024} "
             "KiB at most in a call"
         )
     given = "".join(f'\n\n<note path="{n.path}">\n{n.text}\n</note>' for n in notes)
@@ -175,7 +175,7 @@ class ModelAgent:
             self.answer(rid, {"stopReason": "cancelled"})
             return
         except ServiceError as e:
-            self.fail(rid, INTERNAL_ERROR, f"{e.code}: {e.message}")
+            self.fail(rid, INTERNAL_ERROR, e.message)  # the person's words, not the code
             return
         except (knowledge.KnowledgeError, KnowledgeTooLargeError) as e:
             self.fail(rid, INTERNAL_ERROR, str(e))

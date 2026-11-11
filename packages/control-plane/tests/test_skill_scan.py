@@ -4,6 +4,8 @@ skills (D.18)."""
 import os
 from pathlib import Path
 
+import pytest
+
 from handler_control import definitions, handler_needs, interfaces, skill_scan, skills
 
 
@@ -15,6 +17,7 @@ def make_skill(folder: Path, body: str = "Do it.\n") -> Path:
     return folder
 
 
+@pytest.mark.rule("skill.the-scan-advises")
 def test_the_scan_finds_what_a_reader_could_miss(tmp_path: Path) -> None:
     folder = make_skill(
         tmp_path / "tidy",
@@ -41,6 +44,7 @@ def test_the_scan_finds_what_a_reader_could_miss(tmp_path: Path) -> None:
     assert "nothing" in skill_scan.notes(skill_scan.scan(make_skill(tmp_path / "plain")))
 
 
+@pytest.mark.rule("skill.its-files-stay-in-its-folder")
 def test_a_skill_out_of_a_folder(tmp_path: Path) -> None:
     work = tmp_path / "work"
     make_skill(work / "tidy")

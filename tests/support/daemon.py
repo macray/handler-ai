@@ -4,21 +4,25 @@ harnesses/fake        the fake ACP agent (tests/support/fake_agent.py) — run o
                       fake sandbox (HANDLER_TEST_SANDBOX: tests/support/fake_sandbox.py), so
                       ACP-endpoint tests need no container; its terminal program (D.16) is
                       FAKE_TERMINAL_SCRIPT
-harnesses/<real>      symlinks to the repository's harnesses (for listing)
+harnesses/<real>      symlinks to the repository's harnesses (for listing); with fake_pi, pi
+                      is the fake agent on pi's provider adapter (a session on a provider)
 accounts/<harness>    one account per harness, named after it; fake and echo-box logged in
                       (their token in the daemon's secret store; fake's is FAKE_SECRET): a
                       agent names one (`create_ad_hoc("fake", …)`)
 providers/            the extra ones only (a test's own); HANDLER_DATA_DIR is the daemon's own, too
 config/folders.toml   the work folders: the scope root (Daemon.scope_root)
-bindings/browser      the fake-browser addon: its MCP server, for P8 tests (the fake sandbox
-                      ignores the addon's image)
-config/addons/        fake-browser and fake-shop, installed from the official source
+connections/browser   a connection of the fake-browser tool: its MCP server, for P8 tests
+                      (the fake sandbox ignores the addon's folder)
+config/tools/         fake-browser and fake-shop, installed from the official source
+data/addons/<name>/   their folders, empty, as if built (G.4): the fake sandbox ignores them
 official-source/      the official source (HANDLER_OFFICIAL_SOURCE): tests/fixtures/source/
                       (made up; `source=` another, e.g. the registry), committed in a git
                       repository of its own
 harnesses/echo-box    curl image, tagged as ECHO_IMAGE:latest because
-                      descriptors name untagged images, B.6; tries example.com, then `cat` as
-                      "agent": live container connection for egress tests
+                      descriptors name untagged images, B.6; tries example.com, then waits as
+                      "agent", answering nothing (an echo's requests would be refused by the
+                      policy): a live container for egress tests. It ends with its input, as
+                      an agent does: when handlerd stops, its sandbox stops too
 """
 
 import contextlib
@@ -60,7 +64,7 @@ FAKE_SECRET = "s3cr3t-value-for-redaction"
 # typed, echoed; exits 3. `stty size` follows a resize when sent `resize`.
 FAKE_TERMINAL_SCRIPT = (
     '[ -t 0 ] && echo on-a-tty; echo "size:$(stty size)"; echo "TERM=$TERM"; echo "pwd:$PWD"; '
-    'echo "args:$*"; '
+    'echo "args:$*"; echo "token:$FAKE_TOKEN."; '
     'while read -r line; do [ "$line" = resize ] && echo "size:$(stty size)"; '
     '[ "$line" = quit ] && exit 3; echo "got:$line"; done; exit 4'
 )
@@ -95,7 +99,30 @@ accept-edits = ["--edits"]
 bypass = ["--yolo"]
 """
 
-CURL_IMAGE = "docker.io/curlimages/curl:8.11.1"
+# the fake agent as pi (`start_daemon(fake_pi=True)`): a harness that runs on a provider (pi's
+# adapter writes its models.json), in the fake sandbox, for tests of a session on a provider
+FAKE_PI_HARNESS = f"""
+apiVersion = "handler.harness/v1"
+name = "pi"
+product = "pi"
+image = "{FAKE_IMAGE}"
+acpCommand = ["{sys.executable}", "{FAKE_AGENT}"]
+home = "/home/agent"
+providerProtocols = ["openai-chat"]
+modelOption = "model"
+mcpTransports = ["stdio"]
+[configFiles.settings_json]
+target = "~/.pi/agent/settings.json"
+description = "pi settings.json"
+seed = true
+[configFiles.models_json]
+target = "~/.pi/agent/models.json"
+description = "pi models.json"
+[permissions]
+bypass = {{}}
+"""
+
+CURL_IMAGE = dev_env.CURL_IMAGE
 ECHO_IMAGE = "localhost/handler-ai-test-echo-box"
 
 ECHO_HARNESS = f"""
@@ -103,7 +130,7 @@ apiVersion = "handler.harness/v1"
 name = "echo-box"
 product = "Echo box"
 image = "{ECHO_IMAGE}"
-acpCommand = ["sh", "-c", "curl -s -m 5 -o /dev/null https://example.com; exec cat"]
+acpCommand = ["sh", "-c", "curl -s -m 5 -o /dev/null https://example.com; exec cat >/dev/null"]
 home = "/home/agent"
 [login]
 subscription = "Echo"
@@ -131,7 +158,6 @@ product = "Login box"
 image = "{ECHO_IMAGE}"
 acpCommand = ["cat"]
 home = "/home/agent"
-writablePaths = ["~/.box"]
 [stateSlots.cred]
 target = "~/.box/credential"
 kind = "file"
@@ -153,7 +179,7 @@ def _tag_echo_image() -> None:
     """Best effort: the echo-box tests need podman and the curl image anyway."""
     exists = ["podman", "image", "exists", f"{ECHO_IMAGE}:latest"]
     if subprocess.run(exists, check=False).returncode:
-        subprocess.run(["podman", "pull", "-q", CURL_IMAGE], capture_output=True, check=False)
+        dev_env.ensure_image(CURL_IMAGE)
         subprocess.run(
             ["podman", "tag", CURL_IMAGE, f"{ECHO_IMAGE}:latest"], capture_output=True, check=False
         )
@@ -192,7 +218,10 @@ class Daemon:
         else:
             self.process.terminate()
         self.process.wait(timeout=30)
-        self.process = _launch(self.env, self.log, self.base_url)
+        process = _launch(self.env, self.log, self.base_url)  # on its port: the tests keep its URLs
+        if process is None:
+            raise RuntimeError(f"handlerd exited at its restart (its log: {self.log.name})")
+        self.process = process
 
     @property
     def accounts_dir(self) -> Path:
@@ -221,6 +250,11 @@ class Daemon:
             else {}
         )
         return httpx.Client(base_url=self.base_url, headers=auth | headers, timeout=30)
+
+    def ui_url(self) -> str:
+        """A one-time link opening the web UI signed in, as `handler ui` opens it."""
+        with self.http() as c:
+            return c.post("/v1/ui/open", json={}).json()["url"]
 
     def create_ad_hoc(self, account: str | None, scope: Path, **body: Any) -> dict[str, Any]:
         """An ad-hoc agent of the harness of `account`; None: `body` names a provider and its
@@ -257,18 +291,23 @@ class Daemon:
         return AcpClient.over_websocket(ws, close=stack.close)
 
 
-def _launch(env: dict[str, str], log: IO[bytes], base: str) -> subprocess.Popen[bytes]:
-    """handlerd, once it answers."""
+def _launch(env: dict[str, str], log: IO[bytes], base: str) -> subprocess.Popen[bytes] | None:
+    """handlerd, once it answers with its own token: not another test's daemon on the same port
+    (a port picked free can be taken before handlerd binds it). None when it exited first (its
+    port taken, or it failed: its log says)."""
+    token_file = Path(env["HANDLER_CONFIG_DIR"]) / "token"  # written at its start
     proc = subprocess.Popen(
         [str(Path(sys.executable).parent / "handlerd")], env=env, stdout=log, stderr=log
     )
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        try:
-            if httpx.get(f"{base}/v1/health", timeout=1).status_code == 200:
+        if proc.poll() is not None:
+            return None
+        with contextlib.suppress(httpx.HTTPError, OSError):
+            auth = {"Authorization": f"Bearer {token_file.read_text().strip()}"}
+            if httpx.get(f"{base}/v1/agents", headers=auth, timeout=1).status_code == 200:
                 return proc
-        except httpx.HTTPError:
-            time.sleep(0.1)
+        time.sleep(0.1)
     proc.kill()
     raise RuntimeError(f"handlerd did not start (its log: {log.name})")
 
@@ -309,11 +348,18 @@ def _install_official_addons(config: Path, source: Path, names: tuple[str, ...])
     and their lock."""
     lock = ""
     for name in names:
-        shutil.copytree(source / "addons" / name, config / "addons" / name)
-        digest = addon_install.digest(source / "addons" / name)
-        lock += f'[addons.{name}]\nsource = "source:official/{name}"\ndigest = "{digest}"\n'
+        shutil.copytree(source / "tools" / name, config / "tools" / name)
+        digest = addon_install.digest(source / "tools" / name)
+        lock += f'[tools.{name}]\nsource = "source:official/{name}"\ndigest = "{digest}"\n'
         lock += 'installedAt = "2026-10-03T00:00:00+00:00"\n'
-    (config / "addons.lock.toml").write_text(lock)
+    (config / "tools.lock.toml").write_text(lock)
+
+
+def _as_if_built(data: Path, addons: tuple[str, ...]) -> None:
+    """Each addon's folder, empty, current (handler_control.addon_folders): its tools are built."""
+    for name in addons:
+        (data / "addons" / name / "test").mkdir(parents=True)
+        (data / "addons" / name / "current").write_text("test\n")
 
 
 def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
@@ -322,9 +368,11 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
     extra_providers: dict[str, str] | None = None,
     source: Path = TEST_SOURCE,
     addons: tuple[str, ...] = ("fake-browser", "fake-shop"),
+    *,
+    fake_pi: bool = False,
 ) -> Iterator[Daemon]:
     """`extra_accounts`, `extra_providers`: name → TOML; `source`: the official source's folder,
-    `addons`: those of it installed."""
+    `addons`: those of it installed; `fake_pi`: pi is the fake agent (FAKE_PI_HARNESS)."""
     tmp = Path(tempfile.mkdtemp(prefix="handlerd-"))
     scope_root = dev_env.scope_root() / f"daemon-{uuid.uuid4().hex[:8]}"
     scope_root.mkdir(parents=True)
@@ -341,8 +389,11 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
         _tag_echo_image()
     dev_env.ensure_network_filter()  # echo-box sandboxes are real (the fake answers it is built)
     for real in (catalog.DATA / "harnesses").iterdir():
-        if (real / "harness.toml").exists():
+        if (real / "harness.toml").exists() and not (fake_pi and real.name == "pi"):
             (harnesses / real.name).symlink_to(real)
+    if fake_pi:
+        (harnesses / "pi").mkdir()
+        (harnesses / "pi" / "harness.toml").write_text(FAKE_PI_HARNESS)
     accounts = _accounts(tmp / "accounts", harnesses, extra_accounts or {})
     store = SecretStore(tmp / "data")
     for name, token in (("fake", FAKE_SECRET), ("echo-box", "echo-token")):  # logged in
@@ -361,19 +412,18 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
         f'"{FAKE_SANDBOX}" "$@"\n'
     )
     fake_sandbox.chmod(0o755)
-    bindings = tmp / "config" / "bindings"
+    bindings = tmp / "config" / "connections"
     bindings.mkdir(parents=True)
     (tmp / "config" / "folders.toml").write_text(f"roots = {json.dumps([str(scope_root)])}\n")
     (bindings / "browser.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "fake-browser"\n'
+        'apiVersion = "handler.connection/v1"\ntool = "fake-browser"\n'
     )
-    if "HANDLER_ADDONS_DIR" not in (extra_env or {}):  # else the test brings its own addons
+    if "HANDLER_TOOLS_DIR" not in (extra_env or {}):  # else the test brings its own addons
         _install_official_addons(tmp / "config", source, addons)
-    port = _free_port()
+        _as_if_built(tmp / "data", addons)
     env = (
         os.environ
         | {
-            "HANDLER_PORT": str(port),
             "HANDLER_CONFIG_DIR": str(tmp / "config"),
             "HANDLER_STATE_DIR": str(tmp / "state"),
             "HANDLER_ACCOUNTS_DIR": str(accounts),
@@ -386,11 +436,18 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
             "HANDLER_TEST_SANDBOX": str(fake_sandbox),
             "HANDLER_OFFICIAL_SOURCE": str(git_repo(source, tmp / "official-source")),
         }
+        | dev_env.home_env()
         | (extra_env or {})
     )
     log = open(tmp / "handlerd.log", "wb")  # noqa: SIM115 — kept open for the daemon's lifetime
-    base = f"http://127.0.0.1:{port}"
-    proc = _launch(env, log, base)
+    for _ in range(3):  # its port taken before it bound it: another one
+        port = _free_port()
+        env |= {"HANDLER_PORT": str(port)}
+        base = f"http://127.0.0.1:{port}"
+        if (proc := _launch(env, log, base)) is not None:
+            break
+    else:
+        raise RuntimeError(f"handlerd exited at its start (its log: {log.name})")
     token = (tmp / "config" / "token").read_text().strip()
     daemon = Daemon(
         base_url=base,

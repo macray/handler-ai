@@ -78,7 +78,7 @@ def test_the_sandbox_holds_a_phantom_of_its_provider_key(
 ) -> None:
     s, runs = _keyed(tmp_path)
     agent = AgentRecord(id="a1", model=runs, scope=str(tmp_path / "code" / "shop"), network=network)
-    spec, launch, _ = launcher.prepare(s, agent, runs, "c1")
+    spec, launch, _, _ = launcher.prepare(s, agent, runs, "c1")
     [i] = spec.injections
     assert (i.name, i.value, i.hosts) == (
         "providers/keyed/apiKey",
@@ -86,20 +86,20 @@ def test_the_sandbox_holds_a_phantom_of_its_provider_key(
         ["llm.test:443"],
     )
     assert spec.env["OPENAI_API_KEY"] == i.phantom
-    assert i.value not in spec.model_dump_json(exclude={"injections"})
+    assert i.value not in spec.model_dump_json(exclude={"network": {"injections"}})
     assert i.value not in launch.model_dump_json()
 
 
 def test_without_network_a_phantom_and_no_injection(tmp_path: Path) -> None:
     s, runs = _keyed(tmp_path)
     agent = AgentRecord(id="a1", model=runs, scope=str(tmp_path / "code" / "shop"), network="none")
-    spec, _, _ = launcher.prepare(s, agent, runs, "c1")
+    spec, _, _, _ = launcher.prepare(s, agent, runs, "c1")
     assert spec.injections == []
     assert spec.env["OPENAI_API_KEY"] not in ("sk-" + "k" * 40, "")
 
 
 SLOTS = """
-apiVersion = "handler.addon/v1"
+apiVersion = "handler.tool/v1"
 name = "x"
 egress = ["api.x.test:443", "cdn.x.test:443"]
 [secretSlots.token]
@@ -113,6 +113,7 @@ env = "X_OTHER"
 """
 
 
+@pytest.mark.rule("tool.never-sets-what-handler-owns")
 def test_addon_secret_slots_say_where_their_value_goes() -> None:
     manifest = AddonManifest.model_validate(tomllib.loads(SLOTS))
     assert manifest.secret_hosts("token") == ["api.x.test:443"]
@@ -120,6 +121,7 @@ def test_addon_secret_slots_say_where_their_value_goes() -> None:
     assert manifest.secret_hosts("other") == ["api.x.test:443", "cdn.x.test:443"]
 
 
+@pytest.mark.rule("tool.never-sets-what-handler-owns")
 @pytest.mark.parametrize(
     ("slot", "error"),
     [
@@ -129,7 +131,7 @@ def test_addon_secret_slots_say_where_their_value_goes() -> None:
     ],
 )
 def test_addon_secret_slot_errors(slot: str, error: str) -> None:
-    body = 'apiVersion = "handler.addon/v1"\nname = "x"\negress = ["api.x.test:443"]\n'
+    body = 'apiVersion = "handler.tool/v1"\nname = "x"\negress = ["api.x.test:443"]\n'
     body += "[secretSlots.s]\n" + (slot if slot.startswith("env") else f'env = "X_S"\n{slot}')
     with pytest.raises(ValidationError, match=error):
         AddonManifest.model_validate(tomllib.loads(body))

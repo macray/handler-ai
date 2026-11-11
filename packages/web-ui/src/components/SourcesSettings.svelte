@@ -1,10 +1,10 @@
 <script lang="ts">
-  // Sources (D.26): the git repositories apps, agents and addons are offered from. Handler's own
+  // Sources (D.26): the git repositories apps, agents and tools are offered from. Handler's own
   // first (always there), then those you added, each a row: its name, where it is, when it was
   // read and what it offers; Read again, and Remove for one you added (what you installed from it
   // stays). Adding one is a dialog that says plainly that Handler does not check what is in it:
   // you tick that you trust it. What a source offers is installed where it is used (Apps,
-  // Library → Addons, a project's agents), never here.
+  // Library → Tools, a project's agents), never here.
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Store from "@lucide/svelte/icons/store";
@@ -32,9 +32,9 @@
     (e: Error) => (error = e.message),
   );
 
-  const KINDS = { app: ["app", "apps"], agents: ["agents file", "agents files"], addon: ["addon", "addons"] } as const;
+  const KINDS = { app: ["app", "apps"], agents: ["agents file", "agents files"], addon: ["tool", "tools"], "system-package": ["system package", "system packages"] } as const;
 
-  /** "1 app, 2 addons": what it offers that can be installed. */
+  /** "1 app, 2 tools": what it offers that can be installed. */
   function offers(s: Source): string {
     const items = (s.items ?? []).filter((i) => !i.error);
     const counts = (Object.keys(KINDS) as (keyof typeof KINDS)[])
@@ -93,7 +93,7 @@
 <section class="space-y-4" data-testid="sources">
   <div class="flex flex-wrap items-end justify-between gap-3">
     <p class="max-w-2xl text-sm text-muted-foreground">
-      Where apps, agents and addons come from: Handler's own, and any you add. You install what they offer where you use it: Apps, Library → Addons, a
+      Where apps, agents and tools come from: Handler's own, and any you add. You install what they offer where you use it: Library → Apps, Library → Tools, a
       project's agents.
     </p>
     <Button variant="outline" size="sm" onclick={() => ((adding = true), (error = null))} data-testid="source-new"><Plus />Add a source</Button>
@@ -137,7 +137,7 @@
     <p class="fact">Reading the sources…</p>
   {/if}
 
-  <Dialog bind:open={adding} title="Add a source" description="A git repository that offers apps, agents or addons." testid="source-dialog">
+  <Dialog bind:open={adding} title="Add a source" description="A git repository that offers apps, agents or tools." testid="source-dialog">
     <form class="space-y-5" onsubmit={(e) => (e.preventDefault(), void add())}>
       <div class="space-y-1.5">
         <Label for="source-url">Its address</Label>

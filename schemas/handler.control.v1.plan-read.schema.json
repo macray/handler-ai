@@ -1,0 +1,183 @@
+{
+  "$id": "urn:handler.control/v1/plan-read",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "PlanRunner": {
+      "description": "An agent working in a plan's folder that may run its steps (D.27): offered on review.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "bypass": {
+          "title": "Bypass",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "bypass"
+      ],
+      "title": "PlanRunner",
+      "type": "object"
+    },
+    "PlanStep": {
+      "description": "One step of a plan (D.27): a goal, and how the step itself knows it is done.",
+      "properties": {
+        "n": {
+          "minimum": 1,
+          "title": "N",
+          "type": "integer"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "doneWhen": {
+          "title": "Donewhen",
+          "type": "string"
+        }
+      },
+      "required": [
+        "n",
+        "title",
+        "goal",
+        "doneWhen"
+      ],
+      "title": "PlanStep",
+      "type": "object"
+    }
+  },
+  "description": "`POST /v1/plans/read`: a plan file of an agent's folder, read and parsed (D.27). It can be\napproved only with no problem, by sending back its digest.",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "digest": {
+      "title": "Digest",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent"
+    },
+    "agentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
+    },
+    "runners": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PlanRunner"
+      },
+      "title": "Runners",
+      "type": "array"
+    },
+    "projectId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Projectid"
+    },
+    "context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context"
+    },
+    "stepTimeoutSec": {
+      "title": "Steptimeoutsec",
+      "type": "integer"
+    },
+    "steps": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PlanStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "problems": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+    },
+    "recommendation": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recommendation"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path",
+    "digest",
+    "stepTimeoutSec",
+    "text"
+  ],
+  "title": "PlanRead",
+  "type": "object"
+}

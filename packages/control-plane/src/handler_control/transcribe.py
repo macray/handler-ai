@@ -20,16 +20,22 @@ from urllib.parse import urlparse
 
 import httpx
 
-from handler_contracts import MAX_AUDIO, Provider, TranscribeRequest, TranscribeResponse
+from handler_contracts import (
+    CONTAINER_HOST,
+    MAX_AUDIO,
+    Provider,
+    TranscribeRequest,
+    TranscribeResponse,
+)
 
-from . import llm, providers, secrets
+from . import llm, providers, secrets, services
 from .services import ServiceError
 from .settings import Settings
 
-TIMEOUT = 60.0
+TIMEOUT = services.load("transcribe/v1").limits["timeoutSeconds"]  # its [limits]
 MIME = {"webm": "audio/webm", "ogg": "audio/ogg", "mp4": "audio/mp4", "wav": "audio/wav"}
 MIME |= {"mp3": "audio/mpeg"}
-LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "host.containers.internal")
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", CONTAINER_HOST)
 
 
 @dataclass(frozen=True)

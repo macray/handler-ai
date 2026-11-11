@@ -1,0 +1,5 @@
+apiVersion = "handler.system-package/v1"
+name = "wl-clipboard"
+version = 1
+description = "The display's clipboard (wl-copy, wl-paste), for sandboxes given a display: a harness's terminal pasting an image"
+provides = ["wl-copy", "wl-paste"]

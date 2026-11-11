@@ -123,7 +123,7 @@ def secret_infos(ctx: Context, store: secrets.SecretStore) -> list[SecretInfo]:
         for slot, ref in (b.binding.secrets or {}).items():
             hosts = b.addon.manifest.secret_hosts(slot)
             path = secrets.name_of(ref, bindings.secret_path(b.name, slot))
-            add(f"bindings/{b.name}", path, ref, hosts, picked.get(b.name, []))
+            add(f"connections/{b.name}", path, ref, hosts, picked.get(b.name, []))
     for name in ctx.apps.records:
         for secret in ctx.apps.declared_secrets(name):
             path = f"apps/{name}/{secret}"
@@ -139,11 +139,12 @@ def secret_infos(ctx: Context, store: secrets.SecretStore) -> list[SecretInfo]:
 
 
 def binding_agents(ctx: Context) -> dict[str, list[str]]:
-    """The agents that picked each binding, labelled as `references` labels them."""
+    """The agents using each binding (theirs or their project's), labelled as `references` labels
+    them."""
     found: dict[str, list[str]] = {}
     for record in ctx.registry.agents.values():
         label = ctx.projects.label(record) if record.project_id else ad_hoc_label(record)
-        for name in record.bindings:
+        for name in (u.binding for u in record.addon_uses if u.binding is not None):
             found.setdefault(name, []).append(label or record.id)
     return found
 

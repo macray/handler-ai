@@ -12,6 +12,8 @@ from handler_contracts import (
     AgentSpec,
     Automation,
     Binding,
+    CacheDeclaration,
+    CacheFolder,
     EgressEntry,
     FileSecret,
     HarnessDescriptor,
@@ -19,6 +21,9 @@ from handler_contracts import (
     PersonName,
     Provider,
     SandboxSpec,
+    SystemPackageManifest,
+    ToolboxManifest,
+    cache_name,
     check_binding,
     is_within,
 )
@@ -63,6 +68,7 @@ def test_host_path_expands_home(
         assert TypeAdapter(HostPath).validate_python(p) == expanded
 
 
+@pytest.mark.rule("network.an-entry-is-a-host-and-its-port")
 @pytest.mark.parametrize(
     "e", ["api.anthropic.com:443", "*.crates.io:443", "example.org:80", "h.internal:65535"]
 )
@@ -70,6 +76,7 @@ def test_egress_entry_accepts(e: str) -> None:
     TypeAdapter(EgressEntry).validate_python(e)
 
 
+@pytest.mark.rule("network.an-entry-is-a-host-and-its-port")
 @pytest.mark.parametrize(
     "e",
     [
@@ -116,6 +123,7 @@ def test_is_within() -> None:
 ACCOUNT = {"apiVersion": "handler.account/v1", "harness": "claude-code"}
 
 
+@pytest.mark.rule("access.one-account-or-one-provider", "access.keys-are-references")
 def test_an_account_is_its_harness_and_a_description() -> None:
     account = Account.model_validate(ACCOUNT | {"plan": "max"})
     assert account.connectors is False  # decision 1: off unless the account says so
@@ -137,6 +145,7 @@ def test_an_account_is_its_harness_and_a_description() -> None:
         AgentSpec.resolve("pi", account=("perso", account))
 
 
+@pytest.mark.rule("provider.its-files-go-to-their-harness")
 def test_resolve_with_a_provider_keeps_its_spec_and_its_files_for_the_harness() -> None:
     files = {"codex": {"instructions_md": {"content": "You are…"}}}
     provider = Provider.model_validate(PROVIDER | {"files": files})
@@ -146,6 +155,7 @@ def test_resolve_with_a_provider_keeps_its_spec_and_its_files_for_the_harness() 
     assert AgentSpec.resolve("pi", provider=("api", provider)).files is None  # codex's only
 
 
+@pytest.mark.rule("access.one-account-or-one-provider")
 def test_an_agent_runs_on_an_account_or_a_provider_not_both_nor_none() -> None:
     AgentSpec(harness="codex", provider="llamacpp")
     for both_or_none in ({"provider": "llamacpp", "account": "a"}, {}):
@@ -163,6 +173,7 @@ def test_provider_file_sources_expand_home(monkeypatch: pytest.MonkeyPatch) -> N
         Provider.model_validate(PROVIDER | {"files": {"vibe": {"a": "inline without a key"}}})
 
 
+@pytest.mark.rule("access.keys-are-references")
 def test_e2_literal_secret_rejected() -> None:
     with pytest.raises(ValidationError):
         Provider.model_validate(PROVIDER | {"apiKey": "sk-ant-literal"})
@@ -170,6 +181,7 @@ def test_e2_literal_secret_rejected() -> None:
         Account.model_validate(ACCOUNT | {"secrets": {"api_key": {"env": "X"}}})
 
 
+@pytest.mark.rule("access.keys-are-references", "secrets.set-by-their-owner")
 def test_e2_secret_references_accepted() -> None:
     for ref in (
         {"env": "X"},
@@ -208,6 +220,7 @@ def test_provider_picks_the_first_protocol_it_has_an_endpoint_for() -> None:
     assert p.model_named("qwen") is not None and p.model_named("other") is None
 
 
+@pytest.mark.rule("access.keys-are-references", "provider.its-endpoints-and-models-are-checked")
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -224,6 +237,21 @@ def test_provider_picks_the_first_protocol_it_has_an_endpoint_for() -> None:
 def test_invalid_providers(change: dict[str, Any], message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         Provider.model_validate(PROVIDER | change)
+
+
+SPEECH = {"id": "voxtral", "speech": True}
+
+
+@pytest.mark.rule("provider.its-endpoints-and-models-are-checked")
+def test_a_speech_model_needs_a_transcriptions_endpoint() -> None:
+    """If this fails: voice notes are sent to an endpoint that does not write down speech, and
+    fail with the provider's error."""
+    with pytest.raises(ValidationError, match="a speech model needs a transcriptions endpoint"):
+        Provider.model_validate(PROVIDER | {"models": [*PROVIDER["models"], SPEECH]})
+    endpoints = PROVIDER["endpoints"] | {"transcriptions": "http://127.0.0.1:3000/v1"}
+    Provider.model_validate(
+        PROVIDER | {"endpoints": endpoints, "models": [*PROVIDER["models"], SPEECH]}
+    )  # with one, valid
 
 
 def test_a_provider_key_is_a_reference() -> None:
@@ -283,6 +311,80 @@ def test_b6_descriptor_image_untagged_accepted(image: str) -> None:
 def test_b6_descriptor_image_tag_rejected(image: str) -> None:
     with pytest.raises(ValidationError, match="tag or digest"):
         HarnessDescriptor.model_validate(CLAUDE_CODE | {"image": image})
+
+
+# ── B.6, B.7: the toolbox ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("target", "name"),
+    [
+        ("~/.m2", "m2"),
+        ("~/.cache", "cache"),
+        ("~/go", "go"),
+        ("~/.local/share/containers/storage", "local-share-containers-storage"),
+        ("/opt/Thing", "opt-thing"),
+    ],
+)
+def test_a_cache_folder_is_named_from_its_target(target: str, name: str) -> None:
+    assert cache_name(target) == name
+
+
+def test_caches_declared_together_never_share_a_folder() -> None:
+    def toolbox(*targets: str) -> ToolboxManifest:
+        caches = [{"target": t, "about": "x"} for t in targets]
+        return ToolboxManifest.model_validate({"distro": "fedora", "caches": caches})
+
+    assert [c.target for c in toolbox("~/.m2", "~/.local").caches] == ["~/.m2", "~/.local"]
+    for refused, message in (
+        (("~/.m2", "~/.m2"), "two caches at ~/.m2"),
+        (("~/.m2", "~/m2"), "share the folder"),
+        (("~",), "whole home"),
+        (("/",), "whole disk"),
+    ):
+        with pytest.raises(ValidationError, match=message):
+            toolbox(*refused)
+    with pytest.raises(ValidationError, match="about"):  # what it holds is said
+        ToolboxManifest.model_validate({"distro": "fedora", "caches": [{"target": "~/.m2"}]})
+
+
+def test_a_cache_may_put_a_folder_of_its_own_on_path() -> None:
+    def cache(bin_: str) -> CacheDeclaration:
+        return CacheDeclaration.model_validate({"target": "~/.cargo", "about": "x", "bin": bin_})
+
+    assert cache("bin").bin == "bin"
+    assert cache("tools/bin").bin == "tools/bin"
+    for outside in ("/usr/bin", "../bin", "bin/../..", ".", "bin/", ""):
+        with pytest.raises(ValidationError, match="not a folder inside the cache"):
+            cache(outside)
+
+
+def test_a_cache_folder_s_commands_are_in_it() -> None:
+    CacheFolder(source="/h/bun", target="/home/agent/.bun", path="/home/agent/.bun/bin")
+    with pytest.raises(ValidationError, match="its commands' folder is in it"):
+        CacheFolder(source="/h/bun", target="/home/agent/.bun", path="/usr/bin")
+
+
+def test_a_system_package_says_what_it_provides() -> None:
+    package = {
+        "apiVersion": "handler.system-package/v1",
+        "name": "podman",
+        "version": 1,
+        "description": "Podman",
+        "provides": ["podman"],
+        "caches": [{"target": "~/.local/share/containers/storage", "about": "Images"}],
+    }
+    assert SystemPackageManifest.model_validate(package).depends_on == []
+    for wrong in ({"provides": []}, {"version": 0}, {"dependsOn": ["podman"]}, {"setcap": 1}):
+        with pytest.raises(ValidationError):
+            SystemPackageManifest.model_validate(package | wrong)
+
+
+def test_the_harnesses_say_what_they_need_from_the_toolbox() -> None:
+    d = HarnessDescriptor.model_validate(CLAUDE_CODE | {"needs": ["node", "g++", "wl-paste"]})
+    assert d.needs == ["node", "g++", "wl-paste"]
+    with pytest.raises(ValidationError):
+        HarnessDescriptor.model_validate(CLAUDE_CODE | {"needs": ["rm -rf"]})
 
 
 def test_a_credential_slot_is_a_file() -> None:
@@ -383,24 +485,14 @@ def test_terminal_maps_the_same_permission_modes() -> None:
 # ── A: SandboxSpec ──────────────────────────────────────────────────────
 
 SPEC: dict[str, Any] = {
-    "apiVersion": "handler.sandbox/v1",
+    "apiVersion": "handler.sandbox/v2",
     "name": "handler-run1-conn1",
-    "isolation": "container",
     "image": "localhost/handler-ai-claude-code:latest",
     "argv": ["claude-agent-acp"],
     "env": {},
     "workdir": "/home/you/code/foo",
-    "user": {"mode": "host-user", "home": "/home/agent"},
-    "mounts": [
-        {
-            "source": "/home/you/code/foo",
-            "target": "/home/you/code/foo",
-            "readOnly": False,
-            "kind": "scope",
-        }
-    ],
-    "files": [],
-    "writablePaths": ["/home/agent"],
+    "home": "/home/agent",
+    "workFolder": {"path": "/home/you/code/foo"},
     "network": {"mode": "filtered", "allow": ["api.anthropic.com:443"], "enforcement": "enforce"},
 }
 
@@ -410,66 +502,103 @@ def test_valid_spec() -> None:
     assert spec.network.mode == "filtered"
 
 
-def test_a2_scope_same_path() -> None:
-    mount = SPEC["mounts"][0] | {"target": "/workspace"}
-    with pytest.raises(ValidationError):
-        SandboxSpec.model_validate(SPEC | {"mounts": [mount], "workdir": "/workspace"})
-
-
-def test_workdir_inside_scope() -> None:
-    with pytest.raises(ValidationError):
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
+def test_workdir_in_the_work_folder_or_a_folder() -> None:
+    with pytest.raises(ValidationError, match="workdir"):
         SandboxSpec.model_validate(SPEC | {"workdir": "/etc"})
+    folder = {"source": "/srv/definition", "target": "/srv/definition", "writable": False}
+    SandboxSpec.model_validate(SPEC | {"workdir": "/srv/definition", "folders": [folder]})
 
 
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
+def test_a_file_is_in_the_home() -> None:
+    """A.1: a file Handler gives and a kept file are in the home, anywhere in it."""
+    given = {"target": "/home/agent/.vibe/config.toml", "content": "x", "mode": "0600"}
+    kept = {"source": "/data/auth/auth", "target": "/home/agent/.codex/auth.json"}
+    SandboxSpec.model_validate(SPEC | {"files": [given | {"writable": True}], "keptFiles": [kept]})
+    for files, kept_files in (([given | {"target": "/etc/x.toml"}], []),
+                              ([], [kept | {"target": "/etc/auth.json"}])):  # fmt: skip
+        with pytest.raises(ValidationError, match="a file is in the home"):
+            SandboxSpec.model_validate(SPEC | {"files": files, "keptFiles": kept_files})
+
+
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
+def test_a_tool_is_in_handler_s_folders() -> None:
+    tool = {"target": "/opt/handler/bin/handler-sandbox-env", "content": "#!/bin/sh\n"}
+    SandboxSpec.model_validate(SPEC | {"tools": [tool]})
+    for elsewhere in ("/usr/bin/x", "/opt/handler", "/run/handlerx/x"):
+        with pytest.raises(ValidationError, match="Handler's folders"):
+            SandboxSpec.model_validate(SPEC | {"tools": [tool | {"target": elsewhere}]})
+
+
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
 def test_filtered_requires_enforcement() -> None:
     with pytest.raises(ValidationError):
         SandboxSpec.model_validate(SPEC | {"network": {"mode": "filtered", "allow": []}})
 
 
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
 def test_duplicate_targets_rejected() -> None:
-    dup = {"source": "/tmp/x", "target": "/home/you/code/foo", "readOnly": True, "kind": "config"}
-    with pytest.raises(ValidationError):
-        SandboxSpec.model_validate(SPEC | {"mounts": [*SPEC["mounts"], dup]})
+    dup = {"source": "/tmp/x", "target": "/home/you/code/foo", "writable": False}
+    with pytest.raises(ValidationError, match="duplicate"):
+        SandboxSpec.model_validate(SPEC | {"folders": [dup]})
 
 
-def test_image_mounts_and_path_append() -> None:
-    spec = SandboxSpec.model_validate(
-        SPEC
-        | {
-            "imageMounts": [
-                {"image": "localhost/handler-ai-addon-x:latest", "target": "/opt/addons/x"}
-            ],
-            "pathAppend": ["/opt/addons/x/bin"],
-        }
-    )
-    assert spec.image_mounts[0].target == "/opt/addons/x"
+def test_an_addon_s_commands_are_in_its_files() -> None:
+    addon = {"source": "/data/addons/x/abc", "target": "/opt/tools/x"}
+    spec = SandboxSpec.model_validate(SPEC | {"addons": [addon | {"path": "/opt/tools/x/bin"}]})
+    assert spec.abilities() == set()  # a read-only folder: every runtime gives it
+    with pytest.raises(ValidationError, match="its commands' folder"):
+        SandboxSpec.model_validate(SPEC | {"addons": [addon | {"path": "/usr/bin"}]})
 
 
-def test_image_mount_target_must_be_unique() -> None:
-    dup = {"image": "localhost/handler-ai-addon-x:latest", "target": "/home/you/code/foo"}
-    with pytest.raises(ValidationError):
-        SandboxSpec.model_validate(SPEC | {"imageMounts": [dup]})
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
+def test_an_addon_s_target_must_be_unique() -> None:
+    dup = {"source": "/data/addons/x/abc", "target": "/home/you/code/foo"}
+    with pytest.raises(ValidationError, match="duplicate"):
+        SandboxSpec.model_validate(SPEC | {"addons": [dup]})
 
 
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
 def test_a7_display_env_belongs_to_the_implementation() -> None:
-    display = {"mode": "wayland", "socket": "/run/user/1000/wayland-0"}
-    assert SandboxSpec.model_validate(SPEC | {"display": display}).display is not None
+    assert SandboxSpec.model_validate(SPEC | {"display": True}).abilities() == {"display"}
     with pytest.raises(ValidationError, match="display is set by the implementation"):
-        SandboxSpec.model_validate(SPEC | {"display": display, "env": {"XDG_RUNTIME_DIR": "/x"}})
+        SandboxSpec.model_validate(SPEC | {"display": True, "env": {"XDG_RUNTIME_DIR": "/x"}})
     SandboxSpec.model_validate(SPEC | {"env": {"XDG_RUNTIME_DIR": "/x"}})
 
 
-def test_path_append_excludes_env_path() -> None:
-    with pytest.raises(ValidationError, match="PATH"):
-        SandboxSpec.model_validate(SPEC | {"env": {"PATH": "/x"}, "pathAppend": ["/opt/x/bin"]})
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
+def test_path_is_the_runtime_s() -> None:
+    with pytest.raises(ValidationError, match="PATH is the runtime's"):
+        SandboxSpec.model_validate(SPEC | {"env": {"PATH": "/x"}})
+
+
+@pytest.mark.rule(
+    "secrets.an-open-sandbox-gets-a-filter-for-them", "secrets.a-phantom-is-as-long-as-its-value"
+)
+def test_injections_are_the_network_s() -> None:
+    """A.3: secrets in an open or filtered network; none can be given without one."""
+    secret = {"name": "k", "phantom": "p" * 8, "value": "v" * 8, "hosts": ["api.x.com:443"]}
+    open_one = SandboxSpec.model_validate(
+        SPEC | {"network": {"mode": "open", "injections": [secret]}}
+    )
+    assert open_one.injections[0].name == "k"
+    assert (
+        SandboxSpec.model_validate(
+            SPEC | {"network": {"mode": "none", "injections": [secret]}}
+        ).injections
+        == []
+    )
+    with pytest.raises(ValidationError, match="unique"):
+        SandboxSpec.model_validate(SPEC | {"network": {"mode": "open", "injections": [secret] * 2}})
 
 
 # ── G: Addon and Binding ────────────────────────────────────────────────
 
 ADDON: dict[str, Any] = {
-    "apiVersion": "handler.addon/v1",
+    "apiVersion": "handler.tool/v1",
     "name": "shopify",
-    "image": "localhost/handler-ai-addon-shopify",
+    "image": "localhost/handler-ai-tool-shopify",
     "commands": ["shopify"],
     "check": ["shopify", "version"],
     "settings": {"store": {"env": "SHOPIFY_FLAG_STORE", "required": True}},
@@ -479,37 +608,61 @@ ADDON: dict[str, Any] = {
 
 
 def binding(**fields: Any) -> Binding:
-    return Binding.model_validate({"apiVersion": "handler.binding/v1", "addon": "shopify"} | fields)
+    return Binding.model_validate(
+        {"apiVersion": "handler.connection/v1", "tool": "shopify"} | fields
+    )
 
 
 def test_addon_manifest() -> None:
     addon = AddonManifest.model_validate(ADDON)
-    assert addon.mount_target == "/opt/addons/shopify"
-    assert addon.bin_dir == "/opt/addons/shopify/bin"
+    assert addon.mount_target == "/opt/tools/shopify"
+    assert addon.bin_dir == "/opt/tools/shopify/bin"
 
 
+@pytest.mark.rule("tool.its-manifest-holds-together")
+def test_addon_needs_and_caches() -> None:
+    addon = AddonManifest.model_validate(
+        ADDON
+        | {
+            "needs": ["node"],
+            "caches": [{"target": "~/.config/shopify", "about": "Shopify CLI's sessions"}],
+        }
+    )
+    assert addon.needs == ["node"]
+    assert [c.target for c in addon.caches] == ["~/.config/shopify"]
+    with pytest.raises(ValidationError, match="its own commands: shopify"):
+        AddonManifest.model_validate(ADDON | {"needs": ["shopify"]})
+    twice = [{"target": "~/.m2", "about": "x"}, {"target": "~/.m2", "about": "y"}]
+    with pytest.raises(ValidationError, match="two caches"):
+        AddonManifest.model_validate(ADDON | {"caches": twice})
+
+
+@pytest.mark.rule("tool.its-manifest-holds-together")
 def test_addon_without_image_has_no_commands() -> None:
     AddonManifest.model_validate(
-        {"apiVersion": "handler.addon/v1", "name": "logs", "egress": ["x.io:443"]}
+        {"apiVersion": "handler.tool/v1", "name": "logs", "egress": ["x.io:443"]}
     )
     with pytest.raises(ValidationError, match="need an 'image'"):
         AddonManifest.model_validate(ADDON | {"image": None})
 
 
+@pytest.mark.rule("tool.its-manifest-holds-together")
 def test_addon_mcp_server_starts_from_its_own_commands() -> None:
     addon = AddonManifest.model_validate(ADDON | {"mcp": {"command": ["shopify", "mcp"]}})
     assert addon.mcp is not None and addon.mcp.command == ["shopify", "mcp"]
-    with pytest.raises(ValidationError, match="must start with one of the addon's 'commands'"):
+    with pytest.raises(ValidationError, match="must start with one of the tool's 'commands'"):
         AddonManifest.model_validate(ADDON | {"mcp": {"command": ["npx", "some-mcp"]}})
 
 
+@pytest.mark.rule("tool.its-manifest-holds-together")
 def test_addon_image_needs_commands_and_no_tag() -> None:
     with pytest.raises(ValidationError, match="commands"):
         AddonManifest.model_validate(ADDON | {"commands": []})
     with pytest.raises(ValidationError):
-        AddonManifest.model_validate(ADDON | {"image": "localhost/handler-ai-addon-shopify:latest"})
+        AddonManifest.model_validate(ADDON | {"image": "localhost/handler-ai-tool-shopify:latest"})
 
 
+@pytest.mark.rule("tool.never-sets-what-handler-owns")
 @pytest.mark.parametrize(
     "change",
     [
@@ -523,6 +676,7 @@ def test_addon_env_conflicts_rejected(change: dict[str, Any]) -> None:
         AddonManifest.model_validate(ADDON | change)
 
 
+@pytest.mark.rule("access.keys-are-references")
 def test_binding_is_strict_and_references_secrets() -> None:
     b = binding(settings={"store": "s.myshopify.com"}, secrets={"theme_token": {"env": "T"}})
     check_binding(b, AddonManifest.model_validate(ADDON))
@@ -532,6 +686,7 @@ def test_binding_is_strict_and_references_secrets() -> None:
         binding(extra="typo")
 
 
+@pytest.mark.rule("connection.fills-its-tool-s-slots")
 def test_g1_binding_slots_checked_against_addon() -> None:
     addon = AddonManifest.model_validate(ADDON)
     with pytest.raises(ValueError, match="required setting store"):
@@ -548,22 +703,12 @@ def test_committed_schemas_up_to_date() -> None:
         assert (DEFAULT_OUT_DIR / name).read_text() == content, f"{name} is stale"
 
 
-# ── config files (descriptor `configFiles`, seeded files) ──
-
-
+@pytest.mark.rule("network.an-entry-is-a-host-and-its-port")
 def test_egress_entry_accepts_ipv4() -> None:
     TypeAdapter(EgressEntry).validate_python("192.168.1.20:11434")
     for bad in ("256.1.1.1:80", "1.2.3:80", "192.168.1.20"):
         with pytest.raises(ValidationError):
             TypeAdapter(EgressEntry).validate_python(bad)
-
-
-def test_seeded_file_must_be_in_a_writable_place() -> None:
-    seeded = {"target": "/home/agent/.vibe/config.toml", "content": "x", "seed": True}
-    SandboxSpec.model_validate(SPEC | {"files": [seeded]})  # under the home
-    SandboxSpec.model_validate(SPEC | {"files": [seeded], "writablePaths": ["/home/agent/.vibe"]})
-    with pytest.raises(ValidationError):
-        SandboxSpec.model_validate(SPEC | {"files": [seeded | {"target": "/etc/x.toml"}]})
 
 
 # ── I: automations ──────────────────────────────────────────────────────

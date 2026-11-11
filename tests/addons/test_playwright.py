@@ -1,5 +1,5 @@
-"""The playwright addon (docs/dev/design/browser.md), end to end through handler-sandbox-podman: its
-MCP server, started from the addon image mount the way a harness starts it (stdio), in a `strict`
+"""The playwright addon (browser design), end to end through handler-sandbox-podman: its
+MCP server, started from the addon's folder the way a harness starts it (stdio), in a `strict`
 sandbox.
 
 - a local preview on the sandbox's 127.0.0.1 opens, whatever the network;
@@ -7,8 +7,9 @@ sandbox.
   another one does not;
 - headless without a display; Wayland only when the sandbox is given one (A.6).
 
-Needs podman, the toolbox and the addon image (`handler image rebuild addon:playwright`); the
-filtered network test needs the internet.
+Needs podman, the toolbox and the addon built (`handler image rebuild addon:playwright`: its
+folder, under Handler's data, mounted read-only here); the filtered network test needs the
+internet.
 """
 
 import json
@@ -20,29 +21,34 @@ from typing import Any
 import pytest
 
 from handler_contracts import ADDONS_ROOT
+from handler_control import addon_folders
+from handler_control.settings import Settings
 
-from ..sandbox.conftest import display_socket, requires_internet, run  # noqa: F401 — fixture
+from ..sandbox.conftest import (  # noqa: F401 — display_socket: a fixture
+    display_socket,
+    on_display,
+    requires_internet,
+    run,
+)
 from ..support import dev_env
 
 TOOLBOX = "localhost/handler-ai-toolbox:latest"
-ADDON = "localhost/handler-ai-addon-playwright:latest"
+ADDON = addon_folders.folder(Settings.from_env(), "playwright")
 TARGET = f"{ADDONS_ROOT}/playwright"
 PROBE = (Path(__file__).parent / "mcp_probe.py").read_text()
 LOCAL = "http://127.0.0.1:9292/"
 
 
-def images_present() -> bool:
+def built() -> bool:
     try:
-        exists = [
-            subprocess.run(["podman", "image", "exists", i], check=False) for i in (TOOLBOX, ADDON)
-        ]
+        toolbox = subprocess.run(["podman", "image", "exists", TOOLBOX], check=False)
     except OSError:
         return False
-    return all(r.returncode == 0 for r in exists)
+    return toolbox.returncode == 0 and ADDON.is_dir()
 
 
 pytestmark = [
-    pytest.mark.skipif(not images_present(), reason=f"{TOOLBOX} or {ADDON} missing"),
+    pytest.mark.skipif(not built(), reason=f"{TOOLBOX} or {ADDON} missing"),
     pytest.mark.timeout(dev_env.IMAGE_TIMEOUT),
 ]
 
@@ -54,27 +60,25 @@ def scope() -> Iterator[Path]:
     dev_env.remove_scope(path)
 
 
-def probe(scope: Path, urls: list[str], **overrides: Any) -> dict[str, Any]:
+def probe(
+    scope: Path, urls: list[str], env: dict[str, str] | None = None, **overrides: Any
+) -> dict[str, Any]:
     """Run the addon's MCP server (its manifest's `mcp.command`) under the probe, in a sandbox
-    composed as G4 does: the addon image mounted, its bin/ on PATH."""
+    composed as G4 does: the addon's folder mounted, its bin/ on PATH."""
     doc: dict[str, Any] = {
-        "apiVersion": "handler.sandbox/v1",
+        "apiVersion": "handler.sandbox/v2",
         "name": f"handler-test-pw-{scope.name[-8:].lower().replace('_', '-')}",
         "image": TOOLBOX,
-        "argv": ["python3", "/opt/handler-probe.py", *urls, "--", "playwright-mcp"],
+        "argv": ["python3", "/opt/handler/probe.py", *urls, "--", "playwright-mcp"],
         "env": {},
         "workdir": str(scope),
-        "user": {"mode": "host-user", "home": "/home/agent"},
-        "mounts": [
-            {"source": str(scope), "target": str(scope), "readOnly": False, "kind": "scope"}
-        ],
-        "imageMounts": [{"image": ADDON, "target": TARGET}],
-        "pathAppend": [f"{TARGET}/bin"],
-        "files": [{"target": "/opt/handler-probe.py", "content": PROBE}],
-        "writablePaths": [],
+        "home": "/home/agent",
+        "workFolder": {"path": str(scope)},
+        "addons": [{"source": str(ADDON), "target": TARGET, "path": f"{TARGET}/bin"}],
+        "tools": [{"target": "/opt/handler/probe.py", "content": PROBE}],
         "network": {"mode": "none"},
     } | overrides
-    r = run("handler-sandbox-podman", doc, timeout=240)
+    r = run("handler-sandbox-podman", doc, timeout=240, env=env)
     assert r.returncode == 0, r.stderr.decode()[-3000:]
     return json.loads(r.stdout.decode().splitlines()[-1])
 
@@ -109,8 +113,7 @@ def test_filtered_goes_through_the_sandbox_proxy(scope: Path) -> None:
 def test_display_makes_it_headed_on_wayland(scope: Path, display_socket: str) -> None:  # noqa: F811
     """Given a display, the browser is started for Wayland (here a fake socket, so it cannot draw:
     the launch fails, and Playwright's error shows how it was started)."""
-    display = {"mode": "wayland", "socket": display_socket}
-    report = probe(scope, [LOCAL], display=display)
+    report = probe(scope, [LOCAL], env=on_display(display_socket), display=True)
     local = report["navigations"][LOCAL]
     assert local["error"] and "--ozone-platform=wayland" in local["text"], local
     assert "--headless" not in local["text"]

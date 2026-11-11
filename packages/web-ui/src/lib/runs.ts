@@ -143,12 +143,12 @@ export function codeRef(value: unknown): { path: string; from: number; to: numbe
   return { path, from: from!, to: to! };
 }
 
-/** How a run is doing: running, then its result (valid or not), or why it has none. */
 /** Who started a run, in words: "you", "an automation", "the app planner". */
 export function startedBy(s: Session): string {
   if (s.origin === "automation") return "by an automation";
   if (s.origin === "app") return `by the app ${s.app ?? ""}`.trimEnd();
   if (s.origin === "check") return "by its checks";
+  if (s.origin === "plan") return `by a plan, step ${s.plan?.step ?? ""}`.trimEnd();
   return "by you";
 }
 

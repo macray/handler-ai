@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/set-session-remote-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Switch remote access to a running session on or off (docs/dev/design/remote.md \u00a75).",
+  "description": "Switch remote access to a running session on or off (remote design \u00a75).",
   "properties": {
     "enabled": {
       "title": "Enabled",

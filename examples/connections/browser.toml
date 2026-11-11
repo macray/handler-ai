@@ -1,0 +1,7 @@
+# A web browser for the agent (the `playwright` tool, browser design). No setting needed;
+# logins: tools/playwright/PROVISIONING.md of its source. Copy to
+# ~/.config/handler-ai/connections/ and give it to an agent (web UI: Tools in the agent's form; CLI:
+# `--tool playwright=browser`), with `--display` to watch the browser window.
+apiVersion  = "handler.connection/v1"
+tool        = "playwright"
+description = "Web browser, no login"

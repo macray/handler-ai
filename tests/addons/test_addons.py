@@ -1,6 +1,6 @@
 """Contract G conformance, through a real handlerd: addons and bindings listed, an addon image
-rebuilt and checked (G.4), bindings selected by an agent (G3) and given to a live agent (G4, A6),
-and an addon image kept while an agent mounts it.
+rebuilt, extracted into its folder and checked (G.4), bindings selected by an agent (G3) and given
+to a live agent (G4, A.1), and an addon's folder kept while an agent mounts it.
 
 Needs podman and the toolbox image (the test addon is built in it, like real ones). The agent is
 the echo-box test harness (a container that only echoes), inspected from outside.
@@ -23,11 +23,11 @@ from ..support.daemon import Daemon, start_daemon
 
 TOOLBOX = "localhost/handler-ai-toolbox:latest"
 REPO = "localhost/handler-ai-test-addon"
-TARGET = "/opt/addons/handler-test"
+TARGET = "/opt/tools/handler-test"
 TOKEN = "addon-s3cr3t-for-redaction"
 
 MANIFEST = f"""
-apiVersion = "handler.addon/v1"
+apiVersion = "handler.tool/v1"
 name = "handler-test"
 image = "{REPO}"
 commands = ["handler-hello"]
@@ -72,32 +72,28 @@ pytestmark = [
 def addons_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("addons")
     (root / "handler-test").mkdir()
-    (root / "handler-test" / "addon.toml").write_text(MANIFEST)
+    (root / "handler-test" / "tool.toml").write_text(MANIFEST)
     (root / "handler-test" / "Containerfile").write_text(CONTAINERFILE)
     return root
 
 
 @pytest.fixture(scope="module")
 def daemon(addons_dir: Path) -> Iterator[Daemon]:
-    env = {"HANDLER_ADDONS_DIR": str(addons_dir), "HANDLER_TEST_ADDON_TOKEN_SOURCE": TOKEN}
-    try:
-        yield from start_daemon(extra_env=env)
-    finally:
-        if latest := image_id(f"{REPO}:latest"):
-            subprocess.run(["podman", "rmi", "--force", latest], capture_output=True, check=False)
+    env = {"HANDLER_TOOLS_DIR": str(addons_dir), "HANDLER_TEST_ADDON_TOKEN_SOURCE": TOKEN}
+    yield from start_daemon(extra_env=env)
 
 
 @pytest.fixture(scope="module")
 def bindings(daemon: Daemon) -> Path:
-    root = daemon.config_dir / "bindings"
+    root = daemon.config_dir / "connections"
     root.mkdir(exist_ok=True)
     (root / "test.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "handler-test"\n'
+        'apiVersion = "handler.connection/v1"\ntool = "handler-test"\n'
         'settings = { greeting = "from the binding" }\n'
         'secrets = { token = { env = "HANDLER_TEST_ADDON_TOKEN_SOURCE" } }\n'
     )
     (root / "incomplete.toml").write_text(
-        'apiVersion = "handler.binding/v1"\naddon = "handler-test"\n'
+        'apiVersion = "handler.connection/v1"\ntool = "handler-test"\n'
     )
     return root
 
@@ -116,9 +112,21 @@ def rebuild(c: httpx.Client, name: str = "handler-test") -> dict[str, Any]:
     raise TimeoutError(build_id)
 
 
-def image_id(ref: str) -> str | None:
-    info = runtime.inspect(ref)
-    return info.id if info else None
+def folders(daemon: Daemon) -> Path:
+    return daemon.data_dir / "addons" / "handler-test"
+
+
+def current(daemon: Daemon) -> Path | None:
+    """The folder agents get (its image's id), None before the first build."""
+    marker = folders(daemon) / "current"
+    return folders(daemon) / marker.read_text().strip() if marker.exists() else None
+
+
+def wait_gone(path: Path, timeout: float = 30) -> bool:
+    deadline = time.monotonic() + timeout
+    while path.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    return not path.exists()
 
 
 def addon(c: httpx.Client) -> dict[str, Any]:
@@ -131,6 +139,7 @@ def addon(c: httpx.Client) -> dict[str, Any]:
 # ── catalog (G.1, G.2) ──────────────────────────────────────────────────
 
 
+@pytest.mark.rule("access.its-status-says-what-is-missing", "secrets.never-read-back")
 def test_addons_and_bindings_are_listed(daemon: Daemon, bindings: Path) -> None:
     with daemon.http() as c:
         a = addon(c)
@@ -149,11 +158,12 @@ def test_unknown_addon_cannot_be_rebuilt(daemon: Daemon) -> None:
         assert c.post("/v1/addons/nope/rebuild").status_code == 404
 
 
-# ── images (G.4) ────────────────────────────────────────────────────────
+# ── images and folders (G.4) ────────────────────────────────────────────────────────
 
 
+@pytest.mark.rule("tool.runs-from-a-read-only-folder", "tool.checked-against-its-manifest")
 def test_rebuild_builds_checks_and_switches(daemon: Daemon) -> None:
-    before = image_id(f"{REPO}:latest")
+    before = current(daemon)
     with daemon.http() as c:
         build = rebuild(c)
         assert build["state"] == "succeeded", build["log"][-2000:]
@@ -162,16 +172,23 @@ def test_rebuild_builds_checks_and_switches(daemon: Daemon) -> None:
         assert "commands, version and check ok" in build["log"]
         a = addon(c)
     assert a["imagePresent"] and a["version"] == build["versions"]["addon:handler-test"]
-    assert image_id(f"{REPO}:latest") != before
-    assert before is None or image_id(before) is None  # the replaced image is removed
+    now = current(daemon)
+    assert now is not None and now != before and (now / "bin" / "handler-hello").is_file()
+    assert not (now / "version").stat().st_mode & 0o222  # read-only
+    assert runtime.inspect(now.name) is None  # the image is removed once extracted
+    assert before is None or wait_gone(before)  # the replaced folder too, no sandbox mounts it
 
 
+@pytest.mark.rule("tool.checked-against-its-manifest")
 def test_check_refuses_an_image_that_does_not_match_its_manifest(
     daemon: Daemon, addons_dir: Path
 ) -> None:
-    toml = addons_dir / "handler-test" / "addon.toml"
+    toml = addons_dir / "handler-test" / "tool.toml"
     original = toml.read_text()
-    before = image_id(f"{REPO}:latest")
+    with daemon.http() as c:
+        if not addon(c)["imagePresent"]:
+            assert rebuild(c)["state"] == "succeeded"
+    before = current(daemon)
     toml.write_text(original.replace('commands = ["handler-hello"]', 'commands = ["other"]'))
     try:
         with daemon.http() as c:
@@ -180,34 +197,40 @@ def test_check_refuses_an_image_that_does_not_match_its_manifest(
         toml.write_text(original)
     assert build["state"] == "failed"
     assert "bin/ holds handler-hello; the manifest declares other" in build["error"]
-    assert image_id(f"{REPO}:latest") == before  # :latest untouched
+    assert before is not None and current(daemon) == before  # agents keep the folder they had
+    failed = [p for p in folders(daemon).iterdir() if p.name not in ("current", before.name)]
+    assert all(wait_gone(p) for p in failed)  # removed once the build ended
 
 
-# ── selection (G3) and agents (G4, A6) ──────────────────────────────────
+# ── selection (G3) and agents (G4, A.1) ──────────────────────────────────
 
 
+@pytest.mark.rule("tool.its-use-is-checked-when-saved")
 def test_g3_agent_selection_is_checked(daemon: Daemon, bindings: Path) -> None:
     scope = daemon.make_scope()
     with daemon.http() as c:
         for account, selected, detail in (
-            ("echo-box", ["missing"], "unknown binding"),
-            ("echo-box", ["incomplete"], "required setting greeting"),
+            ("echo-box", "missing", "unknown connection"),
+            ("echo-box", "incomplete", "required setting greeting"),
         ):
+            uses = [{"addon": "handler-test", "binding": selected}]
             r = c.post(
                 "/v1/agents",
-                json={"model": {"account": account}, "scope": str(scope), "bindings": selected},
+                json={"model": {"account": account}, "scope": str(scope), "addons": uses},
             )
             assert r.status_code == 400, r.text
             assert detail in r.json()["detail"]
 
 
+@pytest.mark.rule("tool.each-start-gets-what-it-gives")
 def test_g4_agent_gets_the_addon(daemon: Daemon, bindings: Path) -> None:
     with daemon.http() as c:
         if not addon(c)["imagePresent"]:
             assert rebuild(c)["state"] == "succeeded"
-    latest = image_id(f"{REPO}:latest")
-    ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), bindings=["test"])
-    assert ad_hoc["bindings"] == ["test"]
+    folder = current(daemon)
+    uses = [{"addon": "handler-test", "binding": "test"}]
+    ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), addons=uses)
+    assert ad_hoc["addons"] == uses
     client = daemon.connect(ad_hoc["acpUrl"])
     try:
         container = wait_for_container(ad_hoc["id"])
@@ -215,9 +238,11 @@ def test_g4_agent_gets_the_addon(daemon: Daemon, bindings: Path) -> None:
         env = dict(e.split("=", 1) for e in config["Config"]["Env"])
         assert env["HANDLER_TEST_GREETING"] == "from the binding"
         assert env["HANDLER_TEST_STATIC"] == "static"
-        assert env["HANDLER_TEST_ADDON_TOKEN"] == TOKEN
+        phantom = env["HANDLER_TEST_ADDON_TOKEN"]  # the proxy swaps it back (A.3)
+        assert phantom != TOKEN and len(phantom) == len(TOKEN)
         assert env["PATH"].endswith(f":{TARGET}/bin")
-        assert config["Config"]["Labels"][f"handler.image-mount.{latest}"] == TARGET
+        mount = next(m for m in config["Mounts"] if m["Destination"] == TARGET)
+        assert mount["Source"] == str(folder) and not mount["RW"]
         hello = subprocess.run(
             ["podman", "exec", container, "handler-hello"],
             capture_output=True,
@@ -233,20 +258,23 @@ def test_g4_agent_gets_the_addon(daemon: Daemon, bindings: Path) -> None:
         client.close()
 
 
-def test_rebuild_keeps_an_image_an_agent_mounts(daemon: Daemon, bindings: Path) -> None:
-    """Podman removes an image a container only mounts (A6): the switch must not."""
+@pytest.mark.rule("tool.runs-from-a-read-only-folder")
+def test_rebuild_keeps_a_folder_an_agent_mounts(daemon: Daemon, bindings: Path) -> None:
+    """A rebuild switches agents to the new folder; the one a running sandbox mounts stays until
+    that sandbox ends."""
     with daemon.http() as c:
         if not addon(c)["imagePresent"]:
             assert rebuild(c)["state"] == "succeeded"
-        mounted = image_id(f"{REPO}:latest")
-        ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), bindings=["test"])
+        mounted = current(daemon)
+        assert mounted is not None
+        uses = [{"addon": "handler-test", "binding": "test"}]
+        ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), addons=uses)
         client = daemon.connect(ad_hoc["acpUrl"])
         try:
             container = wait_for_container(ad_hoc["id"])
-            first, second = rebuild(c), rebuild(c)  # the second would remove `mounted`
-            assert first["state"] == second["state"] == "succeeded", second["log"][-2000:]
-            assert f"{(mounted or '')[:12]} kept: a container still mounts it" in second["log"]
-            assert mounted is not None and runtime.inspect(mounted) is not None
+            build = rebuild(c)
+            assert build["state"] == "succeeded", build["log"][-2000:]
+            assert current(daemon) != mounted and mounted.is_dir()
             hello = subprocess.run(
                 ["podman", "exec", container, "handler-hello"],
                 capture_output=True,
@@ -256,7 +284,7 @@ def test_rebuild_keeps_an_image_an_agent_mounts(daemon: Daemon, bindings: Path) 
             assert hello.stdout.strip() == "hello from the binding"
         finally:
             client.close()
-    subprocess.run(["podman", "rmi", mounted or "-"], capture_output=True, check=False)
+    assert wait_gone(mounted)  # removed once its sandbox ended
 
 
 # ── helpers ─────────────────────────────────────────────────────────────

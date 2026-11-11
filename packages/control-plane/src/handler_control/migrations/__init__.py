@@ -26,6 +26,13 @@ from . import (
     m0003_chat_and_handler_needs,
     m0004_apps,
     m0005_sources,
+    m0006_file_slots_in_folders,
+    m0007_addon_uses,
+    m0008_toolbox_manifest,
+    m0009_kept_blocked,
+    m0010_pins,
+    m0011_notes_default,
+    m0012_push_keys,
 )
 
 log = logging.getLogger("handler.migrations")
@@ -37,6 +44,13 @@ MIGRATIONS: list[Callable[[Settings], None]] = [
     m0003_chat_and_handler_needs.migrate,
     m0004_apps.migrate,
     m0005_sources.migrate,
+    m0006_file_slots_in_folders.migrate,
+    m0007_addon_uses.migrate,
+    m0008_toolbox_manifest.migrate,
+    m0009_kept_blocked.migrate,
+    m0010_pins.migrate,
+    m0011_notes_default.migrate,
+    m0012_push_keys.migrate,
 ]
 
 VERSION_FILE = "format-version"

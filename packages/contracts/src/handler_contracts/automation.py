@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AfterValidator, AwareDatetime, Field, model_validator
 
-from .common import AppName, Document, StrictDocument
+from .common import AppName, Document, RefusedHost, StrictDocument
 
 AUTOMATION_API_VERSION = "handler.automation/v1"
 AUTOMATION_FILE = "automation.toml"
@@ -191,6 +191,8 @@ class AutomationRun(Document):
     llm: AutomationLlmUsage = AutomationLlmUsage()
     appended: list[AutomationAppended] = []
     error: str | None = None
+    refused: list[RefusedHost] = []  # an agent run's: hosts its network filter refused (F.9)
+    said: str | None = None  # what the agent's last message says of them, when it does
     created_at: AwareDatetime
     ended_at: AwareDatetime | None = None
 
@@ -262,6 +264,8 @@ class AutomationCheck(Document):
 
 class TryAutomationRequest(Document):
     session_id: str | None = None  # the session read, for `when = "session.stopped"` (I.8)
+    # *Allow and run again*: hosts refused to a run of it, allowed for its agent first (F.9)
+    allow: list[str] = []
 
 
 class LlmUsage(StrictDocument):

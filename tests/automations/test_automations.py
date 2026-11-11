@@ -1,4 +1,4 @@
-"""Contract I conformance: automations on a real handlerd (docs/dev/contracts.md §I). Sessions run
+"""Contract I conformance: automations on a real handlerd (contract I). Sessions run
 the fake agent; an automation's run runs on the host (the fake sandbox) with handler's
 `handler-llm`, which reaches a stub provider through handlerd's `llm` service."""
 
@@ -90,6 +90,15 @@ def agent(daemon: Daemon) -> dict[str, Any]:
     return daemon.create_ad_hoc("fake", daemon.make_scope())
 
 
+@pytest.mark.rule(
+    "automation.a-folder-of-yours",
+    "automation.says-what-it-does",
+    "stop.each-part-read-once",
+    "runner.keeps-its-runs",
+    "script.no-network-no-secret",
+    "append.only-what-it-declares-once-it-succeeded",
+    "llm.only-the-models-it-names",
+)
 def test_a_stop_runs_it_and_appends_once(
     daemon: Daemon, agent: dict[str, Any], stub: StubLlm, knowledge: Path
 ) -> None:
@@ -132,6 +141,7 @@ def test_a_stop_runs_it_and_appends_once(
         assert [r["id"] for r in linked] == [run["id"]]
 
 
+@pytest.mark.rule("script.reads-its-part-redacted")
 def test_the_store_secrets_are_redacted_from_the_input(
     daemon: Daemon, agent: dict[str, Any]
 ) -> None:
@@ -148,6 +158,7 @@ def test_the_store_secrets_are_redacted_from_the_input(
         assert SECRET_IN_LOG not in text and "«redacted»" in text, file
 
 
+@pytest.mark.rule("automation.off-until-you-turn-it-on", "stop.each-part-read-once")
 def test_only_conversations_past_since_and_not_deleted_fire(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -175,6 +186,7 @@ def test_only_conversations_past_since_and_not_deleted_fire(
     assert not (knowledge / "handler" / "since.md").exists()
 
 
+@pytest.mark.rule("stop.each-part-read-once", "script.reads-its-part-redacted")
 def test_resumed_then_stopped_reads_only_the_new_part(
     daemon: Daemon, agent: dict[str, Any]
 ) -> None:
@@ -189,6 +201,7 @@ def test_resumed_then_stopped_reads_only_the_new_part(
     assert "again" in given and "hello" not in given
 
 
+@pytest.mark.rule("append.only-what-it-declares-once-it-succeeded", "try.now-on-or-off")
 def test_a_try_appends_nothing_and_shows_what_it_would(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -207,6 +220,7 @@ def test_a_try_appends_nothing_and_shows_what_it_would(
     assert "HANDLER_TRY" not in (ran / "run.log").read_text()
 
 
+@pytest.mark.rule("automation.off-until-you-turn-it-on", "automation.says-what-it-does")
 def test_the_owner_s_edits_apply_while_it_is_on(daemon: Daemon) -> None:
     """Turning it on is the only approval: no sandbox can write its files (§2, invariant 6)."""
     folder = automation(daemon, "edited")
@@ -221,6 +235,7 @@ def test_the_owner_s_edits_apply_while_it_is_on(daemon: Daemon) -> None:
     assert view["enabled"] is True and "May call the models stub/m, stub/m2." in view["permissions"]
 
 
+@pytest.mark.rule("automation.with-problems-never-runs")
 def test_problems_and_errors(daemon: Daemon) -> None:
     with daemon.http() as c:
         examples = c.get("/v1/automation-examples").json()
@@ -243,6 +258,7 @@ def test_problems_and_errors(daemon: Daemon) -> None:
         assert c.get("/v1/automations/probs/runs/a_0000000000000000").status_code == 404
 
 
+@pytest.mark.rule("script.no-network-no-secret", "append.only-what-it-declares-once-it-succeeded")
 def test_a_failing_script_appends_nothing_and_moves_on(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -254,6 +270,7 @@ def test_a_failing_script_appends_nothing_and_moves_on(
     assert not (knowledge / "handler" / "fails.md").exists()
 
 
+@pytest.mark.rule("stop.at-least-once", "append.only-what-it-declares-once-it-succeeded")
 def test_a_run_cut_by_handlerd_stopping_runs_again(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -267,7 +284,8 @@ def test_a_run_cut_by_handlerd_stopping_runs_again(
     enable(daemon, "restart")
     conversation(daemon, agent)
     deadline = time.monotonic() + 30
-    while not any(r["state"] == "running" for r in runs(daemon, "restart")):
+    marker = run_folder(daemon, "restart", "slow-done")  # $HANDLER_INPUT/../..: next to the runs
+    while not marker.exists():  # not its record's `running`: written before its script starts
         assert time.monotonic() < deadline
         time.sleep(0.2)
     daemon.restart()
@@ -277,6 +295,7 @@ def test_a_run_cut_by_handlerd_stopping_runs_again(
     assert (knowledge / "handler" / "restart.md").read_text().count("- done") == 1
 
 
+@pytest.mark.rule("automation.deleting-it-stops-and-removes-all")
 def test_deleting_one_stops_its_run_and_removes_its_folder_and_state(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -333,6 +352,14 @@ def reviewer(daemon: Daemon, name: str, account: str = "fake") -> dict[str, Any]
         return r.json()
 
 
+@pytest.mark.rule(
+    "automation.says-what-it-does",
+    "runner.keeps-its-runs",
+    "try.now-on-or-off",
+    "agent-run.a-run-of-the-job",
+    "inbox.what-it-is-told",
+    "inbox.keeps-the-last-200",
+)
 def test_an_agent_run_s_result_goes_to_the_inbox(daemon: Daemon) -> None:
     reviewer(daemon, "nightly-reviewer")
     answer = '{ status = "attention", summary = "2 issues", issues = ["a", "b"] }'
@@ -369,6 +396,7 @@ def test_an_agent_run_s_result_goes_to_the_inbox(daemon: Daemon) -> None:
         assert [r["id"] for r in linked] == [run["id"]]
 
 
+@pytest.mark.rule("agent-run.a-run-of-the-job", "inbox.what-it-is-told")
 def test_an_agent_run_without_a_result_is_a_failure_in_the_inbox(daemon: Daemon) -> None:
     reviewer(daemon, "quiet-reviewer")
     write(daemon, "quiet", 'when = { every = "1h" }\nrun = { agent = "quiet-reviewer" }\n')
@@ -381,6 +409,9 @@ def test_an_agent_run_without_a_result_is_a_failure_in_the_inbox(daemon: Daemon)
     assert message["status"] == "failed" and message["summary"] == run["error"]
 
 
+@pytest.mark.rule(
+    "automation.with-problems-never-runs", "automation.unattended-only-where-the-terms-allow"
+)
 def test_an_agent_run_needs_its_result_and_its_account_s_terms(daemon: Daemon) -> None:
     with daemon.http() as c:
         r = c.post(
@@ -400,7 +431,7 @@ def test_an_agent_run_needs_its_result_and_its_account_s_terms(daemon: Daemon) -
         assert "its result has no required 'summary' string" in loose["problems"]
         echo = c.get("/v1/automations/terms-echo").json()
         assert echo["problems"] == []
-        assert "Check your Echo plan's terms" in echo["warnings"][0]
+        assert "Check your Echo subscription's terms" in echo["warnings"][0]
         assert "https://example.org/echo-terms" in echo["warnings"][0]
         login = c.get("/v1/automations/terms-login").json()
         assert any("refused" in p for p in login["problems"]), login
@@ -410,6 +441,11 @@ def test_an_agent_run_needs_its_result_and_its_account_s_terms(daemon: Daemon) -
         assert none["problems"] == ["run.agent: no agent named nobody of no project"]
 
 
+@pytest.mark.rule(
+    "automation.a-folder-of-yours",
+    "automation.off-until-you-turn-it-on",
+    "automation.says-what-it-does",
+)
 def test_one_made_from_a_definition_is_checked_written_and_turned_on(daemon: Daemon) -> None:
     reviewer(daemon, "form-reviewer")
     definition = {
@@ -455,6 +491,7 @@ def test_one_made_from_a_definition_is_checked_written_and_turned_on(daemon: Dae
     assert 'when = {every = "2h"}' in toml
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once", "script.reads-its-part-redacted")
 def test_a_schedule_runs_its_latest_slot_once(daemon: Daemon) -> None:
     folder = write(
         daemon, "hourly", 'when = { every = "1h" }\nrun = "cat $HANDLER_INPUT/event.json"\n'
@@ -474,3 +511,88 @@ def test_a_schedule_runs_its_latest_slot_once(daemon: Daemon) -> None:
     with daemon.http() as c:
         view = c.get("/v1/automations/hourly").json()
     assert datetime.fromisoformat(view["nextAt"]) == since + timedelta(hours=4)
+
+
+@pytest.mark.rule("stop.a-run-never-fires")
+def test_a_job_s_run_ending_starts_no_automation_a_brief_s_session_does(
+    daemon: Daemon, stub: StubLlm
+) -> None:
+    """An automation on `session.stopped`, on: a job's run (the Run button's) ends, then a
+    brief's session stops after a turn. Runs go one at a time in the order queued: once the
+    brief's has ended, the automation has run once, on the brief's session only.
+
+    If this fails: two automations start each other for ever, spending runs and money."""
+    automation(daemon, "no-loops")
+    enable(daemon, "no-loops")
+    job = reviewer(daemon, "a-job")
+    answer = {"status": "ok", "summary": "fine"}
+    with daemon.http() as c:
+        body = {"agentId": job["id"], "input": {"fields": {"fake": "valid", "answer": answer}}}
+        r = c.post("/v1/sessions", json=body)
+        assert r.status_code == 202, r.text
+        ran = r.json()
+        deadline = time.monotonic() + 30
+        while c.get(f"/v1/sessions/{ran['id']}").json()["state"] != "stopped":
+            assert time.monotonic() < deadline
+            time.sleep(0.2)
+        brief_body = {"model": {"account": "fake"}, "permissions": "bypass", "name": "a-brief"}
+        brief = c.post("/v1/agents", json=brief_body | {"interface": {"fields": FIELDS}})
+        assert brief.status_code == 201, brief.text
+        r = c.post("/v1/sessions", json={"agentId": brief.json()["id"], "input": {"fields": {}}})
+        assert r.status_code == 202, r.text
+    session = conversation(daemon, brief.json(), r.json())
+    [run] = wait_runs(daemon, "no-loops", 1)
+    assert run["sessionId"] == session["id"], run
+    assert all(r["sessionId"] != ran["id"] for r in runs(daemon, "no-loops"))
+
+
+@pytest.mark.rule("automation.a-refused-host-is-reported", "inbox.what-it-is-told")
+def test_a_run_with_a_host_refused_says_so_and_runs_again_once_allowed(daemon: Daemon) -> None:
+    """A run that completed with a host refused says so, in one message; one that failed has
+    Handler's reason, not the agent's guess; *Allow and run again* allows it, then runs."""
+    who = reviewer(daemon, "fetcher")
+    blocked = 'blocked = "fake: blocked pypi.org:443 2"'
+    answer = '{ status = "ok", summary = "fetched" }'
+    write(
+        daemon,
+        "fetch",
+        'when = { every = "1h" }\n[run]\nagent = "fetcher"\n'
+        f'input = {{ fields = {{ fake = "valid", answer = {answer}, {blocked} }} }}\n',
+    )
+    write(
+        daemon,
+        "fetch-fails",
+        'when = { every = "1h" }\n[run]\nagent = "fetcher"\n'
+        'input = { fields = { blocked = "fake: blocked files.pythonhosted.org:443 1" } }\n',
+    )
+    with daemon.http() as c:
+        assert c.post("/v1/automations/fetch/try", json={}).status_code == 202
+    [run] = wait_runs(daemon, "fetch", 1, timeout=60)
+    assert run["state"] == "succeeded", run
+    assert run["refused"] == [{"host": "pypi.org:443", "count": 2}]
+    assert "I could not reach pypi.org, so I used the local copy." in run["said"]
+    with daemon.http() as c:
+        told = [m for m in c.get("/v1/inbox").json() if m.get("runId") == run["id"]]
+    assert len(told) == 1  # the run's message, never the session's as well
+    (message,) = told
+    assert message["status"] == "attention" and message["summary"] == "fetched"
+    assert message["refused"] == run["refused"] and message["agentId"] == who["id"]
+
+    with daemon.http() as c:  # Allow and run again: the host saved for its agent, then a run
+        r = c.post("/v1/automations/fetch/try", json={"allow": ["elsewhere.org:443"]})
+        assert r.status_code == 409, r.text  # only a host refused to one of its runs
+        r = c.post("/v1/automations/fetch/try", json={"allow": ["pypi.org:443"]})
+        assert r.status_code == 202, r.text
+        assert c.get(f"/v1/agents/{who['id']}").json()["allow"] == ["pypi.org:443"]
+    again, first = wait_runs(daemon, "fetch", 2, timeout=60)
+    assert first["refused"] == [{"host": "pypi.org:443", "count": 2, "decision": "allowed"}]
+    assert again["state"] == "succeeded" and again["refused"] == []  # allowed: never listed
+
+    with daemon.http() as c:
+        assert c.post("/v1/automations/fetch-fails/try", json={}).status_code == 202
+    [failed] = wait_runs(daemon, "fetch-fails", 1, timeout=60)
+    reason = "files.pythonhosted.org:443 was blocked by the network filter"
+    assert failed["state"] == "failed" and failed["error"] == reason, failed
+    with daemon.http() as c:
+        told = [m for m in c.get("/v1/inbox").json() if m.get("runId") == failed["id"]]
+    assert [(m["status"], m["summary"]) for m in told] == [("failed", reason)]

@@ -8,18 +8,22 @@ from pydantic import ValidationError
 from handler_contracts import Schedule
 from handler_control.schedules import latest_slot, missed, next_slot
 
-TZ = datetime.now().astimezone().tzinfo
+
+def local(month: int, day: int, hour: int, minute: int = 0) -> datetime:
+    """That wall time of 2026 where the tests run, with that day's offset (not today's: DST)."""
+    return datetime(2026, month, day, hour, minute).astimezone()
 
 
 def at(day: int, hour: int, minute: int = 0) -> datetime:
     """2026-09-28 is a Monday: day 28 = mon, 29 = tue…"""
-    return datetime(2026, 9, day, hour, minute, tzinfo=TZ)
+    return local(9, day, hour, minute)
 
 
 def schedule(**rule: object) -> Schedule:
     return Schedule.model_validate(rule)
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 def test_every_keeps_its_cadence() -> None:
     s = schedule(every="30m")
     assert latest_slot(s, at(28, 8), at(28, 8, 29)) is None
@@ -28,6 +32,7 @@ def test_every_keeps_its_cadence() -> None:
     assert schedule(every="2h").every_minutes == 120
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 def test_every_after_the_computer_was_off() -> None:
     s = schedule(every="1h")
     slot = latest_slot(s, at(28, 8), at(28, 12, 10))  # off from 08:10 to 12:10
@@ -35,6 +40,7 @@ def test_every_after_the_computer_was_off() -> None:
     assert missed(s, at(28, 8), slot) == 3  # 09:00, 10:00, 11:00: only 12:00 runs
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 def test_at_runs_once_per_slot() -> None:
     s = schedule(at="08:30")
     turned_on = at(28, 9)  # after today's slot: nothing until tomorrow
@@ -44,6 +50,7 @@ def test_at_runs_once_per_slot() -> None:
     assert latest_slot(s, at(29, 8, 30), at(29, 20)) is None
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 def test_missed_slots_run_once() -> None:
     s = schedule(at="08:30")
     last = at(28, 8, 30)
@@ -54,16 +61,18 @@ def test_missed_slots_run_once() -> None:
     assert latest_slot(s, slot, now + timedelta(hours=1)) is None  # ran: not again
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 def test_days() -> None:
     s = schedule(at="08:30", days=["mon", "fri"])
     assert latest_slot(s, at(28, 9), at(30, 9)) is None  # wednesday: monday's slot is past
-    friday = datetime(2026, 10, 2, 8, 30, tzinfo=TZ)
+    friday = local(10, 2, 8, 30)
     assert next_slot(s, at(28, 9), at(30, 9)) == friday
     assert latest_slot(s, at(28, 9), friday + timedelta(minutes=1)) == friday
-    next_monday = datetime(2026, 10, 5, 9, 0, tzinfo=TZ)
+    next_monday = local(10, 5, 9, 0)
     assert missed(s, at(28, 8, 30), latest_slot(s, at(28, 8, 30), next_monday) or friday) == 1
 
 
+@pytest.mark.rule("schedule.the-latest-slot-once")
 @pytest.mark.parametrize(
     "rule",
     [

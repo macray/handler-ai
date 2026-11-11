@@ -1,5 +1,5 @@
 """Contract D.7 — what a paired device and handler say inside the envelopes
-(docs/dev/design/remote.md §4): on the control channel (`s: null`) and on an app's channel
+(remote design §4): on the control channel (`s: null`) and on an app's channel
 (`app:<name>`, H.8). Sessions' own channels carry plain ACP (F.4) and are not modelled here.
 
 Requests are JSON-RPC: each `…Params` model is a method's params, the model named next to it its
@@ -168,14 +168,36 @@ class PushKey(Document):
     public_key: str
 
 
-class PushSubscribeParams(Document):
-    """`_handler/remote/push_subscribe` → PushSubscription. No endpoint: push off."""
+class PushKeys(Document):
+    """A browser's push subscription keys (RFC 8291), base64url as `PushSubscription.toJSON()`."""
 
-    endpoint: str | None = None  # https
+    p256dh: str = Field(alias="p256dh")  # the browser's P-256 public key, uncompressed
+    auth: str  # its 16-byte secret
+
+
+class WebPush(Document):
+    """A device's Web Push subscription: where handlerd posts, and the keys it encrypts to."""
+
+    endpoint: str  # https, a browser push service's
+    keys: PushKeys
+
+
+class PushSubscribeParams(Document):
+    """`_handler/remote/push_subscribe` → PushSubscription. No subscription: push off."""
+
+    subscription: WebPush | None = None
 
 
 class PushSubscription(Document):
     subscribed: bool
+
+
+class PushTest(Document):
+    """`_handler/remote/push_test` → this: one push sent now to the asking device (H.10), the
+    same as a message's; `problem` says why its push service did not take it."""
+
+    sent: bool
+    problem: str | None = None
 
 
 class DetachParams(Document):

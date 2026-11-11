@@ -4,13 +4,14 @@ version = "0.1.0"
 license = "Apache-2.0"
 description = "Contract A (sandbox) implementation on rootless podman"
 requires-python = ">=3.12"
-dependencies = ["handler-contracts"]
+dependencies = ["handler-contracts", "handler-sandbox-kit"]
 
 [project.scripts]
 handler-sandbox-podman = "handler_sandbox_podman.cli:main"
 
 [tool.uv.sources]
 handler-contracts = { workspace = true }
+handler-sandbox-kit = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

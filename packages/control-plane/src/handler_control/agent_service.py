@@ -74,7 +74,8 @@ class AgentService:
         origin = self.set_up_from(body, current)
         name = save_rules.agent_name(body, project)
         folder = project.folder if project else body.scope
-        settings = save_rules.checked_settings(self.settings, body, folder)
+        given = project.addons if project else []
+        settings = save_rules.checked_settings(self.settings, body, folder, given)
         if project is not None:
             others = [a.name or "" for a in self.projects.agents(project) if a is not current]
             save_rules.check_unique_names([name or "", *others])
@@ -82,6 +83,8 @@ class AgentService:
         elif body.app is None and not body.chat:
             save_rules.check_outside_identity(self.registry, settings.scope, name, current)
         save_rules.check_risks(current.settings if current else None, settings, body)
+        who = f"agent:{current.id if current else name or 'new'}"
+        save_rules.check_toolbox(self.settings, [(settings, given, who)], body.toolbox_adds)
         save_rules.check_skills(self.settings, body, project)
         save_rules.check_instructions(body.instructions, body.interface)
         return settings, origin
@@ -148,15 +151,12 @@ class AgentService:
 
     async def delete(self, record: AgentRecord, *, with_home: bool = False) -> None:
         """Removed with all it involves. Unless its home goes too (`with_home`: its project or
-        its app removed), an app's part stays (removed with its app, H.14) and a project keeps
-        at least one agent."""
+        its app removed), an app's part stays (removed with its app, H.14). A project's last
+        agent goes too: the project stays, with no agent."""
         project = self.projects.get(record.project_id or "")
-        if not with_home:
-            if record.app is not None:
-                why = f"it is one of the app {record.app}'s parts: removed with it"
-                raise AgentServiceError(409, "an app's agent", why)
-            if project is not None and len(self.projects.agents(project)) == 1:
-                raise AgentServiceError(409, "a project needs an agent", "add another one first")
+        if not with_home and record.app is not None:
+            why = f"it is one of the app {record.app}'s parts: removed with it"
+            raise AgentServiceError(409, "an app's agent", why)
         await self.stop(record)
         await self.improvements.forget(record.id)
         await self.checks.forget(record.id)

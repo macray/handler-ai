@@ -3,13 +3,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "SourceItem": {
-      "description": "Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an\nagents file's content) or an addon (`addons/<name>/`).",
+      "description": "Something a source offers (D.26): an app (`apps/<name>/`), agents (`agents/<name>/`, an\nagents file's content) or a tool (`tools/<name>/`).",
       "properties": {
         "kind": {
           "enum": [
             "app",
             "agents",
-            "addon"
+            "addon",
+            "system-package"
           ],
           "title": "Kind",
           "type": "string"

@@ -1,6 +1,6 @@
 """Agents — an agent is a model, a harness on an account or a provider (what; a session may run
 with another, for that session only) working in a folder (where), with its own settings: network
-(mode, enforcement, extra allowed hosts), confinement, permission mode, bindings (G.3), knowledge
+(mode, enforcement, extra allowed hosts), confinement, permission mode, addons (G.3), knowledge
 folders (D.5) and a display (A.6). A registered endpoint that starts nothing; editable, with a
 stable id.
 
@@ -30,6 +30,7 @@ from pydantic import AwareDatetime, ConfigDict, Field
 
 from handler_contracts import (
     AbsolutePath,
+    AddonUse,
     AgentOrigin,
     AgentSettings,
     CacheSharing,
@@ -48,7 +49,7 @@ LAUNCHER_START_SECONDS = 10.0
 @dataclass
 class LiveConnection:
     id: str
-    sandbox: str  # sandbox (container) name, used for set-egress / set-allow
+    sandbox: str  # sandbox (container) name, used for set-egress / set-allow / set-blocked
     since: datetime
     process: Any  # asyncio.subprocess.Process of handler-sandbox-<impl>
     egress_base: list[str] | None = None  # filtered sandboxes: see StartedAgent.egress_base
@@ -132,12 +133,18 @@ class AgentRecord(CheckedSettings):
     skills: list[str] = []  # the skills it picked (D.17)
     origin: AgentOrigin | None = None  # what it is set up from (D.23, H.2)
     project_skills: list[str] = []  # resolved: its project's (D.17)
+    project_addons: list[AddonUse] = []  # resolved: its project's (G.3)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     last_used_at: AwareDatetime | None = None
     connections: dict[str, LiveConnection] = Field(default_factory=dict, exclude=True)
     events: deque[dict[str, Any]] = Field(
         default_factory=lambda: deque(maxlen=MAX_EVENTS), exclude=True
     )
+
+    @property
+    def addon_uses(self) -> list[AddonUse]:
+        """Its own addons, then its project's (G.3)."""
+        return [*self.addons, *self.project_addons]
 
     @property
     def settings(self) -> CheckedSettings:
@@ -213,6 +220,18 @@ class AgentRegistry:
         record.egress = egress
         self.save()
 
+    def decide_host(self, record: AgentRecord, host: str, keep_blocked: bool) -> None:
+        """A host refused in one of its sessions, allowed or kept blocked (its card's answer):
+        saved in that list, off the other (A.3); `apply_network` then applies it live."""
+        allow = {h for h in record.allow if h != host}
+        blocked = {h for h in record.blocked if h != host}
+        (blocked if keep_blocked else allow).add(host)
+        lists = {"allow": sorted(allow), "blocked": sorted(blocked)}
+        record.set_settings(
+            CheckedSettings.model_validate(record.model_dump(include=_SETTINGS) | lists)
+        )
+        self.save()
+
     def touch(self, record: AgentRecord) -> None:
         """It is being used now: lists show the most recently used first."""
         record.last_used_at = datetime.now(UTC)
@@ -220,6 +239,17 @@ class AgentRegistry:
 
     def add_event(self, record: AgentRecord, connection: str, event: dict[str, str]) -> None:
         record.events.append({"t": datetime.now(UTC), "connection": connection} | event)
+
+
+def addons_in_use(agents: Iterable[AgentRecord]) -> dict[str, list[str]]:
+    """Each addon saved agents use (their own or their project's, G.3) → those agents' ids. Not
+    those on the model alone: no sandbox, no addons."""
+    found: dict[str, list[str]] = {}
+    for agent in agents:
+        if not agent.model_alone:
+            for use in agent.addon_uses:
+                found.setdefault(use.addon, []).append(agent.id)
+    return found
 
 
 # ── live connections (A.4) ──────────────────────────────────────────────
@@ -233,7 +263,7 @@ def chats(agents: Iterable[AgentRecord]) -> list[AgentRecord]:
 
 async def apply_network(record: AgentRecord, egress: Enforcement | None = None) -> list[str]:
     """On an agent's running filtered sandboxes: the allow-list as now set (the required
-    hosts as they started, its own as now), and `egress` if given (A.4). Other changes (mode,
+    hosts as they started, its own as now), the hosts kept blocked, and `egress` if given (A.4). Other changes (mode,
     bindings…) apply to new connections only. Returns failures."""
     failures = []
     for conn in list(record.connections.values()):
@@ -241,6 +271,8 @@ async def apply_network(record: AgentRecord, egress: Enforcement | None = None) 
             continue  # not a filtered sandbox
         allow = sorted(set(conn.egress_base) | set(record.allow))
         error = await _on_sandbox(conn, sandbox_process.set_allow, allow)
+        if error is None:
+            error = await _on_sandbox(conn, sandbox_process.set_blocked, list(record.blocked))
         if error is None and egress:
             error = await sandbox_process.set_egress(conn.sandbox, egress)
         if error:

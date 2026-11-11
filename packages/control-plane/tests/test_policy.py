@@ -38,23 +38,39 @@ def only(actions: list[ToAgent | ToClient], kind: type[ToAgent | ToClient]) -> d
 
 
 # P1
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
 def test_initialize_forces_capabilities_off() -> None:
-    caps = {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": True, "other": 1}
-    out = only(policy().from_client(req(0, "initialize", clientCapabilities=caps)), ToAgent)
+    """Any capability Handler does not know is dropped: a client power ACP adds one day is not
+    offered by default."""
+    events: list[str] = []
+    caps = {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": True, "browser": 1}
+    p = policy(on_event=events.append)
+    out = only(p.from_client(req(0, "initialize", clientCapabilities=caps)), ToAgent)
     sent = out["params"]["clientCapabilities"]
-    assert sent == {
-        "fs": {"readTextFile": False, "writeTextFile": False},
-        "terminal": False,
-        "other": 1,
-    }
+    assert sent == {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}
+    assert events == ["client capabilities dropped: browser"]
+    out = only(policy().from_client(req(1, "initialize")), ToAgent)
+    assert out["params"]["clientCapabilities"]["terminal"] is False
 
 
 # P2
+@pytest.mark.rule("policy.works-only-in-its-folder")
+def test_any_request_with_a_cwd_is_checked() -> None:
+    """Whatever its method (a `session/fork` ACP adds one day): no MCP servers added to it."""
+    p = policy(session_defaults=SessionDefaults(mcp_servers=[BROWSER]))
+    out = only(p.from_client(req(8, "session/fork", sessionId="s1", cwd="/etc")), ToClient)
+    assert out["error"]["data"] == {"policy": "P2"}
+    sent = only(p.from_client(req(9, "session/fork", sessionId="s1", cwd=SCOPE)), ToAgent)
+    assert "mcpServers" not in sent["params"]
+
+
+@pytest.mark.rule("policy.works-only-in-its-folder")
 @pytest.mark.parametrize("cwd", [SCOPE, f"{SCOPE}/sub", f"{SCOPE}/sub/../other"])
 def test_cwd_inside_scope_is_forwarded(cwd: str) -> None:
     only(policy().from_client(new_session(cwd=cwd)), ToAgent)
 
 
+@pytest.mark.rule("policy.works-only-in-its-folder")
 @pytest.mark.parametrize(
     "cwd", ["/etc", f"{SCOPE}/../other", "/home/you/code/projectx", "relative", None]
 )
@@ -66,6 +82,7 @@ def test_cwd_outside_scope_is_refused(cwd: Any) -> None:
 
 
 # P3
+@pytest.mark.rule("policy.mcp-servers-keep-to-its-network")
 def test_mcp_http_server_must_be_allowed() -> None:
     ok = {"type": "http", "name": "a", "url": "https://mcp.example.org/x", "headers": []}
     bad = {"type": "http", "name": "b", "url": "https://evil.test/x", "headers": []}
@@ -85,26 +102,49 @@ def test_mcp_http_server_must_be_allowed() -> None:
 
 
 # P4
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
 @pytest.mark.parametrize("method", ["fs/read_text_file", "fs/write_text_file", "terminal/create"])
 def test_agent_fs_terminal_requests_never_reach_client(method: str) -> None:
     out = only(policy().from_agent(req(900, method, path="/etc/passwd")), ToAgent)
     assert out["id"] == 900 and out["error"]["code"] == -32003
 
 
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
 def test_agent_fs_notification_dropped() -> None:
     assert policy().from_agent({"jsonrpc": "2.0", "method": "terminal/output", "params": {}}) == []
 
 
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
+@pytest.mark.parametrize("method", ["browser/open", "_vendor/read_file", "$/x"])
+def test_agent_requests_handler_does_not_know_are_refused(method: str) -> None:
+    out = only(policy().from_agent(req(901, method)), ToAgent)
+    assert out["id"] == 901 and out["error"]["data"] == {"policy": "P4"}
+
+
+@pytest.mark.rule("policy.never-the-client-s-files-or-terminal")
+def test_agent_notifications_handler_does_not_know_are_dropped() -> None:
+    assert policy().from_agent({"jsonrpc": "2.0", "method": "browser/opened", "params": {}}) == []
+
+
+@pytest.mark.rule("policy.the-rest-passes-unchanged")
+def test_a_permission_request_reaches_the_client() -> None:
+    ask = req(902, "session/request_permission", sessionId="s1", options=[])
+    assert only(policy().from_agent(ask), ToClient) == ask
+
+
 # P5
+@pytest.mark.rule("policy.heartbeats-stop-at-handlerd")
 def test_client_heartbeat_dropped() -> None:
     assert policy().from_client({"jsonrpc": "2.0", "method": "$/ping"}) == []
 
 
+@pytest.mark.rule("policy.heartbeats-stop-at-handlerd")
 def test_client_dollar_request_is_not_dropped() -> None:
     only(policy().from_client(req(3, "$/cancel_request")), ToAgent)
 
 
 # P6
+@pytest.mark.rule("policy.extensions-pass-and-are-logged")
 def test_extensions_forwarded_and_logged() -> None:
     events: list[str] = []
     p = policy(on_event=events.append)
@@ -125,6 +165,7 @@ NEW_RESULT = {
 }
 
 
+@pytest.mark.rule("policy.starts-in-its-own-mode")
 def test_session_defaults_applied_before_client_sees_session() -> None:
     p = policy(session_defaults=DEFAULTS)
     only(p.from_client(new_session(i=5)), ToAgent)
@@ -143,6 +184,7 @@ def test_session_defaults_applied_before_client_sees_session() -> None:
     ]
 
 
+@pytest.mark.rule("policy.starts-in-its-own-mode")
 def test_session_defaults_applied_after_session_load() -> None:
     """A loaded session runs in a new sandbox: the agent's mode applies again (P7)."""
     p = policy(session_defaults=DEFAULTS)
@@ -156,6 +198,7 @@ def test_session_defaults_applied_after_session_load() -> None:
     assert final["result"]["modes"]["currentModeId"] == "bypassPermissions"
 
 
+@pytest.mark.rule("policy.starts-in-its-own-mode")
 def test_session_defaults_failure_is_an_error_for_the_client() -> None:
     p = policy(session_defaults=DEFAULTS)
     p.from_client(new_session(i=5))
@@ -166,6 +209,7 @@ def test_session_defaults_failure_is_an_error_for_the_client() -> None:
     assert "unknown mode" in out["error"]["message"]
 
 
+@pytest.mark.rule("policy.starts-in-its-own-mode")
 def test_session_new_error_passes_through() -> None:
     p = policy(session_defaults=DEFAULTS)
     p.from_client(new_session(i=5))
@@ -173,6 +217,7 @@ def test_session_new_error_passes_through() -> None:
     assert only(p.from_agent(error), ToClient) == error
 
 
+@pytest.mark.rule("policy.the-rest-passes-unchanged")
 def test_no_defaults_means_plain_forwarding() -> None:
     p = policy()
     p.from_client(new_session(i=5))
@@ -180,6 +225,7 @@ def test_no_defaults_means_plain_forwarding() -> None:
     assert only(p.from_agent(response), ToClient) == response
 
 
+@pytest.mark.rule("policy.the-rest-passes-unchanged")
 def test_other_traffic_forwarded_unchanged() -> None:
     p = policy()
     update = {"jsonrpc": "2.0", "method": "session/update", "params": {"x": 1}}
@@ -193,6 +239,7 @@ BROWSER = StdioMcpServer(name="browser", command="playwright-mcp", args=["--isol
 BROWSER_WIRE = {"name": "browser", "command": "playwright-mcp", "args": ["--isolated"], "env": []}
 
 
+@pytest.mark.rule("policy.its-tools-mcp-servers-win")
 @pytest.mark.parametrize("method", ["session/new", "session/load", "session/resume"])
 def test_platform_mcp_servers_added_to_every_session(method: str) -> None:
     p = policy(session_defaults=SessionDefaults(mcp_servers=[BROWSER]))
@@ -203,6 +250,7 @@ def test_platform_mcp_servers_added_to_every_session(method: str) -> None:
     assert out["params"]["mcpServers"] == [BROWSER_WIRE]
 
 
+@pytest.mark.rule("policy.its-tools-mcp-servers-win")
 def test_platform_mcp_server_replaces_a_client_one_with_its_name() -> None:
     events: list[str] = []
     p = policy(session_defaults=SessionDefaults(mcp_servers=[BROWSER]), on_event=events.append)
@@ -212,12 +260,14 @@ def test_platform_mcp_server_replaces_a_client_one_with_its_name() -> None:
     assert events == ["client MCP server 'browser' replaced by the platform's"]
 
 
+@pytest.mark.rule("policy.its-tools-mcp-servers-win")
 def test_malformed_client_mcp_servers_are_left_to_the_agent() -> None:
     p = policy(session_defaults=SessionDefaults(mcp_servers=[BROWSER]))
     out = only(p.from_client(new_session(mcpServers="nope")), ToAgent)
     assert out["params"]["mcpServers"] == "nope"
 
 
+@pytest.mark.rule("policy.mcp-servers-keep-to-its-network")
 def test_platform_http_mcp_server_is_checked_by_p3() -> None:
     docs = HttpMcpServer(type="http", name="docs", url="https://mcp.example.org/x")
     p = policy(network=NoNetwork(mode="none"), session_defaults=SessionDefaults(mcp_servers=[docs]))
@@ -228,6 +278,7 @@ def test_platform_http_mcp_server_is_checked_by_p3() -> None:
 # P9
 
 
+@pytest.mark.rule("policy.instructions-go-once-with-the-first-prompt")
 def test_instructions_go_before_the_first_prompt_of_a_new_session() -> None:
     p = policy(instructions="Answer in French.")
     p.from_client(new_session(i=5))
@@ -239,6 +290,7 @@ def test_instructions_go_before_the_first_prompt_of_a_new_session() -> None:
     assert only(p.from_client(second), ToAgent) == second
 
 
+@pytest.mark.rule("policy.instructions-go-once-with-the-first-prompt")
 def test_instructions_wait_for_the_session_defaults() -> None:
     p = policy(session_defaults=DEFAULTS, instructions="Answer in French.")
     p.from_client(new_session(i=5))
@@ -250,6 +302,7 @@ def test_instructions_wait_for_the_session_defaults() -> None:
     assert sent["params"]["prompt"] == [{"type": "text", "text": "Answer in French."}, image]
 
 
+@pytest.mark.rule("policy.instructions-go-once-with-the-first-prompt")
 def test_a_loaded_session_is_not_instructed_again() -> None:
     p = policy(instructions="Answer in French.")
     p.from_client(req(6, "session/load", sessionId="s9", cwd=SCOPE, mcpServers=[]))

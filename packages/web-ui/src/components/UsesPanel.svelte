@@ -20,8 +20,8 @@
   const WORD: Record<UseKind, string> = {
     agent: "agent",
     skill: "skill",
-    knowledge: "knowledge",
-    addon: "addon",
+    knowledge: "notes",
+    addon: "tool",
     account: "account",
     provider: "provider",
     automation: "automation",

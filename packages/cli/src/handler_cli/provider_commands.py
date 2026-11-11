@@ -10,11 +10,17 @@ handler provider add NAME --from TEMPLATE [--key] [--endpoint PROTOCOL=URL …] 
                                      a provider from a template. --key: ask for its key (hidden,
                                      or read from stdin). --endpoint: another URL for a protocol
                                      (e.g. a server on another port). --model: the models it offers,
-                                     instead of the template's. --area: the areas it
-                                     is made for (Work, Personal…, or any; none: it runs nowhere a
-                                     project has an area)
+                                     instead of the template's; a server on this computer
+                                     (llamacpp, ollama) without one is asked what it serves.
+                                     --area: the areas it is made for (Work, Personal…, or any;
+                                     none: it runs nowhere a project has an area)
+handler provider test NAME           ask its server for its models, from where a sandbox would:
+                                     ready once it answers, else why not
 handler provider rm NAME             it and its key (agents using it cannot start until given
                                      another)
+
+A model server on this computer must listen where sandboxes reach it, not only on 127.0.0.1:
+llama-server --host 0.0.0.0 --jinja, or OLLAMA_HOST=0.0.0.0 for Ollama.
 
 Models' details and per-harness files are edited in the web UI (Settings → Model access) or in
 ~/.config/handler-ai/providers/NAME.toml.
@@ -42,6 +48,7 @@ def add_parser(sub: Any) -> None:
     add.add_argument("--model", action="append", metavar="ID", default=[])
     add.add_argument("--area", action="append", metavar="AREA", default=[])
     add.add_argument("--description")
+    p.add_parser("test").add_argument("name")
     p.add_parser("rm").add_argument("name")
 
 
@@ -52,6 +59,8 @@ def dispatch(args: argparse.Namespace) -> int:
         for p in d.call("GET", "/v1/providers"):
             status = p["status"] if p["status"] == "ready" else "; ".join(
                 p.get("problems") or [p.get("error") or p["status"]])  # fmt: skip
+            if p["status"] == "ready" and p.get("local"):
+                status = reach_status(p.get("reached"))
             rows.append(
                 [
                     p["name"],
@@ -73,7 +82,10 @@ def dispatch(args: argparse.Namespace) -> int:
         table(rows)
     elif args.provider_cmd == "add":
         made = d.call("POST", "/v1/providers", request(d, args))
-        print(f"{made['name']}: created ({made['status']})")
+        status = reach_status(made.get("reached")) if made.get("local") else made["status"]
+        print(f"{made['name']}: created ({status})")
+    elif args.provider_cmd == "test":
+        return test(d, args.name)
     else:
         d.call("DELETE", f"/v1/providers/{args.name}")
         print(f"{args.name}: removed")
@@ -98,6 +110,17 @@ def request(d: Daemon, args: argparse.Namespace) -> dict[str, Any]:
     if args.model:
         known = {m["id"]: m for m in models}
         models = [known.get(model, {"id": model}) for model in args.model]
+    elif not models:  # a server on this computer: what it serves
+        reach = d.call("POST", "/v1/providers/test", {"endpoints": endpoints})
+        if not reach["ok"]:
+            hint = f"\n{reach['hint']}" if reach.get("hint") else ""
+            raise ClientError(
+                f"{args.template}: not reached: {reach['error']}{hint}\n"
+                "Start the server, or name its models with --model ID"
+            )
+        models = reach["models"]
+        if not models:
+            raise ClientError(f"{args.template}: the server serves no model yet")
     body: dict[str, Any] = {
         "name": args.name,
         "description": args.description or template.get("description"),
@@ -111,3 +134,30 @@ def request(d: Daemon, args: argparse.Namespace) -> dict[str, Any]:
     elif template.get("needsKey"):
         raise ClientError(f"{args.template} needs a key: add --key")
     return body
+
+
+def reach_status(reached: dict[str, Any] | None) -> str:
+    """A server on this computer: ready only once a test reached it."""
+    if reached is None:
+        return "not tested: handler provider test NAME"
+    return "ready" if reached["ok"] else f"not reached: {reached['error']}"
+
+
+def test(d: Daemon, name: str) -> int:
+    """Ask its server for its models (D.12): what it serves, and which of them it lists."""
+    reach = d.call("POST", "/v1/providers/test", {"provider": name})
+    asked = ", ".join(reach["urls"])
+    if not reach["ok"]:
+        print(f"{name}: not reached: {reach['error']}")
+        if reach.get("hint"):
+            print(reach["hint"])
+        return 1
+    print(f"{name}: ready, {asked} answered")
+    provider = next(p for p in d.call("GET", "/v1/providers") if p["name"] == name)
+    listed = {m["id"] for m in provider.get("models", [])}
+    rows = [["SERVED", "CONTEXT", f"IN {name}"]]
+    for m in reach["models"]:
+        context = str(m["contextWindow"]) if m.get("contextWindow") else "-"
+        rows.append([m["id"], context, "yes" if m["id"] in listed else "no"])
+    table(rows) if len(rows) > 1 else print("it serves no model yet")
+    return 0

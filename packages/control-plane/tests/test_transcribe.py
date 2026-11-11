@@ -3,6 +3,7 @@ recording at its `transcriptions` endpoint."""
 
 import asyncio
 import base64
+import logging
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,7 @@ def heard(settings: Settings, model: str, audio: str = AUDIO) -> TranscribeRespo
 def test_the_interface_states_the_contract_models() -> None:
     interface = services.load("transcribe/v1")
     assert set(interface.errors) == {"refused", "limit", "unavailable"}
+    assert interface.limits["maxAudioBytes"] == MAX_AUDIO  # the one the connector checks
     tool = interface.tools["transcribe_audio"].definition
     assert tool["inputSchema"] == TranscribeRequest.model_json_schema(by_alias=True)
     assert tool["outputSchema"] == TranscribeResponse.model_json_schema(
@@ -58,6 +60,7 @@ def test_the_interface_states_the_contract_models() -> None:
     )
 
 
+@pytest.mark.rule("voice.where-it-goes-is-said")
 def test_speech_models_are_listed_with_where_they_run(settings: Settings) -> None:
     found = {m.model: m for m in transcribe.models(settings)}
     assert set(found) == {"ears/whisper", "cloud/voxtral"}
@@ -65,6 +68,7 @@ def test_speech_models_are_listed_with_where_they_run(settings: Settings) -> Non
     assert not found["cloud/voxtral"].local
 
 
+@pytest.mark.rule("voice.only-a-speech-model-writes-it-down")
 def test_a_recording_is_written_down_at_the_transcriptions_endpoint(
     settings: Settings, stub: Stub
 ) -> None:
@@ -79,6 +83,7 @@ def test_a_recording_is_written_down_at_the_transcriptions_endpoint(
     assert 'name="language"' in sent and 'filename="speech.ogg"' in sent
 
 
+@pytest.mark.rule("voice.only-a-speech-model-writes-it-down")
 def test_only_a_speech_model_writes_down(settings: Settings) -> None:
     with pytest.raises(ServiceError) as refused:
         heard(settings, "ears/chat")
@@ -87,6 +92,7 @@ def test_only_a_speech_model_writes_down(settings: Settings) -> None:
         transcribe.check(settings, "chat/m")
 
 
+@pytest.mark.rule("voice.nothing-listens-until-pressed")
 def test_a_failing_provider_and_a_large_recording(settings: Settings, stub: Stub) -> None:
     stub.answers = [503]
     with pytest.raises(ServiceError) as failed:
@@ -98,6 +104,7 @@ def test_a_failing_provider_and_a_large_recording(settings: Settings, stub: Stub
     assert limit.value.code == "limit"
 
 
+@pytest.mark.rule("voice.only-a-speech-model-writes-it-down")
 def test_a_speech_model_is_never_a_chat_model(settings: Settings) -> None:
     with pytest.raises(ValueError):
         llm.check(settings.providers_dir, "cloud", None)  # no chat endpoint
@@ -106,6 +113,7 @@ def test_a_speech_model_is_never_a_chat_model(settings: Settings) -> None:
     assert llm.target_of(settings, "ears", None).model == "chat"
 
 
+@pytest.mark.rule("voice.off-until-a-speech-model-is-chosen")
 def test_voice_is_off_until_a_speech_model_is_chosen(settings: Settings, stub: Stub) -> None:
     store = VoiceStore(settings)
     assert store.view().model is None and not store.listens()
@@ -120,3 +128,22 @@ def test_voice_is_off_until_a_speech_model_is_chosen(settings: Settings, stub: S
     (settings.providers_dir / "ears.toml").unlink()
     assert VoiceStore(settings).view().problem and not store.listens()
     assert Path(settings.state_dir / "voice.json").is_file()
+
+
+@pytest.mark.rule("voice.never-kept")
+def test_neither_the_recording_nor_its_text_is_kept(
+    settings: Settings, stub: Stub, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = VoiceStore(settings)
+    store.put(VoiceSettings(model="ears/whisper"))
+    stub.answers = ["Call the bank at ten"]
+    caplog.set_level(logging.DEBUG)
+    speech = SpeechRequest(audio=AUDIO, format="ogg")
+    assert asyncio.run(store.hear(speech)).text == "Call the bank at ten"
+    assert "OggS fake opus" in stub.requests[-1][2]["multipart"]  # sent to the provider
+    kept = [p for p in tmp_path.rglob("*") if p.is_file()]
+    for path in kept:
+        held = path.read_bytes()
+        assert b"OggS fake opus" not in held and b"Call the bank" not in held, path
+        assert AUDIO.encode() not in held, path
+    assert "Call the bank" not in caplog.text and "OggS" not in caplog.text

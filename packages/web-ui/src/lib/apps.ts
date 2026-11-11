@@ -1,5 +1,6 @@
 // What an app needs and may reach (H.2, H.9, H.11), in sentences for its Manage dialog.
 import { api } from "./api";
+import { slug } from "./text";
 import type { Agent, App, AppFileNeed, Automation, HandlerNeed, AppManifestNeeds, AppManifestSuggestedAutomation, UseRef } from "./contracts.gen";
 
 /** What an installed version may reach, with what was given its needs (`app`'s folders and
@@ -77,7 +78,6 @@ export function dataNeed(app: Pick<App, "files" | "agents">): AppFileNeed | unde
 /** The automation one of an app's suggestions makes: its name and definition (its agent's names
  *  are written by handlerd from the agent given, I.1). */
 export function suggested(app: Pick<App, "name">, s: AppManifestSuggestedAutomation): { name: string; definition: Automation } {
-  const slug = s.description.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const name = `${app.name}-${slug}`.slice(0, 64).replace(/-+$/, "");
+  const name = `${app.name}-${slug(s.description)}`.slice(0, 64).replace(/-+$/, "");
   return { name, definition: { apiVersion: "handler.automation/v1", description: s.description, when: s.when, app: app.name, run: { agent: s.run.agent, input: s.run.input } } };
 }

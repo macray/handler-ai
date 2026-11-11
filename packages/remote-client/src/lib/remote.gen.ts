@@ -176,15 +176,22 @@ messages: InboxMessage[]
 }
 /**
  * What handler tells a person (the person's inbox, like mail): an app's notification
- * (H.9), an automation's result or failure (I.3). Shown on the computer and pushed to the
- * person's phones (content-free: the text travels encrypted when the phone asks for it).
+ * (H.9), an automation's result or failure (I.3), a plan stopped or a step that completed
+ * with hosts refused (D.27), the hosts refused to a session while nobody could answer (F.9).
+ * Shown on the computer and pushed to the person's phones (content-free: the text travels
+ * encrypted when the phone asks for it).
  */
 
 export interface InboxMessage {
 id: string
-source: ("app" | "automation")
+source: ("app" | "automation" | "plan" | "session")
 name: string
 agent?: (string | null)
+agentId?: (string | null)
+planId?: (string | null)
+step?: (number | null)
+refused?: RefusedHost[]
+said?: (string | null)
 person: string
 title: string
 status?: (("ok" | "attention" | "failed") | null)
@@ -198,17 +205,49 @@ app?: (string | null)
 at: string
 read?: boolean
 }
+/**
+ * A host the network filter refused to a run, or to a session while nobody could answer, and
+ * the agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your
+ * answer (as the agent's lists say now).
+ */
+
+export interface RefusedHost {
+host: string
+count: number
+decision?: (("allowed" | "kept blocked") | null)
+}
 
 export interface PushKey {
 publicKey: string
 }
 
 export interface PushSubscribeParams {
-endpoint?: (string | null)
+subscription?: (WebPush | null)
+}
+/**
+ * A device's Web Push subscription: where handlerd posts, and the keys it encrypts to.
+ */
+
+export interface WebPush {
+endpoint: string
+keys: PushKeys
+}
+/**
+ * A browser's push subscription keys (RFC 8291), base64url as `PushSubscription.toJSON()`.
+ */
+
+export interface PushKeys {
+p256dh: string
+auth: string
 }
 
 export interface PushSubscription {
 subscribed: boolean
+}
+
+export interface PushTest {
+sent: boolean
+problem?: (string | null)
 }
 
 export interface SessionList {
@@ -225,7 +264,7 @@ label?: (string | null)
 projectId?: (string | null)
 project?: (string | null)
 agent?: (string | null)
-origin: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask")
+origin: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask" | "plan")
 harness: (string | null)
 scope: string
 acpSessionId?: (string | null)

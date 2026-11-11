@@ -1,17 +1,24 @@
 """`handler terminal`: this terminal attached to a harness's own terminal program in its sandbox
-(D.16). handlerd starts the sandbox, then this process becomes the sandbox's `attach` command: raw
+(D.16). handlerd starts the sandbox, then this process runs the sandbox's `attach` command: raw
 while it runs (every key goes to the program, Ctrl-C included), resized with this terminal, its
 exit code the program's; closing the terminal stops the sandbox. handlerd is not in between, so it
-can restart meanwhile.
+can restart meanwhile. On a terminal, `attach` runs on a terminal of its own relayed to this one,
+so that the paste key first puts the clipboard's image where the program reads it (paste.py);
+stdin piped, this process becomes `attach`.
 """
 
 import os
 import re
+import shutil
+import sys
+from pathlib import Path
 from typing import Any, NoReturn
 
 from handler_contracts import TerminalStart, TerminalStarted, terminal_path
 
+from . import paste
 from .client import Daemon
+from .on_terminal import on_terminal
 
 _TERM = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 START_TIMEOUT = 600.0  # seconds: handlerd's own limit (a first start may build the proxy's image)
@@ -36,4 +43,7 @@ def run(
     body = _start(args, model, folder).model_dump(mode="json", by_alias=True, exclude_none=True)
     raw = d.call("POST", terminal_path(agent_id), body, timeout=START_TIMEOUT)
     started = TerminalStarted.model_validate(raw)
-    os.execvp(started.attach[0], started.attach)
+    if not sys.stdin.isatty():
+        os.execvp(started.attach[0], started.attach)
+    argv = [shutil.which(started.attach[0]) or started.attach[0], *started.attach[1:]]
+    sys.exit(on_terminal(argv, os.environ, os.getcwd(), paste.watcher(Path(started.paste))))

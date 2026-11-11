@@ -18,7 +18,8 @@ handler setup                # starts handlerd as a user service, checks this ma
 handler ui                   # opens the web UI
 ```
 
-The first `handler setup` downloads and builds the images: from a few minutes to half an hour.
+The first `handler setup` downloads and builds the images, the toolbox and the agent program you
+choose: about 1 GB, from a minute to a quarter of an hour.
 Without uv: `curl -fsSL https://github.com/macray/handler-ai/releases/latest/download/install.sh | sh`
 installs it, then Handler. To update: `uv tool upgrade handler-ai`.
 

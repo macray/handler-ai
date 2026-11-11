@@ -12,7 +12,7 @@ import pytest
 from provider_stub import Stub
 
 from handler_contracts import LlmUsage
-from handler_control import model_agent
+from handler_control import model_agent, service_router
 from handler_control.model_agent import ModelAgent
 from handler_control.settings import Settings
 
@@ -79,6 +79,7 @@ def run[T](coro: Any) -> T:
     return asyncio.run(coro)
 
 
+@pytest.mark.rule("alone.reads-only-its-notes-and-conversation", "alone.a-session-like-any")
 def test_a_conversation_is_one_call_per_turn_with_its_history(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -102,6 +103,7 @@ def test_a_conversation_is_one_call_per_turn_with_its_history(
 
 
 @pytest.mark.parametrize("provider", ["chat", "claude"])
+@pytest.mark.rule("alone.no-tools", "llm.text-in-text-out")
 def test_no_tools_are_ever_offered(
     settings: Settings, stub: Stub, tmp_path: Path, provider: str
 ) -> None:
@@ -139,6 +141,7 @@ def test_no_tools_are_ever_offered(
         ),
     ],
 )
+@pytest.mark.rule("alone.no-tools", "llm.text-in-text-out")
 def test_an_answer_calling_a_tool_fails_the_turn(
     settings: Settings, stub: Stub, tmp_path: Path, provider: str, answer: Message
 ) -> None:
@@ -149,10 +152,41 @@ def test_an_answer_calling_a_tool_fails_the_turn(
         return await s.prompt(await s.open(), "Hi")
 
     failed = run(go())
-    assert failed["error"]["message"] == f"refused: {model_agent.llm.TOOL_REFUSED}"
+    assert failed["error"]["message"] == model_agent.llm.TOOL_REFUSED
     assert s.texts() == [] and not (tmp_path / model_agent.HISTORY_FILE).exists()
 
 
+@pytest.mark.rule("llm.text-in-text-out")
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(
+            {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{}]}}]},
+            id="a-tool-call",
+        ),
+        pytest.param(
+            {"choices": [{"message": {"role": "assistant", "function_call": {"name": "x"}}}]},
+            id="an-old-function-call",
+        ),
+    ],
+)
+def test_a_script_s_call_answered_with_a_tool_call_is_refused(
+    settings: Settings, stub: Stub, tmp_path: Path, answer: Message
+) -> None:
+    """A script's `llm_complete` (through the service router, as its run makes it): the model
+    answering with a tool call gives the script `refused`, and nothing of the call.
+
+    If this fails: a conversation written to manipulate the model ("read the keys") has
+    something done, through a script that runs what it is told."""
+    stub.answers = [answer]
+    grant = service_router.Grant(llm=frozenset({"chat/m"}), log=tmp_path / "services.ndjson")
+    got = run(service_router.call_llm(settings, grant, {"model": "chat/m", "prompt": "Hi"}))
+    said = json.loads(got["content"][0]["text"])
+    assert got["isError"] and said == {"error": "refused", "message": model_agent.llm.TOOL_REFUSED}
+    assert "structuredContent" not in got
+
+
+@pytest.mark.rule("alone.no-tools", "alone.never-asks-a-client")
 def test_mcp_servers_and_non_text_prompts_are_refused(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -174,6 +208,7 @@ def test_mcp_servers_and_non_text_prompts_are_refused(
     assert stub.requests == []
 
 
+@pytest.mark.rule("alone.never-asks-a-client")
 def test_it_never_asks_the_client_anything(settings: Settings, stub: Stub, tmp_path: Path) -> None:
     stub.answers = ["Sure."]
     s = Session(settings, tmp_path)
@@ -187,6 +222,7 @@ def test_it_never_asks_the_client_anything(settings: Settings, stub: Stub, tmp_p
         assert msg.get("method") in (None, "session/update")
 
 
+@pytest.mark.rule("alone.a-session-like-any")
 def test_a_session_loaded_again_replays_and_goes_on(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -212,6 +248,7 @@ def test_a_session_loaded_again_replays_and_goes_on(
     assert [m["content"] for m in history] == ["Count", "One.", "Go on", "Two."]
 
 
+@pytest.mark.rule("alone.a-session-like-any")
 def test_cancel_ends_the_turn(settings: Settings, stub: Stub, tmp_path: Path) -> None:
     stub.answers = [None]  # never in time
     s = Session(settings, tmp_path)
@@ -231,6 +268,7 @@ def test_cancel_ends_the_turn(settings: Settings, stub: Stub, tmp_path: Path) ->
     assert run(go()) == {"jsonrpc": "2.0", "id": 99, "result": {"stopReason": "cancelled"}}
 
 
+@pytest.mark.rule("alone.notes-fit-in-a-call")
 def test_knowledge_past_what_a_call_takes_fails_the_turn(
     settings: Settings, stub: Stub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

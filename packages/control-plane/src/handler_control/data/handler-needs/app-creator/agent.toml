@@ -1,7 +1,7 @@
 # Handler's App creator (for its need: need.toml): one, with no folder; each of its sessions works on
 # a draft of an app's code (a copy, kept by Handler), from the Apps page (Make your own) or an
-# app's page (Change it). Its instructions: instructions.md; the app-builder addon gives it the
-# app-builder skill and npm (its sandbox's toolbox has Bun, the runtime of apps).
+# app's page (Change it). Its instructions: instructions.md; the app-builder tool gives it the
+# app-builder skill, npm, and Bun (the runtime of apps).
 
 [agent]
 name = "App creator"

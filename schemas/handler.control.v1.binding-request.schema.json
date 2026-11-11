@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/binding-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Create a binding, or replace one (and rename it). Secret values go to the secret store\n(`bindings/<name>/<slot>`); a slot left out of `secrets` keeps what it has, unless it is in\n`removeSecrets`.",
+  "description": "Create a binding, or replace one (and rename it). Secret values go to the secret store\n(`connections/<name>/<slot>`); a slot left out of `secrets` keeps what it has, unless it is in\n`removeSecrets`.",
   "properties": {
     "name": {
       "pattern": "^[a-z0-9][a-z0-9_.-]*$",

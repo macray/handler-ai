@@ -1,4 +1,4 @@
-"""`handler app …` — apps (contract H, docs/dev/design/apps.md): small web apps written by
+"""`handler app …` — apps (contract H, apps design): small web apps written by
 an agent, run by handlerd on demand, each at its own origin (http://<name>.localhost:<port>/).
 
 handler app list                   your apps, their versions and state

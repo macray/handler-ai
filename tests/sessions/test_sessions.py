@@ -1,4 +1,4 @@
-"""Contract F conformance: daemon-held sessions of a real handlerd (docs/dev/contracts.md §F).
+"""Contract F conformance: daemon-held sessions of a real handlerd (contract F).
 
 The agent is the fake agent (tests/support/fake_agent.py), run on the host by the fake sandbox
 (tests/support/fake_sandbox.py). The daemon runs
@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.sync.client import connect
 
 from handler_contracts import ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX
+from handler_harness.render import FILTERED_NETWORK
 
 from ..support.acp_client import AcpClient, AcpError
 from ..support.daemon import Daemon
@@ -22,7 +23,9 @@ from ..support.daemon import Daemon
 
 @pytest.fixture
 def ad_hoc(daemon: Daemon) -> dict[str, Any]:
-    return daemon.create_ad_hoc("fake", daemon.make_scope(), bindings=["browser"])
+    return daemon.create_ad_hoc(
+        "fake", daemon.make_scope(), addons=[{"addon": "fake-browser", "binding": "browser"}]
+    )
 
 
 def create_session(daemon: Daemon, ad_hoc: dict[str, Any], **body: Any) -> dict[str, Any]:
@@ -72,6 +75,13 @@ def send_prompt(client: AcpClient, acp_id: str, text: str, rid: int = 900) -> No
     client.send({"id": rid, "method": "session/prompt", "params": params})
 
 
+@pytest.mark.rule(
+    "session.outlives-its-clients",
+    "attach.clients-cannot-bypass-the-policy",
+    "attach.one-conversation-per-session",
+    "policy.starts-in-its-own-mode",
+    "policy.its-tools-mcp-servers-win",
+)
 def test_create_attach_prompt(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     assert session["state"] == "starting" and session["acpUrl"].endswith(
@@ -102,6 +112,11 @@ def test_create_attach_prompt(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     assert listed["attached"] == 0 and listed["state"] == "running"  # detaching stops nothing
 
 
+@pytest.mark.rule(
+    "session.instructions-go-with-the-first-turn",
+    "history.the-log-is-the-history",
+    "launch.a-filtered-agent-is-told",
+)
 def test_instructions_go_with_the_first_prompt(daemon: Daemon) -> None:
     """A session created without a request: the agent's instructions go with the first prompt a
     client sends, before its text, and only with that one (F.3)."""
@@ -121,7 +136,29 @@ def test_instructions_go_with_the_first_prompt(daemon: Daemon) -> None:
         for e in events
         if e["kind"] == "update" and e["update"]["sessionUpdate"] == "user_message_chunk"
     ]
-    assert sent == ["Be brief.\n\nhello", "again"]
+    assert sent == [f"Be brief.\n\n{FILTERED_NETWORK}\n\nhello", "again"]  # filtered
+
+
+def test_an_agent_s_title_made_of_handler_s_words_is_not_taken(daemon: Daemon) -> None:
+    """Codex titles a session with the start of its first prompt: Handler's words when the
+    agent's instructions went first. If this fails: every filtered Codex session is titled with
+    Handler's network instruction, shown as the person's words in the session list."""
+    agent = daemon.create_ad_hoc("fake", daemon.make_scope(), instructions="Be brief.")
+    session = create_session(daemon, agent, prompt="retitle")
+    log = daemon.config_dir.parent / "state" / "sessions" / session["id"] / "events.ndjson"
+    deadline = time.monotonic() + 30
+    while "titled" not in (log.read_text() if log.exists() else ""):
+        assert time.monotonic() < deadline
+        time.sleep(0.1)
+    assert get_session(daemon, session["id"])["title"] == "retitle"  # the person's request
+    assert "session_info_update" not in log.read_text()  # nor shown to a client
+    client, _ = attach(daemon, session)
+    try:
+        acp_id = get_session(daemon, session["id"])["acpSessionId"]
+        client.prompt(acp_id, "retitle")  # the person's words alone: the agent's title is taken
+    finally:
+        client.close()
+    assert get_session(daemon, session["id"])["title"] == "retitle..."
 
 
 def test_origin(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
@@ -135,6 +172,12 @@ def test_origin(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
         assert r.status_code == 422
 
 
+@pytest.mark.rule(
+    "session.outlives-its-clients",
+    "session.idle-stop-spares-work-in-progress",
+    "attach.permission-requests-wait-for-a-client",
+    "history.the-log-is-the-history",
+)
 def test_reload_during_a_turn_keeps_it(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     """The first tab goes away while the agent waits for a permission; the reload answers it."""
     session = create_session(daemon, ad_hoc)
@@ -162,8 +205,8 @@ def test_reload_during_a_turn_keeps_it(daemon: Daemon, ad_hoc: dict[str, Any]) -
         ]
         assert replayed[0] == {
             "sessionUpdate": "user_message_chunk",
-            "content": {"type": "text", "text": "permission"},
-        }
+            "content": {"type": "text", "text": f"{FILTERED_NETWORK}\n\npermission"},
+        }  # its first prompt: what its filtered network means first
         assert loaded["state"]["busy"] is True and loaded["state"]["pendingPermissions"] == 1
         assert loaded["state"]["turnStartedAt"]  # the elapsed time survives a reload
         ended = second.wait_notification("_handler/turn_ended")  # the re-sent request was answered
@@ -174,6 +217,7 @@ def test_reload_during_a_turn_keeps_it(daemon: Daemon, ad_hoc: dict[str, Any]) -
         second.close()
 
 
+@pytest.mark.rule("attach.every-client-sees-the-same-conversation")
 def test_several_attachments_see_the_same_session(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     """F.7: a prompt from one client is shown to the other, with the turn and the busy state."""
     session = create_session(daemon, ad_hoc)
@@ -185,8 +229,9 @@ def test_several_attachments_see_the_same_session(daemon: Daemon, ad_hoc: dict[s
         assert first.prompt(acp_id, "hello")["stopReason"] == "end_turn"
         assert second.wait_notification("_handler/turn_ended") == {"stopReason": "end_turn"}
         updates = [u["params"]["update"] for u in second.updates if u["method"] == "session/update"]
+        hello = {"type": "text", "text": f"{FILTERED_NETWORK}\n\nhello"}  # the first prompt
         assert updates[-2:] == [
-            {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "hello"}},
+            {"sessionUpdate": "user_message_chunk", "content": hello},
             {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}},
         ]
         states = [
@@ -202,6 +247,7 @@ def test_several_attachments_see_the_same_session(daemon: Daemon, ad_hoc: dict[s
         second.close()
 
 
+@pytest.mark.rule("attach.the-first-permission-answer-wins")
 def test_first_permission_answer_wins(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     watcher, _ = attach(daemon, session)
@@ -223,6 +269,7 @@ def test_first_permission_answer_wins(daemon: Daemon, ad_hoc: dict[str, Any]) ->
         answerer.close()
 
 
+@pytest.mark.rule("session.one-sandbox-at-a-time", "attach.at-most-8-clients")
 def test_too_many_attachments_close_the_oldest(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     """HANDLER_SESSION_MAX_ATTACH is 2 in these tests: a third attachment closes the first."""
     session = create_session(daemon, ad_hoc)
@@ -244,6 +291,7 @@ def test_too_many_attachments_close_the_oldest(daemon: Daemon, ad_hoc: dict[str,
         assert len(c.get(f"/v1/agents/{ad_hoc['id']}").json()["connections"]) == 1  # one sandbox
 
 
+@pytest.mark.rule("attach.one-turn-at-a-time")
 def test_turn_in_progress_refuses_a_second_prompt(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     client, _ = attach(daemon, session)
@@ -258,6 +306,7 @@ def test_turn_in_progress_refuses_a_second_prompt(daemon: Daemon, ad_hoc: dict[s
         client.close()
 
 
+@pytest.mark.rule("attach.a-late-client-learns-how-the-turn-ended")
 def test_an_interrupted_turn_is_told_to_who_attaches_later(
     daemon: Daemon, ad_hoc: dict[str, Any]
 ) -> None:
@@ -280,6 +329,11 @@ def test_an_interrupted_turn_is_told_to_who_attaches_later(
         later.close()
 
 
+@pytest.mark.rule(
+    "session.attaching-resumes-a-stopped-session",
+    "history.the-log-is-the-history",
+    "policy.starts-in-its-own-mode",
+)
 def test_stop_then_attach_restarts_and_replays(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     client, _ = attach(daemon, session)
@@ -311,6 +365,7 @@ def ran_with(daemon: Daemon, session: dict[str, Any]) -> str:
         client.close()
 
 
+@pytest.mark.rule("session.runs-with-the-model-asked-for")
 def test_a_session_runs_with_the_model_asked_for(daemon: Daemon) -> None:
     """D.1, F.3, D.19: a session runs with the model asked for, the agent's (the default) or
     another, and resumes with it; started with the agent's, it resumes with the agent's new one
@@ -336,6 +391,7 @@ def test_a_session_runs_with_the_model_asked_for(daemon: Daemon) -> None:
     assert get_session(daemon, session["id"])["model"] == "big-model"
 
 
+@pytest.mark.rule("session.attaching-resumes-a-stopped-session")
 def test_stopped_before_its_first_turn_restarts_fresh(
     daemon: Daemon, ad_hoc: dict[str, Any]
 ) -> None:
@@ -371,6 +427,7 @@ def test_stopped_before_its_first_turn_restarts_fresh(
         client.close()
 
 
+@pytest.mark.rule("session.a-start-that-fails-says-why", "image.a-launch-never-builds-one")
 def test_an_image_not_built_leaves_it_stopped_until_it_is(
     daemon: Daemon, ad_hoc: dict[str, Any]
 ) -> None:
@@ -393,6 +450,47 @@ def test_an_image_not_built_leaves_it_stopped_until_it_is(
         client.close()
 
 
+@pytest.mark.rule("session.a-first-request-waits-for-its-image")
+def test_the_first_request_is_sent_once_the_image_is_built(daemon: Daemon) -> None:
+    """F.1, F.3: the request typed before the image exists is kept, said, and sent with the
+    agent's instructions once the session starts; once only."""
+    agent = daemon.create_ad_hoc("fake", daemon.make_scope(), instructions="Be brief.")
+    missing = daemon.config_dir.parent / "fake-ran" / "harness-image-missing"
+    missing.touch()
+    try:
+        session = create_session(daemon, agent, prompt="report")
+        stopped = wait_state(daemon, session["id"], "stopped")
+        assert stopped["missingImage"] == "fake" and stopped["request"] == "report"
+        with pytest.raises(EOFError):  # still not built: its start refused, the request kept
+            attach(daemon, session)
+        assert wait_state(daemon, session["id"], "stopped")["request"] == "report"
+    finally:
+        missing.unlink()
+    log = daemon.config_dir.parent / "state" / "sessions" / session["id"] / "events.ndjson"
+
+    def sent() -> list[str]:
+        events = [json.loads(line) for line in log.read_text().splitlines()]
+        return [
+            e["update"]["content"]["text"]
+            for e in events
+            if e["kind"] == "update" and e["update"]["sessionUpdate"] == "user_message_chunk"
+        ]
+
+    client, _ = attach(daemon, session)  # built now: it starts, with the request
+    try:
+        deadline = time.monotonic() + 30
+        while not sent() or get_session(daemon, session["id"])["busy"]:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        assert "request" not in get_session(daemon, session["id"])
+    finally:
+        client.close()
+    wait_state(daemon, session["id"], "stopped", timeout=10)  # idle
+    attach(daemon, session)[0].close()  # started again: nothing sent again
+    assert sent() == [f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport"]
+
+
+@pytest.mark.rule("session.a-start-that-fails-says-why")
 def test_a_sandbox_that_did_not_start_says_why(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     """Its launcher's own reason (A.1), not only its exit code."""
     fails = daemon.config_dir.parent / "fake-ran" / "setup-fails"
@@ -405,6 +503,24 @@ def test_a_sandbox_that_did_not_start_says_why(daemon: Daemon, ad_hoc: dict[str,
     assert failed["error"] == "setup failed: the fake was told to"
 
 
+@pytest.mark.rule("network.a-stopped-filter-ends-its-sandbox")
+def test_a_sandbox_ended_by_its_launcher_says_why(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
+    """A running session's sandbox ended by its launcher, its filter stopped (A.1's 67): the
+    session stops with the launcher's own reason."""
+    ran = daemon.config_dir.parent / "fake-ran"
+    (ran / "filter-watched").touch()
+    try:
+        session = create_session(daemon, ad_hoc)
+        wait_state(daemon, session["id"], "running")
+        (ran / "filter-stopped").touch()
+        stopped = wait_state(daemon, session["id"], "stopped")
+    finally:
+        for name in ("filter-watched", "filter-stopped"):
+            (ran / name).unlink(missing_ok=True)
+    assert stopped["error"] == "its network filter stopped, so the sandbox was ended"
+
+
+@pytest.mark.rule("session.idle-stop-spares-work-in-progress", "session.only-you-delete-a-session")
 def test_idle_session_stops_and_can_be_deleted(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     wait_state(daemon, session["id"], "running")
@@ -419,6 +535,7 @@ def test_idle_session_stops_and_can_be_deleted(daemon: Daemon, ad_hoc: dict[str,
     assert not folder.exists()
 
 
+@pytest.mark.rule("attach.only-with-the-token")
 def test_unknown_session_and_auth(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     good = [ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX + daemon.token]
@@ -435,7 +552,182 @@ def test_unknown_session_and_auth(daemon: Daemon, ad_hoc: dict[str, Any]) -> Non
         assert ids == [session["id"]]
 
 
+@pytest.mark.rule("session.its-folder-is-yours-alone")
 def test_session_folder_is_private(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     session = create_session(daemon, ad_hoc)
     folder = daemon.config_dir.parent / "state" / "sessions" / session["id"]
     assert Path(folder).stat().st_mode & 0o777 == 0o700
+
+
+def _log(daemon: Daemon, sid: str) -> list[dict[str, Any]]:
+    folder = daemon.config_dir.parent / "state" / "sessions" / sid
+    return [json.loads(line) for line in (folder / "events.ndjson").read_text().splitlines()]
+
+
+@pytest.mark.rule("session.a-daemon-restart-stops-its-sessions")
+def test_a_crashed_daemon_s_live_sessions_are_stopped_when_it_starts(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """handlerd killed with a session in a turn: started again, it lists that session stopped,
+    its turn ended (`daemon_restarted`); one that never got a conversation is failed.
+
+    If this fails: sessions show as running after a restart, with no sandbox behind them, or a
+    turn stays open forever in their history."""
+    in_turn = create_session(daemon, ad_hoc)
+    client, _ = attach(daemon, in_turn)
+    send_prompt(client, get_session(daemon, in_turn["id"])["acpSessionId"], "sleep")
+    client.wait_notification("_handler/session_state")  # busy
+    unstarted = create_session(daemon, ad_hoc)
+    wait_state(daemon, unstarted["id"], "running")
+    daemon.process.kill()
+    daemon.process.wait(timeout=30)
+    client.close()
+    # as a crash during its start leaves it: live, no conversation yet
+    record = daemon.config_dir.parent / "state" / "sessions" / unstarted["id"] / "session.json"
+    data = json.loads(record.read_text())
+    record.write_text(json.dumps(data | {"state": "starting", "acp_session_id": None}))
+    daemon.restart()
+    assert get_session(daemon, in_turn["id"])["state"] == "stopped"
+    assert get_session(daemon, unstarted["id"])["state"] == "failed"
+    turns = [e for e in _log(daemon, in_turn["id"]) if e["kind"] == "turn"]
+    assert turns[-1]["phase"] == "end" and turns[-1]["stopReason"] == "daemon_restarted"
+    assert stops(daemon, in_turn["id"])[-1] == "daemon_restarted"
+
+
+@pytest.mark.rule("session.agent-exit-stops-the-session")
+def test_an_agent_exiting_by_itself_closes_its_clients(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """The agent exits in a turn: an attached client is closed with 4002, the session is stopped
+    with the exit code, its turn logged as ended.
+
+    If this fails: a client keeps waiting on a session with no agent behind it."""
+    session = create_session(daemon, ad_hoc)
+    acp_id = wait_state(daemon, session["id"], "running")["acpSessionId"]
+    protocols = [ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX + daemon.token]
+    with connect(session["acpUrl"], subprotocols=protocols) as ws:  # ty: ignore[invalid-argument-type]
+        prompt = {"sessionId": acp_id, "prompt": [{"type": "text", "text": "exit"}]}
+        ws.send(
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "session/prompt", "params": prompt})
+        )
+        with pytest.raises(ConnectionClosed) as closed:
+            while True:
+                ws.recv(timeout=10)
+    assert closed.value.rcvd is not None and closed.value.rcvd.code == 4002
+    stopped = wait_state(daemon, session["id"], "stopped")
+    assert "agent exited (3)" in stopped["error"]
+    turns = [e for e in _log(daemon, session["id"]) if e["kind"] == "turn"]
+    assert turns[-1]["phase"] == "end" and turns[-1]["stopReason"] == "stopped"
+
+
+def _reattach(daemon: Daemon, session: dict[str, Any], after: int) -> AcpClient:
+    """session/load with `afterSeq` (F.7): the log replayed from there."""
+    client = daemon.connect(session["acpUrl"])
+    client.initialize()
+    params = {"cwd": session["scope"], "mcpServers": [], "_meta": {"handler.dev/afterSeq": after}}
+    acp_id = get_session(daemon, session["id"])["acpSessionId"]
+    client.request("session/load", {"sessionId": acp_id} | params)
+    return client
+
+
+def _seqs(client: AcpClient) -> list[int]:
+    return [
+        u["params"]["_meta"]["handler.dev/seq"]
+        for u in client.updates
+        if u["method"] == "session/update"
+    ]
+
+
+@pytest.mark.rule("attach.a-slow-client-never-holds-up-the-agent")
+def test_a_client_attaching_again_after_its_last_seq_misses_nothing(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """A client closed as too slow (or dropped) attaches again with the last `seq` it got: it is
+    given every update after it, and none it already had.
+
+    If this fails: a phone that fell behind loses part of the conversation, or shows it twice."""
+    session = create_session(daemon, ad_hoc)
+    dropped, _ = attach(daemon, session)
+    acp_id = get_session(daemon, session["id"])["acpSessionId"]
+    assert dropped.prompt(acp_id, "hello")["stopReason"] == "end_turn"
+    last = max(_seqs(dropped))
+    dropped.close()
+    other, _ = attach(daemon, session)
+    other.updates.clear()  # its replay
+    other.prompt(acp_id, "report")
+    missed = other.text()
+    other.close()
+    again = _reattach(daemon, session, after=last)
+    whole = _reattach(daemon, session, after=0)
+    try:
+        assert again.text() == missed
+        assert _seqs(again) == [s for s in _seqs(whole) if s > last] != []
+    finally:
+        again.close()
+        whole.close()
+
+
+@pytest.mark.rule("acp.every-message-goes-through-the-policy")
+def test_a_batch_or_an_unreadable_line_reaches_neither_side_of_a_session(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """A client's batch and a line that is no JSON never reach the session's agent, even with a
+    message the policy would let through in it; the agent's own never reach the client.
+
+    If this fails: a message hidden in a batch reaches the other side unjudged."""
+    session = create_session(daemon, ad_hoc)
+    client, _ = attach(daemon, session)
+    acp_id = get_session(daemon, session["id"])["acpSessionId"]
+    try:
+        params = {"sessionId": acp_id, "modeId": "ask"}
+        mode = {"jsonrpc": "2.0", "id": 99, "method": "session/set_mode", "params": params}
+        client._send_line("not json")
+        client._send_line(json.dumps([mode]))
+        client.updates.clear()
+        client.prompt(acp_id, "report")
+        # the fake agent reads one JSON object a line: either would have ended it
+        assert json.loads(client.text())["mode"] == "yolo"  # the session's own, not the batch's
+        client.updates.clear()
+        client.prompt(acp_id, "batch")
+        assert client.text() == "ok"  # not the batch's "hidden"
+    finally:
+        client.close()
+
+
+@pytest.mark.rule("acp.too-big-closes")
+def test_a_session_whose_agent_sends_over_16_mib_is_stopped(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """If this fails: one huge message from a session's agent fills handlerd's memory, or the
+    session goes on with a conversation cut in two."""
+    session = create_session(daemon, ad_hoc)
+    client, _ = attach(daemon, session)
+    try:
+        send_prompt(client, get_session(daemon, session["id"])["acpSessionId"], "huge")
+        wait_state(daemon, session["id"], "stopped")
+    finally:
+        client.close()
+    (stopped,) = [e for e in _log(daemon, session["id"]) if e.get("event") == "stopped"]
+    assert (stopped["detail"], stopped["how"]) == ("agent message too big", "error")
+
+
+@pytest.mark.rule("acp.stderr-never-reaches-a-client")
+def test_a_session_s_agent_s_stderr_goes_to_handlerd_s_log_only(
+    daemon: Daemon, ad_hoc: dict[str, Any]
+) -> None:
+    """If this fails: a harness's debug output, a stack trace with a token in it, shows in your
+    conversation or its history."""
+    session = create_session(daemon, ad_hoc)
+    client, _ = attach(daemon, session)
+    acp_id = get_session(daemon, session["id"])["acpSessionId"]
+    try:
+        client.prompt(acp_id, "stderr")
+        client.prompt(acp_id, "hello")  # anything relayed after it has arrived
+    finally:
+        client.close()
+    assert "stderr of" not in json.dumps(client.updates)
+    assert "stderr of" not in json.dumps(_log(daemon, session["id"]))
+    deadline = time.monotonic() + 10
+    while f"stderr of {acp_id}" not in Path(daemon.log.name).read_text(errors="replace"):
+        assert time.monotonic() < deadline, "not in handlerd's log"
+        time.sleep(0.1)

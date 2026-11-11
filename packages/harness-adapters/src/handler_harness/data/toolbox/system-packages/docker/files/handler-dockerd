@@ -1,0 +1,34 @@
+#!/bin/sh
+# handler: the sandbox's own rootless Docker daemon (the docker system package's daemon, B.7),
+# its socket at /tmp/handler-docker/docker.sock (DOCKER_HOST), its state in /tmp/handler-docker.
+# Its `runc` is Handler's (/usr/local/libexec/handler-docker/runc: crun, see there).
+export XDG_RUNTIME_DIR=/tmp/handler-docker
+export PATH="/usr/local/libexec/handler-docker:$PATH"
+mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+# The sandbox's proxy (its network filter) given to containers and builds' steps, as Podman does
+# by itself: Docker's client adds it from its configuration. Not over the agent's own.
+if [ -n "${HTTPS_PROXY:-}" ] && [ ! -e "$HOME/.docker/config.json" ]; then
+  mkdir -p "$HOME/.docker"
+  jq -n --arg http "${HTTP_PROXY:-$HTTPS_PROXY}" --arg https "$HTTPS_PROXY" \
+    --arg no "${NO_PROXY:-}" \
+    '{proxies: {default: {httpProxy: $http, httpsProxy: $https, noProxy: $no}}}' \
+    > "$HOME/.docker/config.json"
+fi
+# Docker's own address pools, minus those over the sandbox's networks: its filter is on one, and a
+# network made over it (`docker network create`, Compose) would hide it from every container.
+# dockerd cannot see them itself: rootlesskit runs it in a network namespace of its own.
+pools=$(ip -4 -o route | awk '
+  function n(ip, a) { split(ip, a, "."); return ((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4] }
+  $1 != "default" { split($1, r, "/"); bits = r[2] == "" ? 32 : r[2]
+    lo[++k] = n(r[1]); hi[k] = lo[k] + 2 ^ (32 - bits) - 1 }
+  function free(net, bits, i, l, h) { l = n(net); h = l + 2 ^ (32 - bits) - 1
+    for (i = 1; i <= k; i++) if (l <= hi[i] && lo[i] <= h) return 0
+    return 1 }
+  END {
+    for (b = 17; b <= 31; b++) if (free("172." b ".0.0", 16))
+      printf " --default-address-pool base=172.%d.0.0/16,size=16", b
+    for (c = 0; c < 256; c += 16) if (free("192.168." c ".0", 20))
+      printf " --default-address-pool base=192.168.%d.0/20,size=20", c
+  }')
+# shellcheck disable=SC2086 # one word per flag
+exec dockerd-rootless.sh --data-root "$XDG_RUNTIME_DIR/data" --firewall-backend nftables $pools

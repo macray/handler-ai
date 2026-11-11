@@ -1,13 +1,16 @@
 """Unit tests: apps (contract H) — manifest, sandbox spec, snapshot, app files (H.15),
 links and cookies. The daemon running real apps is tests/apps."""
 
+import asyncio
 import io
 import json
 import re
+import shutil
 import tomllib
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,12 +26,19 @@ from handler_contracts import (
     AppManifestNeeds,
     FilteredNetwork,
     NoNetwork,
+    Pin,
     SandboxSpec,
 )
-from handler_control import compose
+from handler_control import apps, compose, pins
 from handler_control.agents import AgentRegistry
-from handler_control.app_runs import AppRuns
-from handler_control.apps import AppError, AppStore, DeployError, Deployment, snapshot
+from handler_control.app_runs import AppRunError, AppRuns
+from handler_control.apps import (
+    AppError,
+    AppStore,
+    DeployError,
+    Deployment,
+    snapshot,
+)
 from handler_control.inbox import Inbox
 from handler_control.projects import ProjectRegistry
 from handler_control.sessions import SessionStore
@@ -53,6 +63,9 @@ def test_defaults() -> None:
     assert m.needs.egress == []
 
 
+@pytest.mark.rule(
+    "app.its-manifest-is-strict", "app.one-name-one-app", "action.done-by-its-code-or-its-agent"
+)
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -82,6 +95,7 @@ def test_invalid(overrides: dict[str, Any]) -> None:
         manifest(**overrides)
 
 
+@pytest.mark.rule("deploy.what-it-adds-is-said-first")
 def test_added_needs() -> None:
     m = manifest(needs={"egress": ["a.example.com:443", "b.example.com:443"], "secrets": ["K"]})
     before = AppManifestNeeds(egress=["a.example.com:443"])
@@ -97,10 +111,10 @@ def test_template_manifest_is_valid() -> None:
     assert (TEMPLATE / m.server.entry).is_file()
 
 
-def test_the_default_toolbox_has_the_runtime_bun_version() -> None:
-    """A new toolbox starts with the Bun apps run on (the person may change it: only its presence
-    is checked, B.6)."""
-    containerfile = (addons.BUILTIN_DIR.parent / "toolbox" / "Containerfile").read_text()
+@pytest.mark.rule("backend.in-a-strict-sandbox")
+def test_app_builder_has_the_runtime_bun_version() -> None:
+    """The agents that write apps test them with the Bun apps run on (H.3)."""
+    containerfile = (BUILDER / "Containerfile").read_text()
     m = re.search(r"ARG BUN_VERSION=bun-v([0-9.]+)", containerfile)
     assert m and m[1] == RUNTIME_VERSION
 
@@ -114,23 +128,42 @@ def spec(m: AppManifest, test: bool = False) -> SandboxSpec:
     )
 
 
+@pytest.mark.rule("backend.in-a-strict-sandbox")
 def test_spec_is_offline_and_read_only() -> None:
     s = spec(manifest())
     assert s.image == RUNTIME_IMAGE
-    assert s.confinement == "strict"
+    assert s.isolation == "strict"
     assert isinstance(s.network, NoNetwork)
-    mounts = {m.target: (m.source, m.read_only) for m in s.mounts}
-    assert mounts == {
-        "/d/data": ("/d/data", False),
-        APP_CODE_DIR: ("/c", True),
-        "/run/handler-app": ("/r", False),
-    }
+    assert s.work_folder.path == "/d/data"
+    folders = {f.target: (f.source, f.writable) for f in s.folders}
+    assert folders == {APP_CODE_DIR: ("/c", False)}
+    # its socket, served to handlerd; nothing of handlerd's to reach without a need (A.10)
+    [run] = s.socket_folders
+    assert (run.source, run.target, run.serves, run.reaches) == (
+        "/r",
+        "/run/handler-app",
+        ["app.sock"],
+        [],
+    )
     assert s.workdir == "/d/data"
     assert s.argv == ["run", "--no-install", "--no-env-file", f"{APP_CODE_DIR}/server/main.ts"]
     assert s.env["HANDLER_APP_SOCKET"] == APP_SOCKET and s.env["HANDLER_APP_DATA"] == "/d/data"
     assert s.resources and s.resources.memory == "512m"
 
 
+@pytest.mark.rule("sandbox.its-sockets-cross-as-declared")
+def test_an_app_that_notifies_reaches_handler_s_socket_its_tests_do_not() -> None:
+    """With `needs.notify`, the backend reaches handlerd's socket (H.9); its tests never.
+    If this fails: an app's tests send notifications, or a backend cannot."""
+    m = manifest(needs={"notify": True})
+    [run] = spec(m).socket_folders
+    assert (run.serves, run.reaches) == (["app.sock"], ["handler.sock"])
+    assert spec(m).env["HANDLER_APP_API"] == "/run/handler-app/handler.sock"
+    [tested] = spec(m, test=True).socket_folders
+    assert tested.reaches == []
+
+
+@pytest.mark.rule("need.a-folder-in-your-home-never-handler-s")
 def test_spec_with_folders_names_them_by_need() -> None:
     m = manifest(needs={"files": {"tasks": {"mode": "rw"}, "notes": {}}})
     files = [("tasks", "/h/planner", True), ("notes", "/h/notes.md", False)]
@@ -138,22 +171,25 @@ def test_spec_with_folders_names_them_by_need() -> None:
         name="handler-app-notes-1", manifest=m, code="/c", data="/d/data", run="/r", files=files
     )
     assert json.loads(s.env["HANDLER_APP_FILES"]) == {"tasks": "/h/planner", "notes": "/h/notes.md"}
-    mounts = {m.target: m.read_only for m in s.mounts}
-    assert (mounts["/h/planner"], mounts["/h/notes.md"]) == (False, True)
+    folders = {f.target: f.writable for f in s.folders}
+    assert (folders["/h/planner"], folders["/h/notes.md"]) == (True, False)
 
 
+@pytest.mark.rule("backend.in-a-strict-sandbox")
 def test_spec_with_egress() -> None:
     s = spec(manifest(needs={"egress": ["api.example.com:443"]}))
     assert isinstance(s.network, FilteredNetwork)
     assert s.network.allow == ["api.example.com:443"] and s.network.enforcement == "enforce"
 
 
+@pytest.mark.rule("backend.in-a-strict-sandbox")
 def test_test_spec() -> None:
     s = spec(manifest(), test=True)
     assert s.argv[0] == "test" and s.argv[-1] == f"{APP_CODE_DIR}/server"
     assert "--no-install" in s.argv and "--pass-with-no-tests" in s.argv
 
 
+@pytest.mark.rule("backend.its-secrets-reach-it-alone")
 def test_secrets_go_to_the_backend_not_to_tests() -> None:
     m = manifest(needs={"secrets": ["API_KEY"]})
 
@@ -213,6 +249,7 @@ def test_snapshot_copies_only_what_is_installed(tmp_path: Path) -> None:
     assert (tmp_path / "v1" / "server" / "link.ts").is_symlink()
 
 
+@pytest.mark.rule("app.nothing-is-read-through-a-link-out")
 @pytest.mark.parametrize("where", ["ui/dist/leak.txt", "server/leak.ts"])
 def test_snapshot_refuses_links_outside(tmp_path: Path, where: str) -> None:
     src = app_folder(tmp_path)
@@ -223,6 +260,7 @@ def test_snapshot_refuses_links_outside(tmp_path: Path, where: str) -> None:
         snapshot(src, tmp_path / "v1", m)
 
 
+@pytest.mark.rule("deploy.a-failure-changes-nothing")
 def test_snapshot_needs_a_built_ui(tmp_path: Path) -> None:
     src = app_folder(tmp_path)
     (src / "ui" / "dist" / "index.html").unlink()
@@ -249,6 +287,7 @@ def store(tmp_path: Path) -> AppStore:
     return AppStore(settings, token="t0ken", inbox=inbox, runs=runs)
 
 
+@pytest.mark.rule("origin.opened-by-a-one-time-link")
 def test_link_is_one_time_and_per_app(tmp_path: Path) -> None:
     s = store(tmp_path)
     s.add_file(zipped(app_folder(tmp_path)))
@@ -263,6 +302,7 @@ def test_link_is_one_time_and_per_app(tmp_path: Path) -> None:
     assert not s.redeem("notes", code)
 
 
+@pytest.mark.rule("origin.opened-by-a-one-time-link")
 def test_cookie_is_per_app_and_per_token(tmp_path: Path) -> None:
     s = store(tmp_path)
     assert s.cookie_matches("notes", s.cookie("notes"))
@@ -272,6 +312,18 @@ def test_cookie_is_per_app_and_per_token(tmp_path: Path) -> None:
     assert not other.cookie_matches("notes", s.cookie("notes"))
 
 
+@pytest.mark.rule("app.uninstalled-leaves-nothing-of-it", "pin.gone-with-what-it-pins")
+def test_uninstalled_its_pin_goes(tmp_path: Path) -> None:
+    """An app installed later under its name does not find itself pinned."""
+    s = store(tmp_path)
+    s.add_file(zipped(app_folder(tmp_path)))
+    project = Pin(kind="project", id="p_0123456789")
+    pins.save(s.settings.state_dir, [Pin(kind="app", id="notes"), project])
+    asyncio.run(s.remove("notes"))
+    assert pins.load(s.settings.state_dir) == [project]
+
+
+@pytest.mark.rule("app.its-code-is-kept-by-handler")
 def test_registry_survives_a_restart(tmp_path: Path) -> None:
     s = store(tmp_path)
     record, new = s.add_file(zipped(app_folder(tmp_path)))
@@ -283,6 +335,7 @@ def test_registry_survives_a_restart(tmp_path: Path) -> None:
     assert tomllib.loads((source / "app.toml").read_text())["name"] == "notes"
 
 
+@pytest.mark.rule("app.its-code-is-kept-by-handler")
 def test_an_app_file_is_its_code_kept_by_handler(tmp_path: Path) -> None:
     """Its code is Handler's copy: the folder it came from can go; the file of an app you have
     is its next version; one folder at the zip's root is the app's; its export is the code."""
@@ -302,6 +355,7 @@ def test_an_app_file_is_its_code_kept_by_handler(tmp_path: Path) -> None:
             s.add_file(bad)
 
 
+@pytest.mark.rule("source.never-over-an-app-from-elsewhere")
 def test_an_app_file_over_one_from_a_source_makes_it_yours(tmp_path: Path) -> None:
     s = store(tmp_path)
     s.add_from_source("official", TEST_SOURCE / "apps" / "journal")
@@ -313,6 +367,7 @@ def test_an_app_file_over_one_from_a_source_makes_it_yours(tmp_path: Path) -> No
 # ── from a source (D.26) ────────────────────────────────────────────────
 
 
+@pytest.mark.rule("source.never-over-an-app-from-elsewhere")
 def test_an_app_from_a_source_is_a_copy_that_keeps_its_source(tmp_path: Path) -> None:
     s = store(tmp_path)
     record, new = s.add_from_source("official", TEST_SOURCE / "apps" / "journal")
@@ -326,6 +381,7 @@ def test_an_app_from_a_source_is_a_copy_that_keeps_its_source(tmp_path: Path) ->
     assert again.records["journal"].from_source == "official"
 
 
+@pytest.mark.rule("source.never-over-an-app-from-elsewhere")
 def test_a_source_never_replaces_an_app_from_elsewhere(tmp_path: Path) -> None:
     """Only the source an app came from gives it a next version: another source offering an app
     of that name, or any source once the app is yours, would replace its code with a stranger's."""
@@ -340,6 +396,7 @@ def test_a_source_never_replaces_an_app_from_elsewhere(tmp_path: Path) -> None:
     assert s.view("journal").from_source is None
 
 
+@pytest.mark.rule("app.one-name-one-app")
 def test_an_app_named_other_than_its_folder_is_refused(tmp_path: Path) -> None:
     s = store(tmp_path)
     folder = app_folder(tmp_path)
@@ -348,6 +405,34 @@ def test_an_app_named_other_than_its_folder_is_refused(tmp_path: Path) -> None:
         s.add_from_source("acme", renamed)
 
 
+@pytest.mark.rule("app.one-name-one-app", "chat.is-no-app")
+@pytest.mark.parametrize(
+    ("name", "why"),
+    [
+        pytest.param("chat", "the name of Chat", id="chat-s-name"),
+        pytest.param("notes--draft", "an opened draft's", id="an-opened-draft-s-name"),
+    ],
+)
+def test_an_app_taking_chat_s_or_a_draft_s_name_is_refused(
+    tmp_path: Path, name: str, why: str
+) -> None:
+    """An app file whose manifest names Chat, or ends in `--draft` (an opened draft's origin and
+    folder): refused, and nothing of it kept. Names close to them are apps like any.
+
+    If this fails: an app takes the address of Chat or of another app's draft."""
+    s = store(tmp_path)
+    folder = app_folder(tmp_path)
+    toml = (folder / "app.toml").read_text()
+    (folder / "app.toml").write_text(toml.replace('name = "notes"', f'name = "{name}"'))
+    with pytest.raises(AppError, match=why):
+        s.add_file(zipped(folder))
+    assert s.records == {} and not (tmp_path / "data" / "apps" / name).exists()
+    for near in ("chats", "draft", "notes-draft"):
+        (folder / "app.toml").write_text(toml.replace('name = "notes"', f'name = "{near}"'))
+        assert s.add_file(zipped(folder))[0].name == near
+
+
+@pytest.mark.rule("source.never-over-an-app-from-elsewhere")
 def test_an_app_of_yours_comes_from_no_source(tmp_path: Path) -> None:
     s = store(tmp_path)
     s.add_file(zipped(app_folder(tmp_path)))
@@ -356,3 +441,164 @@ def test_an_app_of_yours_comes_from_no_source(tmp_path: Path) -> None:
 
 def manifest_version(folder: Path) -> str:
     return AppManifest.from_toml((folder / "app.toml").read_text()).version
+
+
+@pytest.mark.rule("notify.only-to-whom-it-is-shared-with")
+def test_an_app_sends_at_most_30_notifications_an_hour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """30 notifications of an app within an hour go; the 31st is refused (429) and reaches no
+    inbox; another app is not held back; an hour after the first, it may send again.
+
+    If this fails: an app floods your desktop and your inbox."""
+    now = [1000.0]
+    monkeypatch.setattr(apps.time, "monotonic", lambda: now[0])
+    s = store(tmp_path)
+    folder = app_folder(tmp_path)
+    s.add_file(zipped(folder))
+    (folder / "app.toml").write_text((folder / "app.toml").read_text().replace("notes", "other"))
+    s.add_file(zipped(folder))
+
+    def send(name: str) -> int:
+        return asyncio.run(s.notification(name, {"title": "Hello"}))[0]
+
+    assert [send("notes") for _ in range(30)] == [200] * 30
+    assert send("notes") == 429
+    assert len([m for m in s.inbox.list() if m.name == "notes"]) == 30
+    assert send("other") == 200
+    now[0] += 3600
+    assert send("notes") == 200
+
+
+FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
+RESULT_OK = {
+    "type": "object",
+    "required": ["status", "summary"],
+    "properties": {
+        "status": {"enum": ["ok", "attention", "failed"]},
+        "summary": {"type": "string"},
+    },
+}
+
+
+def _app_with_an_agent_action(root: Path, result: dict[str, Any]) -> tuple[AppManifest, Path]:
+    folder = root / "asker"
+    shutil.copytree(FIXTURES / "app-coach", folder)
+    interface = {"fields": {"type": "object", "properties": {"q": {"type": "string"}}}}
+    (folder / "agent" / "interface.json").write_text(json.dumps(interface | {"result": result}))
+    (folder / "app.toml").write_text(
+        'apiVersion = "handler.app/v1"\nname = "asker"\nversion = "1.0.0"\n'
+        '[needs.agents.coach]\ndescription = "Answers"\nfrom = "agent"\n'
+        '[actions.ask]\ndescription = "Ask the coach"\nagent = "coach"\n'
+    )
+    return AppManifest.from_toml((folder / "app.toml").read_text()), folder
+
+
+@pytest.mark.rule("action.done-by-its-code-or-its-agent")
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param({**RESULT_OK, "required": ["summary"]}, id="status-not-required"),
+        pytest.param({**RESULT_OK, "required": ["status"]}, id="summary-not-required"),
+        pytest.param(
+            {**RESULT_OK, "properties": {**RESULT_OK["properties"], "summary": {"type": "number"}}},
+            id="summary-not-a-string",
+        ),
+    ],
+)
+def test_an_agent_s_action_whose_job_does_not_say_how_it_went_fails_the_deploy(
+    tmp_path: Path, result: dict[str, Any]
+) -> None:
+    """An action done by the app's agent runs a job whose result must give `status` and
+    `summary`: else the deploy fails, naming the action and the agent.
+
+    If this fails: Ask says an action was done when its agent failed, or shows nothing."""
+    s = store(tmp_path)
+    manifest_, folder = _app_with_an_agent_action(tmp_path, result)
+    with pytest.raises(DeployError, match=r"actions\.ask: the agent coach: its result has no"):
+        s.check_actions(manifest_, folder)
+
+
+def test_an_agent_s_action_whose_job_says_how_it_went_deploys(tmp_path: Path) -> None:
+    s = store(tmp_path)
+    s.check_actions(*_app_with_an_agent_action(tmp_path, RESULT_OK))
+
+
+@pytest.mark.rule("run.only-while-it-answers-the-owner")
+def test_a_trial_or_a_request_without_the_owner_s_start_token_starts_no_run(
+    tmp_path: Path,
+) -> None:
+    """Asked straight at handlerd's socket (an app may skip its helper): a deploy's trial or an
+    opened draft (both served by `trial`) gets 403 for a run, and so does a run whose start
+    token is not one handlerd gave for a request of the owner's, to this app.
+
+    If this fails: an app runs your agents when nobody asked, from a trial, a draft, or another
+    app's request."""
+    s = store(tmp_path)
+    s.add_file(zipped(app_folder(tmp_path)))
+    body = {"agent": "coach", "start": "made-up", "fields": {}}
+    assert asyncio.run(s.trial("notes", "POST", "/runs", body))[0] == 403
+    assert s.issue_start("notes", "alice") is None  # a person's request gets no token
+    for start in ("made-up", s.issue_start("other", "owner")):
+        with pytest.raises(AppRunError) as refused:
+            asyncio.run(s.run_call("notes", "POST", "/runs", body | {"start": start}))
+        assert refused.value.status == 403
+    assert s.runs.sessions.records == {}
+
+
+@pytest.mark.rule("backend.runs-only-while-used")
+def test_a_first_request_during_a_deploy_waits_and_starts_the_new_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first `/api` request while a deploy is under way: no backend starts until the deploy
+    ends, then the one started is the new version's. (The runtime is stubbed: what starts is
+    recorded, and the deploy is held at its runtime pull.)
+
+    If this fails: a request starts the old version mid-deploy, which then runs on, or two
+    backends of one app run at once on its data."""
+    s = store(tmp_path)
+    started: list[tuple[int, bool]] = []
+    pulling, pulled = asyncio.Event(), asyncio.Event()
+
+    async def start(name: str, seq: int, *args: Any, check: bool = False, **kw: Any) -> Any:
+        started.append((seq, check))
+        return SimpleNamespace(last_used=0.0)
+
+    async def pull(name: str) -> None:
+        pulling.set()
+        await pulled.wait()
+
+    async def nothing(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    for name, value in [
+        ("_start", start), ("_run_tests", nothing), ("_stop", nothing),
+        ("_stop_backend", nothing), ("_watch", nothing),
+    ]:  # fmt: skip
+        monkeypatch.setattr(s, name, value)
+    folder = app_folder(tmp_path)
+    s.add_file(zipped(folder))
+
+    async def scenario() -> None:
+        pulled.set()
+        await s.deploy("notes")  # #1
+        (folder / "app.toml").write_text(
+            (folder / "app.toml").read_text().replace("0.1.0", "0.2.0")
+        )
+        s.add_file(zipped(folder))
+        pulled.clear()
+        pulling.clear()
+        monkeypatch.setattr(s, "_pull_runtime", pull)
+        deploy = asyncio.create_task(s.deploy("notes"))  # #2, held at its pull
+        await pulling.wait()
+        first_request = asyncio.create_task(s.ensure_running("notes"))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not first_request.done() and (1, False) not in started
+        pulled.set()
+        await deploy
+        await first_request  # the one started: version 2's (below)
+
+    monkeypatch.setattr(s, "_pull_runtime", nothing)
+    asyncio.run(scenario())
+    assert [seq for seq, check in started if not check] == [2]

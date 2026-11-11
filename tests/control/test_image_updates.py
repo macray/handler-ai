@@ -2,9 +2,12 @@
 the machine's real harness images (the test daemon has them); runs are tested with a fake build
 store (packages/control-plane/tests/test_image_updates.py)."""
 
+import pytest
+
 from ..support.daemon import Daemon
 
 
+@pytest.mark.rule("image.updated-on-a-schedule")
 def test_updates_are_weekly_by_default_and_can_be_changed(daemon: Daemon) -> None:
     with daemon.http() as c:
         view = c.get("/v1/image-updates").json()

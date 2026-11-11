@@ -20,6 +20,7 @@ import type {
   PushKey,
   PushSubscribeParams,
   PushSubscription,
+  PushTest,
   RemoteAgent,
   RemoteProject,
   SessionList,
@@ -63,6 +64,7 @@ class RemoteApp {
   inbox = $state<InboxMessage[]>([]);
   pushOn = $state(localStorage.getItem("handler-push") === "1");
   pushError = $state<string | null>(null);
+  pushTest = $state<"sending" | "sent" | null>(null); // the last test push asked from Settings
 
   settings = $state(false); // the Settings screen: this device, notifications, forget
 
@@ -88,7 +90,6 @@ class RemoteApp {
   conn = $state<AcpConnection | null>(null);
   attaching = $state(false);
   error = $state<string | null>(null);
-  ended = $state<string | null>(null); // why the session view cannot continue
   private opening: Promise<void> | null = null;
 
   async init(): Promise<void> {
@@ -161,6 +162,7 @@ class RemoteApp {
     mailbox.start();
     this.mailbox = mailbox;
     void this.refresh();
+    if (this.pushOn) void this.resendSubscription(mailbox);
   }
 
   async refresh(): Promise<void> {
@@ -258,7 +260,6 @@ class RemoteApp {
     this.conn?.close();
     this.current = session;
     this.error = null;
-    this.ended = null;
     this.attaching = true;
     const conn = new AcpConnection();
     try {
@@ -324,8 +325,7 @@ class RemoteApp {
       await navigator.serviceWorker.ready;
       const { publicKey } = await this.mailbox.request<PushKey>("_handler/remote/push_key");
       const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64(publicKey) });
-      const on: PushSubscribeParams = { endpoint: subscription.endpoint };
-      await this.mailbox.request<PushSubscription>("_handler/remote/push_subscribe", on);
+      await this.sendSubscription(this.mailbox, subscription);
       this.pushOn = true;
       localStorage.setItem("handler-push", "1");
     } catch (e) {
@@ -333,8 +333,55 @@ class RemoteApp {
     }
   }
 
+  /** On each open while notifications are on: the host gets this browser's subscription again
+   *  (the browser may have changed it, and a host updated from a Handler that kept no keys has
+   *  none). */
+  private async resendSubscription(mailbox: Mailbox): Promise<void> {
+    try {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      const subscription = await registration?.pushManager.getSubscription();
+      if (subscription) await this.sendSubscription(mailbox, subscription);
+      else await this.enablePush();
+    } catch (e) {
+      this.pushError = (e as Error).message;
+    }
+  }
+
+  /** Where the host posts, and the keys it encrypts the (empty) push to: Firefox for Android
+   *  drops a push with no body. */
+  private async sendSubscription(mailbox: Mailbox, subscription: globalThis.PushSubscription): Promise<void> {
+    const { p256dh, auth } = subscription.toJSON().keys ?? {};
+    if (!p256dh || !auth) throw new Error("this browser gave no keys for its notifications");
+    const on: PushSubscribeParams = { subscription: { endpoint: subscription.endpoint, keys: { p256dh, auth } } };
+    await mailbox.request<PushSubscription>("_handler/remote/push_subscribe", on);
+  }
+
+  /** Two notifications: one this phone shows itself (no push), then a real push from the host,
+   *  as a message would send. Which ones appear tells the phone's settings from the delivery. */
+  async testPush(): Promise<void> {
+    this.pushError = null;
+    this.pushTest = "sending";
+    try {
+      if (!this.mailbox) throw new Error("not connected");
+      if (Notification.permission !== "granted") {
+        throw new Error(`this page may not show notifications (its permission: ${Notification.permission})`);
+      }
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) throw new Error("no service worker on this page: turn notifications off and on");
+      await registration.showNotification("Handler", { body: "Test 1 of 2: shown by this phone.", tag: "handler-test" });
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const answer = await this.mailbox.request<PushTest>("_handler/remote/push_test");
+      if (!answer.sent) throw new Error(answer.problem ?? "not sent");
+      this.pushTest = "sent";
+    } catch (e) {
+      this.pushTest = null;
+      this.pushError = (e as Error).message;
+    }
+  }
+
   async disablePush(): Promise<void> {
     this.pushError = null;
+    this.pushTest = null;
     try {
       const registration = await navigator.serviceWorker?.getRegistration();
       await (await registration?.pushManager.getSubscription())?.unsubscribe();

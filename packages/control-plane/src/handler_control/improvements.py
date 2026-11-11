@@ -231,7 +231,7 @@ class ImprovementStore:
             )
         writing = writing.model_copy(update={"writer_run": rec.id})
         improvement = self.with_attempt(improvement, writing)
-        value, why = await self.checks.result_of(rec.id)
+        value, why = await self.checks.sessions.result_of(rec.id)
         text = value.get("instructions") if value else None
         if value is None or not isinstance(text, str) or not text.strip():
             failed = writing.model_copy(update={"state": "error", "why": why or "no instructions"})

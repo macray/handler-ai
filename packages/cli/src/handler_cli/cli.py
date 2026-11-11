@@ -20,48 +20,60 @@ Working with agents:
 
 What exists (`handler NOUN -h` for each):
     handler session list | show | stop | share   sessions
-    handler agent list | show | rm | network     agents, their network (log-only, enforce)
+    handler agent list | show | rm | network | checks
+                                                 agents, their network (log-only, enforce),
+                                                 their checks
     handler project list | show | export-agents | import-agents
                                                  projects (created and edited in the web UI),
                                                  their agents to a file and back
     handler account list | add | token | login | import | rm
                                                  subscriptions and their login
-    handler provider list | templates | add | rm API keys and local model servers
+    handler provider list | templates | add | test | rm
+                                                 API keys and local model servers
     handler secret list | set | rm               the secret store
-    handler addon list | add | rm                addons an agent can get
-    handler source list | add | refresh | rm     where apps, agents and addons come from
-    handler binding list                         addons with their settings and secrets
-    handler knowledge list                       knowledge folders an agent can get
+    handler tool list | add | rm                 tools an agent can get
+    handler source list | add | refresh | rm     where apps, agents and tools come from
+    handler connection list                      tools with their settings and secrets
+    handler notes list                           notes folders an agent can get
     handler image list | rebuild                 the images agents run in
+    handler toolbox [packages | add | rm | lines]
+                                                 the system every agent works in
     handler app …                                apps: install, deploy, open
     handler automation …                         when a session stops or at a time, run a script,
                                                  an agent or an app's route
+    handler plan check | run | list | show | cancel | delete
+                                                 plans: steps an agent wrote in its folder,
+                                                 approved by you, run one after another
     handler inbox                                what handler told you: apps' notifications,
                                                  agents' results, failed runs
     handler ask "…"                              say what you want: Handler picks which of
                                                  your apps does it, and runs it
 
 Handler itself:
-    handler setup [--no-build] [--yes]           after installing: start handlerd as a service,
+    handler setup [--no-build] [--yes] [--program NAME] [--runtime NAME] [--engine PACKAGE]
+                  [--verbose]                    after installing: start handlerd as a service,
                                                  check this machine, build the images
     handler daemon status | install | uninstall | log
-                                                 handlerd as a systemd user service
-    handler ui [--print]                         open the web UI (token passed in the URL fragment)
+                                                 handlerd as a user service (systemd, launchd)
+    handler runtime list | use NAME              the sandbox runtime agents run in (podman…)
+    handler ui [--print]                         open the web UI, signed in (a one-time link)
 
 FOLDER defaults to the current directory, inside one of the work folders (set in the web UI,
-Settings → Folders). A knowledge FOLDER is a path relative to the knowledge root (see `handler
-knowledge list`; set in the web UI), or an absolute path inside it; the agent sees it read-only at
-/knowledge/<folder name>. Outside projects the sandbox starts from a preset: filtered network,
+Settings → Folders). A notes FOLDER is a path relative to the notes root (see `handler notes
+list`; set in the web UI), or an absolute path inside it; the agent sees it read-only at
+/notes/<folder name>. Outside projects the sandbox starts with only these sites on its network,
 enforced (--log-only lets every host through and logs it, to learn which it needs), strict
 confinement, permissions bypass. A flag that widens it (--network open, --log-only, --containers)
 is your confirmation: handler says on stderr what it gives the agent.
 --allow adds hosts to a filtered agent's (on top of those its account or provider and its
-addons require). --permissions sets the agent's starting mode: ask (you answer each request),
+tools require); --keep-blocked adds hosts it keeps blocked, which it is told not to ask for (a
+host is allowed or kept blocked, never both: either flag takes it off the other list).
+--permissions sets the agent's starting mode: ask (you answer each request),
 accept-edits (file edits allowed) or bypass (unsupervised); the session can change it.
---containers lets the agent run podman itself (nested confinement). --display gives the agent's
-sandbox your Wayland display, e.g. to watch the browser of the playwright addon, and its
-clipboard: pasting images in `handler terminal` needs it (the agent can then read what you copy);
-nothing else of your desktop.
+--containers lets the agent run containers itself (nested confinement). --display gives the agent's
+sandbox your Wayland display, e.g. to watch the browser of the playwright tool, and its
+clipboard (the agent can then read what you copy); nothing else of your desktop. Pasting an image
+in `handler terminal` (Ctrl+V) does not need it.
 
 An ACCOUNT runs its own harness; a PROVIDER runs the harness --harness names (or the only one
 that speaks its protocol). --model picks the model (default: the harness's or the provider's).
@@ -83,31 +95,34 @@ The terminal client is built in; HANDLER_ACP_CLIENT names another one (see `hand
 import argparse
 import os
 import sys
-import webbrowser
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from urllib.parse import urlencode
 
 from . import (
     account_commands,
-    addon_commands,
     agent_commands,
     app_commands,
     ask_commands,
     automation_commands,
     bridge,
+    browser,
     daemon_commands,
     image_commands,
     inbox_commands,
+    plan_commands,
     project_commands,
     provider_commands,
+    runtime_commands,
     secret_commands,
     session_commands,
     setup,
     source_commands,
     terminal_client,
+    tool_commands,
+    toolbox_commands,
 )
-from .client import ClientError, Daemon, base_url, read_token
+from .client import ClientError, Daemon
 from .output import table
 from .session_bridge import run_session_bridge
 
@@ -138,16 +153,24 @@ def add_agent_options(s: argparse.ArgumentParser) -> None:
         help="a host to allow (filtered network), on top of the required ones; repeatable",
     )
     s.add_argument(
-        "--binding",
+        "--keep-blocked",
         action="append",
-        metavar="NAME",
-        help="a binding (addon + instance + credentials) to give the agent; repeatable",
+        metavar="HOST:PORT",
+        help="a host to keep blocked (filtered network): the agent is told not to ask for it; "
+        "repeatable",
     )
     s.add_argument(
-        "--knowledge",
+        "--tool",
+        action="append",
+        metavar="NAME[=CONNECTION]",
+        help="a tool to give the agent, with the connection filling its settings when it has "
+        "some (handler connection list); repeatable",
+    )
+    s.add_argument(
+        "--notes",
         action="append",
         metavar="FOLDER",
-        help="a folder of the knowledge root, mounted read-only at /knowledge/<name>; repeatable",
+        help="a folder of the notes root, mounted read-only at /notes/<name>; repeatable",
     )
     s.add_argument(
         "--permissions",
@@ -157,12 +180,12 @@ def add_agent_options(s: argparse.ArgumentParser) -> None:
     s.add_argument(
         "--containers",
         action="store_true",
-        help="let the agent run containers itself (podman in podman)",
+        help="let the agent run containers itself (nested confinement)",
     )
     s.add_argument(
         "--display",
         action="store_true",
-        help="give the sandbox your Wayland display and clipboard (watch a browser, paste images)",
+        help="give the sandbox your Wayland display and its clipboard (watch a browser)",
     )
     s.add_argument(
         "--save",
@@ -212,18 +235,18 @@ def terminal_identity(d: Daemon, model: dict[str, Any]) -> str:
     return f"handler: {harness} · account {name}{described} · {subscription}"
 
 
-def print_knowledge(d: Daemon) -> None:
+def print_notes(d: Daemon) -> None:
     listing = d.call("GET", "/v1/knowledge")
     if not listing["exists"]:
-        print(f"no knowledge root: {listing['root']} does not exist (set it in the web UI)")
+        print(f"no notes root: {listing['root']} does not exist (set it in the web UI)")
         return
-    print(f"knowledge root: {listing['root']} ({listing['source']})")
+    print(f"notes root: {listing['root']} ({listing['source']})")
     for folder in listing["folders"]:
         print(f"  {folder}")
 
 
-def print_bindings(d: Daemon) -> None:
-    rows = [["NAME", "ADDON", "SETTINGS", "SECRETS", "ERROR"]]
+def print_connections(d: Daemon) -> None:
+    rows = [["NAME", "TOOL", "SETTINGS", "SECRETS", "ERROR"]]
     for b in d.call("GET", "/v1/bindings"):
         settings = ", ".join(f"{k}={v}" for k, v in b.get("settings", {}).items())
         rows.append(
@@ -239,11 +262,12 @@ def print_bindings(d: Daemon) -> None:
 
 
 def open_ui(*, print_only: bool) -> int:
-    """The token travels in the URL fragment: browsers never send it to the server."""
-    url = f"{base_url()}/#token={read_token()}"
+    """A one-time link: the browser opening it is signed in, and keeps it (a bookmark opens the
+    UI from then on); the token itself never reaches the browser."""
+    url = Daemon().call("POST", "/v1/ui/open", {})["url"]
     print(url)
     if not print_only:
-        webbrowser.open(url)
+        browser.open_url(url)
     return 0
 
 
@@ -273,11 +297,12 @@ def parser() -> argparse.ArgumentParser:
         session_commands.add_anyway_option(s)
     for module in NOUNS.values():
         module.add_parser(sub)
-    for name, help_text in (("binding", "addons with their settings and secrets"),
-                            ("knowledge", "knowledge folders")):  # fmt: skip
+    for name, help_text in (("connection", "tools with their settings and secrets"),
+                            ("notes", "notes folders")):  # fmt: skip
         noun = sub.add_parser(name, help=help_text)
         noun.add_subparsers(dest=f"{name}_cmd", required=True).add_parser("list")
-    sub.add_parser("ui").add_argument("--print", action="store_true", help="only print the URL")
+    ui = sub.add_parser("ui", help="open the web UI, signed in")
+    ui.add_argument("--print", action="store_true", help="only print the URL")
     return p
 
 
@@ -288,11 +313,14 @@ NOUNS: dict[str, Any] = {
     "account": account_commands,
     "provider": provider_commands,
     "secret": secret_commands,
-    "addon": addon_commands,
+    "tool": tool_commands,
     "source": source_commands,
     "image": image_commands,
+    "toolbox": toolbox_commands,
+    "runtime": runtime_commands,
     "app": app_commands,
     "automation": automation_commands,
+    "plan": plan_commands,
     "inbox": inbox_commands,
     "ask": ask_commands,
     "daemon": daemon_commands,
@@ -306,10 +334,10 @@ def dispatch(args: argparse.Namespace) -> int:
     if args.cmd == "ui":
         return open_ui(print_only=args.print)
     d = Daemon()
-    if args.cmd == "binding":
-        print_bindings(d)
-    elif args.cmd == "knowledge":
-        print_knowledge(d)
+    if args.cmd == "connection":
+        print_connections(d)
+    elif args.cmd == "notes":
+        print_notes(d)
     elif args.cmd in ("acp", "terminal"):
         return (acp if args.cmd == "acp" else terminal)(d, args)
     else:

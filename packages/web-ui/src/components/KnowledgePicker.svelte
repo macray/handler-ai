@@ -1,9 +1,9 @@
 <script lang="ts">
-  // Pick the knowledge folders (D.5) an agent gets, read-only at /knowledge/<name>: folders of the
-  // daemon's knowledge root (HANDLER_KNOWLEDGE_DIR). Used by the agent form.
-  // Hidden when the root does not exist, so it costs nothing to people who do not use it.
+  // Pick the knowledge folders (D.5) an agent gets, read-only at /notes/<name>: folders of the
+  // daemon's knowledge root (HANDLER_KNOWLEDGE_DIR). The agent form's Notes row: the folders as
+  // chips, the list behind + Add.
   import PickRow from "./PickRow.svelte";
-  import { Label } from "$lib/components/ui/label";
+  import PickerChips from "./PickerChips.svelte";
   import { api } from "../lib/api";
   import type { KnowledgeListing } from "../lib/contracts.gen";
 
@@ -36,25 +36,26 @@
   }
 </script>
 
-{#if error || listing?.folders.length}
-  <div class="space-y-2" data-testid="knowledge-picker">
-    <Label>Knowledge</Label>
-    <p class="text-xs text-muted-foreground">
-      Folders of <code>{listing?.root}</code> the agent can read, at <code>/knowledge/&lt;name&gt;</code>.
-    </p>
-    {#if error}<p class="text-sm text-danger">{error}</p>{/if}
-    <div class="max-h-72 divide-y overflow-y-auto rounded-lg border bg-card">
-      {#each listing?.folders ?? [] as folder (folder)}
-        <PickRow
-          name={folder.split("/").at(-1) ?? folder}
-          badge={covered(folder) ? "with its parent" : ""}
-          depth={depth(folder)}
-          checked={value.includes(folder) || covered(folder)}
-          disabled={covered(folder)}
-          onchange={(checked) => toggle(folder, checked)}
-          testid="knowledge-option"
-        />
-      {/each}
+{#snippet options()}
+  {#each listing?.folders ?? [] as folder (folder)}
+    <PickRow
+      name={folder.split("/").at(-1) ?? folder}
+      badge={covered(folder) ? "with its parent" : ""}
+      depth={depth(folder)}
+      checked={value.includes(folder) || covered(folder)}
+      disabled={covered(folder)}
+      onchange={(checked) => toggle(folder, checked)}
+      testid="knowledge-option"
+    />
+  {/each}
+{/snippet}
+
+<PickerChips chips={value.map((f) => ({ key: f, name: f }))} onremove={(f) => (value = value.filter((v) => v !== f))} label="Add notes" testid="knowledge-picker">
+  {#snippet list()}
+    <div class="divide-y">
+      {@render options()}
+      {#if listing && !listing.folders.length}<p class="px-3 py-2 text-xs text-muted-foreground">No notes yet: folders of <code>{listing.root}</code>.</p>{/if}
     </div>
-  </div>
-{/if}
+  {/snippet}
+</PickerChips>
+{#if error}<p class="text-sm text-danger">{error}</p>{/if}

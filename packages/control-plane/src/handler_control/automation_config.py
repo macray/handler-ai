@@ -196,7 +196,7 @@ def read_state(state_root: Path, name: str) -> State:
             only_agents={str(k): list(v) for k, v in (data.get("onlyAgents") or {}).items()},
             only_projects={str(k): str(v) for k, v in (data.get("onlyProjects") or {}).items()},
         )
-    except (ValidationError, ValueError, TypeError):
+    except (ValueError, TypeError):
         return State()
 
 
@@ -246,9 +246,7 @@ def write_definition(path: Path, definition: Automation) -> None:
     )
     doc = tomlkit.document()
     doc.add(
-        tomlkit.comment(
-            "Written by handler's web UI; edit it there or here (docs/user/automations.md)."
-        )
+        tomlkit.comment("Written by handler's web UI; edit it there or here (docs/automations.md).")
     )
     for key, value in data.items():
         if key == "when" and isinstance(value, dict):

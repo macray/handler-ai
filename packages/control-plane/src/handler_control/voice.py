@@ -43,10 +43,8 @@ class VoiceStore:
     def get(self) -> VoiceSettings:
         try:
             return VoiceSettings.model_validate_json(self.file.read_text())
-        except FileNotFoundError:
+        except (OSError, ValidationError):  # none yet, or unreadable: off, as before any choice
             return VoiceSettings()
-        except (OSError, ValidationError):
-            return VoiceSettings()  # unreadable: off, as before any choice
 
     def view(self) -> Voice:
         chosen = self.get()

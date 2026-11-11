@@ -102,7 +102,8 @@ def token_path(name: str) -> str:
 
 
 def credential_file(credentials: Path, name: str) -> Path:
-    return credentials / name / "credential"
+    """A file login's file, alone in its folder (contract A.1: a writable file mount)."""
+    return credentials / name / "login" / "credential"
 
 
 def logged_in(loaded: LoadedAccount, credentials: Path, store: secrets.SecretStore) -> bool:

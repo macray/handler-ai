@@ -3,7 +3,8 @@
   // its secrets, each labelled with what the addon says of it; an existing one's Delete, offered
   // while no agent uses it.
   // Secret values go to the secret store and are never shown: empty keeps the one it has; a
-  // hand-written reference (env, file, command) is kept as it is.
+  // hand-written reference (env, file, command) is kept as it is. One made invalid by an update of
+  // its addon is fixed here: it saves only what the addon now declares.
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Input } from "$lib/components/ui/input";
@@ -45,6 +46,9 @@
 
   const bound = (slot: string) => editing?.secrets?.includes(slot) ?? false;
   const handWritten = (slot: string) => editing?.handWritten?.includes(slot) ?? false;
+  // what it holds that the addon no longer declares: dropped on save
+  const declared = (slots: { name: string }[] | null | undefined) => new Set((slots ?? []).map((s) => s.name));
+  const gone = $derived((editing?.secrets ?? []).filter((s) => !declared(addon.secretSlots).has(s)));
   const missing = $derived([
     ...(addon.settings ?? []).filter((s) => s.required && !settings[s.name]?.trim()),
     ...(addon.secretSlots ?? []).filter((s) => s.required && !bound(s.name) && !secrets[s.name]?.trim()),
@@ -57,9 +61,13 @@
         name: name.trim(),
         addon: addon.name,
         description: description.trim() || null,
-        settings: Object.fromEntries(Object.entries(settings).filter(([, v]) => v.trim()).map(([k, v]) => [k, v.trim()])),
+        settings: Object.fromEntries(
+          Object.entries(settings)
+            .filter(([k, v]) => v.trim() && declared(addon.settings).has(k))
+            .map(([k, v]) => [k, v.trim()]),
+        ),
         secrets: Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v.trim() && !removed[k])),
-        removeSecrets: Object.keys(removed).filter((k) => removed[k]),
+        removeSecrets: [...Object.keys(removed).filter((k) => removed[k]), ...gone],
       });
     } finally {
       saving = false;
@@ -72,6 +80,9 @@
 {/snippet}
 
 <form class="space-y-6" onsubmit={(e) => (e.preventDefault(), void submit())} data-testid="binding-form">
+  {#if editing?.error}
+    <p class="text-sm text-danger" data-testid="binding-invalid">Invalid: {editing.error}. Save it with what its tool asks for now.</p>
+  {/if}
   <div class="grid gap-4 sm:grid-cols-[1fr_1.6fr]">
     <div class="space-y-1.5">
       <Label for="binding-name">Name</Label>

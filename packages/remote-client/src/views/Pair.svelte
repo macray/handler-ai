@@ -14,7 +14,7 @@
     </dl>
     <p class="note">
       Once paired, this browser can read and drive the sessions you share from Handler. Its key stays in this browser
-      (it cannot be read back, only used). Revoke it any time from Handler: Settings → Remote.
+      (it cannot be read back, only used). Revoke it any time from Handler: Settings → Your phone.
     </p>
     {#if app.device}<p class="note">It replaces this browser's current pairing ({app.device.name}).</p>{/if}
     <div class="actions">
@@ -24,7 +24,7 @@
   {:else}
     <p>This browser is not paired with a computer.</p>
     <p class="note">
-      On the computer running Handler: <strong>Settings → Remote → Pair a device</strong>, then scan the QR code with this
+      On the computer running Handler: <strong>Settings → Your phone → Pair a device</strong>, then scan the QR code with this
       device (or open its link here).
     </p>
   {/if}

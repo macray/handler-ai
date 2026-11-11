@@ -3,13 +3,17 @@
   // is (how it is used, what comes in and out of it, its schedules, Edit), how it starts, in one
   // dark console (a request for a chat; its form for a brief or a job), what it is in three
   // blocks (AgentReceipt: who works, what it is given, what it may do), then what it did, a
-  // timeline (its sessions and terminals; a job's runs, each with its result).
+  // timeline (its sessions and terminals; a job's runs, each with its result). In a project's
+  // Sessions tab (`tabbed`: the agents are tabs, its name and Edit on their row) only the box,
+  // who works and what it gets and may do as chips in its footer (what it uses: no list of it),
+  // and what it did.
   import Pencil from "@lucide/svelte/icons/pencil";
   import Play from "@lucide/svelte/icons/play";
   import type { Snippet } from "svelte";
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
   import AgentChecks from "./AgentChecks.svelte";
+  import AgentChips from "./AgentChips.svelte";
   import AgentReceipt from "./AgentReceipt.svelte";
   import AgentSchedules from "./AgentSchedules.svelte";
   import InterfaceStrip from "./InterfaceStrip.svelte";
@@ -20,9 +24,9 @@
   import UsesPanel from "./UsesPanel.svelte";
   import { accessLabel } from "../lib/access";
   import { terminalsOf } from "../lib/agents";
-  import type { Agent, AutomationView, ModelAccess, Session } from "../lib/contracts.gen";
+  import type { Agent, AutomationView, ModelAccess, Project, Session } from "../lib/contracts.gen";
   import { useOfAgent } from "../lib/interface";
-  import { agentLabel } from "../lib/projects.svelte";
+  import { agentLabel, makeModelDefault } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { inputSummary, runState, startedBy, verdictOf, type Schema } from "../lib/runs";
   import { sessions, STATUS_LABEL, type SessionStatus as Status } from "../lib/sessions.svelte";
@@ -37,6 +41,9 @@
     onchanged,
     partOf = null,
     say,
+    tabbed = false,
+    caches,
+    waiting,
   }: {
     agent: Agent;
     list: Session[]; // its place's sessions and runs, any state: this agent's are shown
@@ -47,7 +54,16 @@
     onchanged?: () => void; // the agent changed here (an improvement's attempt kept, D.21)
     partOf?: string | null; // the app it is one of the parts of (H.14): started by it, never here
     say?: string; // a chat's first message, typed in its box (Ask's "Start a chat about it")
+    tabbed?: boolean; // a project's Sessions tab: the box and what it did, nothing above
+    caches?: Project["caches"]; // its project's (a shared one is said in amber)
+    waiting?: Snippet; // under the box: what waits for you in its place
   } = $props();
+
+  /** The model picked for a session, made the agent's own. */
+  async function makeDefault(m: ModelAccess): Promise<void> {
+    await makeModelDefault(agent, m);
+    onchanged?.();
+  }
 
   let request = $state("");
   $effect(() => {
@@ -122,7 +138,7 @@
     starting = true;
     error = null;
     try {
-      const session = await sessions.start(agent, undefined, request.trim() || undefined, model);
+      const session = await sessions.start(agent, request.trim() || undefined, model);
       request = "";
       onstarted?.();
       navigate({ view: "session", key: session.key });
@@ -146,6 +162,10 @@
 </script>
 
 <section class="min-w-0 space-y-5" aria-label={agentLabel(agent)} data-testid="agent-panel">
+  {#snippet chips()}
+    {#if tabbed}<AgentChips {agent} {caches} {edit} />{/if}
+  {/snippet}
+  {#if !tabbed}
   <header class="flex items-start gap-3">
     <div class="min-w-0 flex-1 space-y-1.5">
       <div class="flex flex-wrap items-center gap-2">
@@ -161,6 +181,7 @@
     </div>
     <Button variant="ghost" size="sm" href={edit} data-testid="agent-edit"><Pencil />Edit</Button>
   </header>
+  {/if}
   {#if error}<p class="text-sm text-danger" data-testid="project-error">{error}</p>{/if}
 
   {#snippet byItsApp(app: string)}
@@ -174,12 +195,15 @@
       {@render byItsApp(partOf)}
     {:else}
       <div class="console term-surface p-4">
-        <div class="font-sans">{#key agent.id}<RunForm {agent} onstarted={(run) => (onstarted?.(), navigate({ view: "run", id: run.id }))} />{/key}</div>
+        <div class="font-sans">{#key agent.id}<RunForm {agent} ondefault={makeDefault} {chips} onstarted={(run) => (onstarted?.(), navigate({ view: "run", id: run.id }))} />{/key}</div>
       </div>
     {/if}
-    <AgentReceipt {agent} {edit} />
+    {#if !tabbed}
+      <AgentReceipt {agent} {edit} />
+    {/if}
     <AgentChecks {agent} {onchanged} />
-    <UsesPanel kind="agent" id={agent.id} />
+    {#if !tabbed}<UsesPanel kind="agent" id={agent.id} />{/if}
+    {@render waiting?.()}
     <section class="space-y-2">
       <h3 class="section-label">Its runs</h3>
       <Timeline entries={runEntries} empty="No run yet." />
@@ -189,7 +213,7 @@
       {@render byItsApp(partOf)}
     {:else if agent.interface}
       <div class="console term-surface p-4" data-testid="project-brief">
-        <div class="font-sans">{#key agent.id}<RunForm {agent} onstarted={(s) => (onstarted?.(), open(s))} />{/key}</div>
+        <div class="font-sans">{#key agent.id}<RunForm {agent} ondefault={makeDefault} {chips} onstarted={(s) => (onstarted?.(), open(s))} />{/key}</div>
       </div>
     {:else}
       <form
@@ -209,21 +233,25 @@
             placeholder="What should {agentLabel(agent)} do?"
             aria-label="request"
             aria-describedby="project-request-hint"
-            class="min-h-14 resize-y rounded-none border-0 bg-transparent p-0 font-sans text-[0.9375rem] shadow-none focus-visible:ring-0 dark:bg-transparent"
+            class="min-h-14 resize-y rounded-none border-0 bg-transparent p-0 font-mono text-[13.5px] leading-[1.55] shadow-none focus-visible:ring-0 dark:bg-transparent"
             data-testid="project-request"
           />
         </div>
         <div class="console-run">
-          <ModelChoice {agent} bind:value={model} />
-          <span id="project-request-hint" class="ml-auto text-xs text-muted-foreground max-lg:hidden">↵ to start · empty: an open chat</span>
+          <ModelChoice {agent} bind:value={model} ondefault={makeDefault} />
+          {@render chips()}
+          <span id="project-request-hint" class="ml-auto text-xs text-muted-foreground max-lg:hidden">{tabbed ? "" : "↵ to start · empty: an open chat"}</span>
           <Button type="submit" size="sm" class="max-lg:ml-auto" disabled={starting} data-testid="project-start-button"><Play />Start</Button>
         </div>
       </form>
     {/if}
-    <AgentReceipt {agent} {edit} />
-    <UsesPanel kind="agent" id={agent.id} />
+    {#if !tabbed}
+      <AgentReceipt {agent} {edit} />
+      <UsesPanel kind="agent" id={agent.id} />
+    {/if}
+    {@render waiting?.()}
     <section class="space-y-2">
-      <h3 class="section-label">Its sessions</h3>
+      {#if !tabbed}<h3 class="section-label">Its sessions</h3>{/if}
       <Timeline entries={sessionEntries} empty={agent.interface ? "No session yet: fill in the brief above." : "No session yet: say what to do above."} />
     </section>
   {/if}
@@ -233,9 +261,7 @@
   /* the start: a dark console, in the colours of the session it opens */
   .console {
     border-radius: 0.75rem;
-    box-shadow:
-      0 0 0 1px var(--border),
-      0 18px 40px -18px rgb(28 20 10 / 0.55);
+    box-shadow: var(--float-shadow);
     overflow: hidden;
   }
   /* the session's own select style is for its terminal: here the chevron needs its room */

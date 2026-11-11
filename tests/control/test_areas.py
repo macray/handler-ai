@@ -1,7 +1,9 @@
 """Contract D conformance: areas and the accounts and providers made for them
-(docs/dev/contracts.md §D.19)."""
+(contract D.19)."""
 
 from typing import Any
+
+import pytest
 
 from ..support.daemon import Daemon
 from .test_projects import create_project
@@ -20,6 +22,7 @@ def session(daemon: Daemon, agent: dict[str, Any], model: dict[str, Any] | None)
         return c.post("/v1/sessions", json={"agentId": agent["id"], "model": model})
 
 
+@pytest.mark.rule("area.an-area-in-use-stays")
 def test_areas_are_named_coloured_and_kept_while_used(daemon: Daemon) -> None:
     with daemon.http() as c:
         r = c.post("/v1/areas", json={"name": "Work", "color": "blue"})
@@ -43,6 +46,7 @@ def test_areas_are_named_coloured_and_kept_while_used(daemon: Daemon) -> None:
         assert c.delete("/v1/areas/Work").status_code == 204
 
 
+@pytest.mark.rule("session.the-area-decides-the-models", "area.a-project-keeps-to-its-area")
 def test_a_project_runs_only_the_accounts_made_for_its_area(daemon: Daemon) -> None:
     with daemon.http() as c:
         for name, color in (("Client", "cyan"), ("Home", "pink")):
@@ -86,6 +90,7 @@ def test_a_project_runs_only_the_accounts_made_for_its_area(daemon: Daemon) -> N
     put_areas(daemon, "fake", [])
 
 
+@pytest.mark.rule("session.the-area-decides-the-models", "area.a-project-keeps-to-its-area")
 def test_a_provider_is_kept_to_its_areas_as_an_account(daemon: Daemon) -> None:
     """D.19: a provider says which areas it is made for, as an account: a work API key never
     runs a personal project's agent; `any` (a local model) runs everywhere."""

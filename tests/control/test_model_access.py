@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from handler_sandbox_podman.launch import instance_dir
+from handler_sandbox_kit import egress
+from handler_sandbox_kit.launch import running_filter
 
 from ..support.daemon import Daemon, require_echo_box, start_daemon
 
@@ -28,6 +29,15 @@ id = "m1"
 """
 
 
+@pytest.mark.rule(
+    "access.the-api-stores-what-it-is-given",
+    "access.its-secrets-follow-it",
+    "access.its-status-says-what-is-missing",
+    "provider.its-endpoints-and-models-are-checked",
+    "secrets.never-read-back",
+    "secrets.every-one-is-listed",
+    "secrets.kept-for-you-only",
+)
 def test_providers(daemon: Daemon) -> None:
     """D.12: listed with their status and use; created from a template's values, edited, renamed
     while unused and deleted; a key sent with it goes to the secret store."""
@@ -77,6 +87,7 @@ def test_providers(daemon: Daemon) -> None:
         assert c.post("/v1/providers", json=bad).status_code == 422
 
 
+@pytest.mark.rule("access.one-account-or-one-provider", "access.in-use-is-never-renamed")
 def test_a_provider_in_use_is_not_renamed_but_deleted(daemon: Daemon) -> None:
     (daemon.providers_dir / "used.toml").write_text(PROVIDER)
     scope = daemon.make_scope()
@@ -95,6 +106,15 @@ def test_a_provider_in_use_is_not_renamed_but_deleted(daemon: Daemon) -> None:
         assert model["provider"] == "used" and "no provider 'used'" in model["problem"]
 
 
+@pytest.mark.rule(
+    "access.its-secrets-follow-it",
+    "access.in-use-is-never-renamed",
+    "access.its-status-says-what-is-missing",
+    "account.of-a-harness-that-signs-in",
+    "account.no-start-without-its-login",
+    "account.its-login-file-is-kept-apart",
+    "secrets.set-by-their-owner",
+)
 def test_accounts(daemon: Daemon) -> None:
     """D.9: created, logged in (a token or a file), renamed while unused, deleted."""
     daemon.create_ad_hoc("fake", daemon.make_scope(), name="uses fake")
@@ -117,7 +137,7 @@ def test_accounts(daemon: Daemon) -> None:
         assert c.put("/v1/accounts/plus/login", json={"token": "t"}).status_code == 422
         r = c.put("/v1/accounts/plus/login", json={"file": '{"tokens": {}}'})
         assert r.json()["status"] == "ready"
-        kept = daemon.data_dir / "accounts" / "plus" / "credential"
+        kept = daemon.data_dir / "accounts" / "plus" / "login" / "credential"
         assert kept.read_text() == '{"tokens": {}}' and kept.stat().st_mode & 0o777 == 0o600
 
         r = c.put("/v1/accounts/plus", json={"name": "chatgpt", "harness": "codex"})
@@ -138,6 +158,11 @@ def test_accounts(daemon: Daemon) -> None:
     assert not (daemon.accounts_dir / "chatgpt.toml").exists()
 
 
+@pytest.mark.rule(
+    "access.the-api-stores-what-it-is-given",
+    "access.its-secrets-follow-it",
+    "account.the-sign-in-is-yours",
+)
 def test_an_account_with_a_token_login(daemon: Daemon) -> None:
     """D.9: the person's token, pasted (handler's store) or where they keep it; it follows a
     rename."""
@@ -166,6 +191,7 @@ def test_an_account_with_a_token_login(daemon: Daemon) -> None:
         assert c.delete("/v1/accounts/work").status_code == 204
 
 
+@pytest.mark.rule("access.one-account-or-one-provider", "access.in-use-is-never-renamed")
 def test_an_account_in_use_is_deleted_its_agents_cannot_start(daemon: Daemon) -> None:
     """D.9, E1: once deleted, the agents using it keep its name, a model that cannot start until
     they are given another account."""
@@ -176,6 +202,7 @@ def test_an_account_in_use_is_deleted_its_agents_cannot_start(daemon: Daemon) ->
         assert model["account"] == "fake" and "no account 'fake'" in model["problem"]
 
 
+@pytest.mark.rule("account.no-start-without-its-login")
 def test_a_sign_in_code_is_not_a_token(daemon: Daemon) -> None:
     """D.9: what Claude Code's sign-in page shows to paste back into `claude setup-token` is
     refused, saying so (its `tokenPrefix`)."""
@@ -187,6 +214,7 @@ def test_a_sign_in_code_is_not_a_token(daemon: Daemon) -> None:
         assert code["status"] == "incomplete"  # not kept
 
 
+@pytest.mark.rule("access.its-status-says-what-is-missing", "account.of-a-harness-that-signs-in")
 def test_an_account_says_its_plan(daemon: Daemon) -> None:
     """E, D.9: one of its harness's login plans (Claude Code cannot learn it from a token)."""
     with daemon.http() as c:
@@ -208,6 +236,7 @@ def test_an_account_says_its_plan(daemon: Daemon) -> None:
         assert c.delete("/v1/accounts/pro").status_code == 204
 
 
+@pytest.mark.rule("account.of-a-harness-that-signs-in")
 def test_an_account_may_use_its_connectors(daemon: Daemon) -> None:
     """E: only where its harness has account connectors (Claude Code), off by default."""
     with daemon.http() as c:
@@ -222,6 +251,7 @@ def test_an_account_may_use_its_connectors(daemon: Daemon) -> None:
         assert c.delete("/v1/accounts/linked").status_code == 204
 
 
+@pytest.mark.rule("provider.its-files-go-to-their-harness")
 def test_a_provider_keeps_its_harness_files(daemon: Daemon) -> None:
     """E: a provider's `[files.<harness>]` are given at its creation and kept by form edits."""
     files = {"codex": {"instructions_md": {"content": "You are…"}}}
@@ -236,9 +266,10 @@ def test_a_provider_keeps_its_harness_files(daemon: Daemon) -> None:
         assert c.delete("/v1/providers/withfiles").status_code == 204
 
 
+@pytest.mark.rule("network.a-host-kept-blocked-is-not-asked-for")
 def test_allow_applies_to_running_sandboxes(daemon: Daemon) -> None:
-    """An ad-hoc agent's own hosts and log-only, changed by a full update, reach its running
-    filtered sandbox at once (A.4)."""
+    """An ad-hoc agent's own hosts, those it keeps blocked and log-only, changed by a full
+    update, reach its running filtered sandbox at once (A.4)."""
     require_echo_box()
     scope = daemon.make_scope()
     settings = {"model": {"account": "echo-box"}, "scope": str(scope), "egress": "enforce"}
@@ -251,15 +282,25 @@ def test_allow_applies_to_running_sandboxes(daemon: Daemon) -> None:
             while not c.get(url).json()["connections"] and time.monotonic() < deadline:
                 time.sleep(0.2)
             sandbox = c.get(url).json()["connections"][0]["sandbox"]
-            state = instance_dir(sandbox) / "proxy" / "egress.json"
-            deadline = time.monotonic() + 60
-            while not state.exists() and time.monotonic() < deadline:
+            deadline = time.monotonic() + 60  # listed before its launcher made its folder
+            while (folder := running_filter(sandbox)) is None and time.monotonic() < deadline:
                 time.sleep(0.2)
+            assert folder is not None
+            state = folder / egress.SETTINGS_FILE
             r = c.put(url, json=settings | {"allow": ["example.com:443"]})
             assert r.status_code == 200, r.text
-            assert json.loads(state.read_text()) == {
+            written = json.loads(state.read_text())
+            assert written.pop("version") >= 2  # the first settings, then these (A.4)
+            assert written == {
                 "allow": ["example.com:443"],
+                "blocked": [],
                 "enforcement": "enforce",
+                "watched": None,  # no client attached
             }
+            kept = {"allow": [], "blocked": ["example.com:443", "pypi.org:443"]}
+            r = c.put(url, json=settings | kept)  # kept blocked, taken off the allowed
+            assert r.status_code == 200, r.text
+            written = json.loads(state.read_text())
+            assert {k: written[k] for k in kept} == kept
     finally:
         client.close()

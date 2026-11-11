@@ -1,27 +1,26 @@
 # toolbox — `localhost/handler-ai-toolbox:latest`
 
-The development environment agents work in, **independent of the harness**: every harness
-and addon image is built `FROM` it, so all agents get the same tools. This folder is yours: handlerd
-copied it to `~/.config/handler-ai/toolbox/` from its default on first start and never changes it
-afterwards.
+The system agents work in, **independent of the harness**: every harness and tool image is
+built `FROM` it. Handler generates its recipe from three owners' parts (contract B.7):
 
-Default contents (Arch Linux): base-devel, gcc, pkgconf, git, JDK 25 + Maven, Python + pip + uv,
-Node + npm, Bun, rustup + sccache, ripgrep, fd, jq, curl, Chromium, wl-clipboard (the display's
-clipboard, contract A.6), podman.
+- **Handler's base** for the distro, `distros/<distro>/`: `base.containerfile` (what Handler and
+  the harness recipes rely on, and the usual command-line tools) and `distro.toml` (the commands
+  it gives, its caches). Fedora only, x86_64 and arm64.
+- **System packages**, `system-packages/<name>/`: a piece of the system, what only root or the
+  package manager can put in place (podman with its capabilities and configuration, chromium,
+  gcc, wl-clipboard). Each has `package.toml` (`handler.system-package/v1`: what it provides, its
+  caches), `install-<distro>.sh` (run as root at the build, its folder bind-mounted: nothing of
+  it stays in the image) and `check.sh` (run in the built toolbox, as agents get it). The user's
+  own are in `~/.config/handler-ai/system-packages/`, one named as a built-in one replacing it.
+- **The user's lines**, `~/.config/handler-ai/toolbox/custom.containerfile`, appended last.
 
-- Add a tool to `Containerfile`, then `handler image rebuild toolbox` (or **Rebuild** in the web UI): it
-  also updates the system packages, rebuilds every harness and addon image on top, checks them,
-  then switches them all, or none.
-- Toolchain *state* is not baked in: `toolbox.toml` declares the caches (`~/.cargo`, `~/.rustup`,
-  `~/.bun`, `~/.m2`, `~/.npm`, `~/.cache`, `~/.local`, inner podman's image store) mounted at
-  runtime, kept per project or global as each project chooses (contract D.8). A new toolchain with state to keep adds its table there
-  (`target`, `about`, `general` for a folder any tool writes to), or Settings → Caches does.
+`toolbox.toml` here is the default handlerd writes to `~/.config/handler-ai/toolbox/` on its first
+start: the distro and the system packages on (podman and wl-clipboard: what `nested` and
+`display` sandboxes need). Afterwards Handler writes it on the user's actions (Settings → Sandboxes,
+`handler toolbox`); the user's own caches are there too.
 
-What Handler needs from it (contract B.6): a glibc system with `sh`; what the harness and addon
-recipes install with (`npm`, `uv`, `jq`); `python3` for harnesses whose MCP servers run through
-`handler-sandbox-env`; `chromium` for the playwright addon; `bun` for the agents that write apps
-(the App creator, the `app-builder` addon: they build and test apps with it, any version); podman
-with setcap'd
-`newuidmap`/`newgidmap` only for agents with `confinement = "nested"`. Something missing shows as
-a failed rebuild: nothing switches. Bun is the exception: missing, the rebuild warns (in its log
-and in Settings → Images) and still switches.
+A toolbox build (`handler image rebuild toolbox`, or Settings → Sandboxes) applies a change with the
+build cache, or updates the system (`--update`: pull, no cache); then each system package's
+check, the commands the toolbox gives (the record), every need in use among them (Handler's, the
+harnesses', the abilities of saved agents), then every harness and tool image rebuilt on it and
+checked: all switch, or none.

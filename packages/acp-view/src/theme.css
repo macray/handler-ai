@@ -6,7 +6,8 @@
    matters (the main action, focus, the current place). Facts (paths, counts, times, the model) are
    set in the mono face, as in the terminal: the frame and the session speak the same language.
    `.dark` follows the OS, or the web UI's Settings → Appearance (theme.svelte.ts). Status colours:
-   --ok, --warn, --danger. */
+   --ok, --warn, --danger. The network's meter: --safe (sage) for its safe levels, --warn-bar
+   (solid amber) for Any site's one bar. */
 :root {
   --background: #ffffff;
   --foreground: #1c1a17;
@@ -39,6 +40,8 @@
   --sidebar-ring: #c2410c;
   --ok: #18864b;
   --warn: #8f5f00;
+  --safe: #7fa08a;
+  --warn-bar: #d99a06;
   --danger: #d4343a;
   --link: #c94f0c;
   --code-bg: #f5f3ef;
@@ -46,6 +49,8 @@
   --diff-del: #fbe6e4;
   --panel-shadow: 0 0 0 1px rgb(60 40 20 / 0.05), 0 1px 2px rgb(60 40 20 / 0.04), 0 8px 24px -8px rgb(60 40 20 / 0.1);
   --lift-shadow: 0 0 0 1px rgb(60 40 20 / 0.06), 0 2px 4px rgb(60 40 20 / 0.05), 0 12px 28px -10px rgb(60 40 20 / 0.16);
+  /* what floats over the page (a menu, the bell's list): further from it than a lifted card */
+  --float-shadow: 0 0 0 1px rgb(60 40 20 / 0.08), 0 20px 50px -14px rgb(40 25 10 / 0.35);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --sans: "Inter Variable", "Inter", system-ui, sans-serif;
   /* motion: something moves only when a state or a place changes, so the motion says what changed;
@@ -89,6 +94,8 @@
   --sidebar-ring: #f26b21;
   --ok: #4cc38a;
   --warn: #f0b545;
+  --safe: #8fb39a;
+  --warn-bar: #f0b545;
   --danger: #f06363;
   --link: #ff965a;
   --code-bg: #22201e;
@@ -96,6 +103,7 @@
   --diff-del: #3d2220;
   --panel-shadow: 0 0 0 1px rgb(255 245 230 / 0.05), 0 8px 24px -8px rgb(0 0 0 / 0.6);
   --lift-shadow: 0 0 0 1px rgb(255 245 230 / 0.09), 0 12px 28px -10px rgb(0 0 0 / 0.7);
+  --float-shadow: 0 0 0 1px rgb(255 245 230 / 0.1), 0 20px 50px -14px rgb(0 0 0 / 0.75);
   color-scheme: dark;
 }
 
@@ -130,12 +138,14 @@
   --color-background: var(--background);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
+  --color-safe: var(--safe);
   --color-danger: var(--danger);
   --color-link: var(--link);
   --color-accent-soft: var(--accent-soft);
   --color-accent-soft-foreground: var(--accent-soft-foreground);
   --shadow-panel: var(--panel-shadow);
   --shadow-lift: var(--lift-shadow);
+  --shadow-float: var(--float-shadow);
   --ease-soft: var(--ease);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -148,7 +158,14 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
+  }
+  /* Keyboard focus: the solid ring colour, 2px clear of the control (≥ 3:1 against the page in
+     both themes; at half opacity it fell near 2:1). Controls that draw their own ring (the ui
+     components: a 2px ring-ring) set outline-none. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   html {
     @apply font-sans;
@@ -244,7 +261,7 @@
 /* A terminal surface (the chat, replayed executions): always dark, like a terminal emulator. It
    redefines the theme tokens, so everything inside (badges, diffs, selects) follows. */
 .term-surface {
-  --background: #11100e;
+  --background: #141311;
   --foreground: #ddd8cf;
   --card: #181715;
   --card-foreground: #ddd8cf;
@@ -262,13 +279,24 @@
   --link: #7aa2f7;
   --ok: #7ee787;
   --warn: #e3b341;
+  --safe: #8fb39a;
+  --warn-bar: #e3b341;
   --danger: #ff7b72;
-  --code-bg: #191816;
-  --diff-add: #12301c;
-  --diff-del: #3a1a1a;
+  --code-bg: #171614;
+  --diff-add: #1f3a26;
+  --diff-del: #3e1f1f;
+  --diff-add-word: #2f6a3e;
+  --diff-del-word: #7a2d2d;
   --primary: #f26b21; /* the one accent, as in the dark theme: the prompt, focus, Send */
+  --ring: var(--primary);
   --prompt: var(--primary);
-  --user-line: #1b1916;
+  --user-line: #1b1a17;
+  /* what Claude Code's colours say, kept to their meaning: the agent at work (clay), plan mode
+     (teal), edits accepted without asking (violet), inline code (lavender) */
+  --working: #d97757;
+  --mode-plan: #4fb3a9;
+  --mode-edits: #b392f0;
+  --code-fg: #c9b8f5;
   color-scheme: dark;
   background: var(--background);
   color: var(--foreground);
@@ -301,7 +329,7 @@
   padding: 0.1rem 0.3rem;
 }
 
-/* Areas (D.19, docs/dev/ui-ux.md): the one exception to the single accent. A
+/* Areas (D.19, UI-UX guide): the one exception to the single accent. A
    area's colour tints its projects' and agents' icons and its tags (`area-<colour>` sets the
    pair, `area-icon` and `area-tag` use it); never orange, green, amber or red, which already mean
    something. */
@@ -344,12 +372,6 @@
     transform: translateY(4px);
   }
 }
-@keyframes enter-side {
-  from {
-    opacity: 0;
-    transform: translateX(-6px);
-  }
-}
 @keyframes rise {
   from {
     opacity: 0;
@@ -358,9 +380,6 @@
 }
 .enter {
   animation: enter var(--dur-2) var(--ease) backwards;
-}
-.enter-side {
-  animation: enter-side var(--dur-2) var(--ease) backwards;
 }
 /* a <details> unfolds instead of snapping open (where the browser can animate to `auto`) */
 :root {

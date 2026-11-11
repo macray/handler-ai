@@ -1,6 +1,7 @@
 """Contract B — Harness adapter (`handler.harness/v1`) and render output
 (`handler.harness-launch/v1`)."""
 
+import re
 from datetime import date
 from typing import Annotated, Literal, Self
 
@@ -12,15 +13,14 @@ from .common import (
     EgressEntry,
     EnvMap,
     EnvName,
-    GeneratedFile,
     HomePath,
     McpServer,
     McpTransport,
-    Mount,
     PermissionMode,
     StrictDocument,
 )
 from .provider import Protocol
+from .sandbox import Ability, CacheFolder, File, HandlerTool, HostFolder, KeptFile
 
 HARNESS_API_VERSION = "handler.harness/v1"
 HARNESS_LAUNCH_API_VERSION = "handler.harness-launch/v1"
@@ -73,6 +73,13 @@ class StateSlot(Document):
             self.kind != "file" or self.credential or self.per_session or self.read_only
         ):
             raise ValueError("'initial' is for a file of the agent's own state")
+        return self
+
+    @model_validator(mode="after")
+    def _a_read_only_file_is_a_login(self) -> Self:
+        # handler reads it and gives its content (A.1 `files`): it does so for a login only
+        if self.kind == "file" and self.read_only and not self.credential:
+            raise ValueError("a read-only file slot is an account's login ('credential')")
         return self
 
 
@@ -190,23 +197,122 @@ class AccountConnectors(Document):
 
 
 CacheName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")]
+"""A cache's host folder (D.8): named from its target (`cache_name`)."""
+
+
+def cache_name(target: str) -> str:
+    """The host folder of the cache at `target` (D.8): the path's parts without their leading
+    dots, joined by `-` (`~/.m2` → `m2`, `~/.local/share/containers/storage` →
+    `local-share-containers-storage`)."""
+    parts = [p.lstrip(".").lower() for p in target.removeprefix("~").split("/")]
+    name = re.sub(r"[^a-z0-9_-]+", "-", "-".join(p for p in parts if p)).strip("-_")
+    return name or "home"
+
+
+def _cache_target(target: str) -> str:
+    if target in ("~", "/"):
+        raise ValueError(f"a cache cannot be the whole {'home' if target == '~' else 'disk'}")
+    return target
+
+
+def _cache_bin(path: str) -> str:
+    if path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError(f"'{path}' is not a folder inside the cache ('bin', 'tools/bin')")
+    return path
 
 
 class CacheDeclaration(StrictDocument):
-    """A cache of the toolbox (B.6): the home path it is mounted at, what it holds, and whether
-    it is a general folder any tool writes to (`~/.cache`) rather than one tool's (`~/.cargo`)."""
+    """A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
+    what it holds, in people's words (shown first): a short name, then after ": " more if
+    needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
+    writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
+    PATH after the image's (`bin` for `~/.cargo/bin`)."""
 
-    target: HomePath
-    about: Annotated[str, Field(max_length=200)] = ""
+    target: Annotated[HomePath, AfterValidator(_cache_target)]
+    about: Annotated[str, Field(min_length=1, max_length=200)]
     general: bool = False
+    bin: Annotated[str, AfterValidator(_cache_bin)] | None = None
+
+
+def _distinct_caches(caches: list[CacheDeclaration]) -> list[CacheDeclaration]:
+    """Caches declared together: one per place, and two places never sharing a host folder."""
+    names: dict[str, str] = {}
+    for cache in caches:
+        if (seen := names.setdefault(cache_name(cache.target), cache.target)) != cache.target:
+            raise ValueError(f"{seen} and {cache.target} would share the folder of one cache")
+        if sum(c.target == cache.target for c in caches) > 1:
+            raise ValueError(f"two caches at {cache.target}")
+    return caches
+
+
+Caches = Annotated[list[CacheDeclaration], AfterValidator(_distinct_caches)]
+
+# A command of the toolbox, as `command -v` finds it ("python3", "g++", "wl-paste").
+Command = Annotated[str, Field(pattern=r"^[A-Za-z0-9_][A-Za-z0-9._+-]*$")]
+SystemPackageName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+DistroName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+
+SYSTEM_PACKAGE_API_VERSION = "handler.system-package/v1"
+
+# B.6: what Handler itself runs in every toolbox: `sh` (every check, `handler-sandbox-env`'s
+# wrapper), `python3` (`handler-sandbox-env`, B6), `cat`, `ls`, `env` (the image checks, D.4).
+HANDLER_TOOLBOX_NEEDS: list[str] = ["sh", "python3", "cat", "ls", "env"]
+
+
+class DistroManifest(StrictDocument):
+    """`distros/<name>/distro.toml` of Handler's toolbox data (B.7): a distro Handler builds
+    toolboxes on, the commands its base gives and the caches it declares."""
+
+    name: DistroName
+    provides: Annotated[list[Command], Field(min_length=1)]
+    caches: Caches = []
+
+
+class SystemPackageDaemon(StrictDocument):
+    """A daemon a system package installs, started in the background before the agent's program
+    in the sandboxes having one of `abilities` (A.8), until the sandbox ends (B.7): Docker's, in
+    those that run containers."""
+
+    command: Command  # installed by the package; runs until the sandbox ends
+    abilities: Annotated[list[Ability], Field(min_length=1)]
+    env: EnvMap = {}  # given to the agent's programs (where to reach it: DOCKER_HOST)
+
+
+class SystemPackageManifest(StrictDocument):
+    """`package.toml` of a system package (B.7): a piece of the system, what only root or the
+    package manager can put in the toolbox. Installed by its `install-<distro>.sh` at the toolbox's
+    build, checked by its `check.sh` in the built toolbox."""
+
+    api_version: Literal["handler.system-package/v1"]
+    name: SystemPackageName
+    version: Annotated[int, Field(ge=1)]  # bumped when its scripts change
+    description: NonEmpty
+    provides: Annotated[list[Command], Field(min_length=1)]  # found by `command -v` once installed
+    depends_on: list[SystemPackageName] = []  # installed before it, turned on with it
+    installs_after: list[SystemPackageName] = []  # installed after these when they are on
+    caches: Caches = []
+    daemons: list[SystemPackageDaemon] = []
+
+    @model_validator(mode="after")
+    def _not_its_own_dependency(self) -> Self:
+        if self.name in self.depends_on or self.name in self.installs_after:
+            raise ValueError("a system package cannot come after itself")
+        return self
+
+
+class SystemPackageChoice(StrictDocument):
+    """A system package turned on in `toolbox.toml`. Its options would be here (given to its
+    install script in its environment): none of Handler's has any."""
 
 
 class ToolboxManifest(StrictDocument):
-    """`images/toolbox/toolbox.toml` (B.6): what the toolbox image declares besides its recipe.
-    `caches`: the toolchains' state kept between sessions, by name (cargo → `~/.cargo`); each
-    project chooses whether its agents keep their own or use the global ones (D.8)."""
+    """The user's `toolbox.toml` (B.7), which Handler writes: the distro, the system packages turned
+    on, in the order they were added (the order of their layers), and the user's own caches, for
+    what their own lines install (the base, system packages and addons declare theirs)."""
 
-    caches: dict[CacheName, CacheDeclaration] = {}
+    distro: DistroName
+    system_packages: dict[SystemPackageName, SystemPackageChoice] = {}
+    caches: Caches = []
 
 
 class HarnessDescriptor(Document):
@@ -235,9 +341,9 @@ class HarnessDescriptor(Document):
     # common mcp.json format): `render` writes it, read-only
     mcp_config_file: HomePath | None = None
     env: EnvMap | None = None
-    writable_paths: list[HomePath] | None = None
     account_connectors: AccountConnectors | None = None
     terminal: TerminalCommand | None = None  # none: no `handler terminal` for it
+    needs: list[Command] = []  # what its recipe and its agent run from the toolbox (B.6)
 
     @model_validator(mode="after")
     def _some_permission_mode_mapped(self) -> Self:
@@ -293,8 +399,14 @@ class HarnessLaunch(Document):
     argv: Annotated[list[NonEmpty], Field(min_length=1)]
     home: AbsolutePath
     env: EnvMap
-    files: list[GeneratedFile]
-    mounts: list[Mount]
-    writable_paths: list[AbsolutePath] = []
+    # what the harness needs of the sandbox's files group (A.1): its state's folders, its skills
+    # (read-only folders), the toolbox's caches, its kept files (its state's, an account's
+    # login), its config files, Handler's tools it runs
+    folders: list[HostFolder] = []
+    skills: list[HostFolder] = []
+    caches: list[CacheFolder] = []
+    kept_files: list[KeptFile] = []
+    files: list[File] = []
+    tools: list[HandlerTool] = []
     egress: list[EgressEntry]
     session_defaults: SessionDefaults | None = None

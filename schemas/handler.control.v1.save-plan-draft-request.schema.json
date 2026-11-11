@@ -1,0 +1,23 @@
+{
+  "$id": "urn:handler.control/v1/save-plan-draft-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`PUT /v1/plan-drafts/{id}`: its text, edited by hand, over the one read (its digest).",
+  "properties": {
+    "text": {
+      "maxLength": 262144,
+      "title": "Text",
+      "type": "string"
+    },
+    "digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "text",
+    "digest"
+  ],
+  "title": "SavePlanDraftRequest",
+  "type": "object"
+}

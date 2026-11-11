@@ -1,0 +1,180 @@
+{
+  "$id": "urn:handler.control/v1/system-package-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CacheDeclaration": {
+      "additionalProperties": false,
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
+      "properties": {
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "about": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "About",
+          "type": "string"
+        },
+        "general": {
+          "default": false,
+          "title": "General",
+          "type": "boolean"
+        },
+        "bin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bin"
+        }
+      },
+      "required": [
+        "target",
+        "about"
+      ],
+      "title": "CacheDeclaration",
+      "type": "object"
+    },
+    "SystemPackageDaemon": {
+      "additionalProperties": false,
+      "description": "A daemon a system package installs, started in the background before the agent's program\nin the sandboxes having one of `abilities` (A.8), until the sandbox ends (B.7): Docker's, in\nthose that run containers.",
+      "properties": {
+        "command": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+          "title": "Command",
+          "type": "string"
+        },
+        "abilities": {
+          "items": {
+            "enum": [
+              "nested",
+              "privileged",
+              "display"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Abilities",
+          "type": "array"
+        },
+        "env": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        }
+      },
+      "required": [
+        "command",
+        "abilities"
+      ],
+      "title": "SystemPackageDaemon",
+      "type": "object"
+    }
+  },
+  "description": "A system package Handler or the user has (B.7), as Settings \u2192 Sandboxes offers it.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "provides": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Provides",
+      "type": "array"
+    },
+    "caches": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CacheDeclaration"
+      },
+      "title": "Caches",
+      "type": "array"
+    },
+    "daemons": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SystemPackageDaemon"
+      },
+      "title": "Daemons",
+      "type": "array"
+    },
+    "distros": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Distros",
+      "type": "array"
+    },
+    "builtin": {
+      "title": "Builtin",
+      "type": "boolean"
+    },
+    "overridesBuiltin": {
+      "default": false,
+      "title": "Overridesbuiltin",
+      "type": "boolean"
+    },
+    "directory": {
+      "title": "Directory",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "name",
+    "builtin",
+    "directory"
+  ],
+  "title": "SystemPackageInfo",
+  "type": "object"
+}

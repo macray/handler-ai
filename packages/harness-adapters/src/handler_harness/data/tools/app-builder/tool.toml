@@ -1,0 +1,18 @@
+# Apps tool (contract G.1, handler.tool/v1): what an agent needs to write an app (contract
+# H, apps design): the skill and its template (Svelte UI, Bun + SQLite backend), and
+# Bun, which builds and tests them, at the version apps run on (H.3). Its own: not the
+# toolbox's, so only the agents writing apps get it. It needs no connection: chosen by name.
+apiVersion = "handler.tool/v1"
+name = "app-builder"
+description = "Write apps: a skill with a Svelte + SQLite template, run by Bun"
+image = "localhost/handler-ai-tool-app-builder"  # no tag: agents mount :latest (G.4)
+commands = ["bun", "bunx"]
+check = ["bun", "--version"]
+# npm packages: the UI's build (vite, svelte) and the backend's type check (typescript). Nothing
+# else: an app's backend runs without network unless its manifest says so.
+egress = ["registry.npmjs.org:443"]
+
+[[caches]]
+target = "~/.bun"
+about = "Bun: its packages and the commands it installs"
+bin = "bin"
