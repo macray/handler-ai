@@ -15,6 +15,8 @@ from typing import Any
 
 import pytest
 
+from handler_control import sandbox_process
+
 from ..support import dev_env, place, runtimes
 
 CURL_IMAGE = dev_env.CURL_IMAGE
@@ -181,8 +183,8 @@ def popen(
     fd = _spec_fd(doc)
     try:
         return subprocess.Popen(  # ty: ignore[invalid-return-type]
-            # a shell moves the spec to fd 3, as handlerd does (sandbox_process._launch_argv)
-            ["/bin/sh", "-c", f'exec "$0" launch 3<&{fd} {fd}<&-', binary],
+            # the spec moved to fd 3, as handlerd does
+            sandbox_process.launch_argv(fd, binary),
             pass_fds=(fd,),
             env=os.environ | ({} if unchained else upstream_env()) | (env or {}),
             **kwargs,

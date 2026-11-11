@@ -3,6 +3,19 @@
 What each release lets you do, grouped by what you do. One release is one commit in the public
 repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+## 0.3.1
+
+### Fixed
+
+- On Debian and Ubuntu, no agent, app or check started ("Bad fd number").
+- With Docker 28, an agent with a filtered network, or given secrets, did not start ("user
+  specified IP address is supported only when connecting to networks with user configured
+  subnets").
+
+### Changed
+
+- **A shorter README**: what Handler does, how to install it, then the docs.
+
 ## 0.3.0
 
 An alpha: formats may still change from one release to the next. Coming from 0.2.0, some files

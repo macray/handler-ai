@@ -159,6 +159,32 @@ def with_user(table: str, entry: str, numeric_id: int) -> str:
     return "\n".join([*lines, entry]) + "\n"
 
 
+def _internal_network(name: str, sandbox: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """A filtered sandbox's internal network, its subnet the one Docker picks as free, stated:
+    the proxy's address is set on it (it listens on that network only), which Docker (28 at least)
+    allows on a network whose subnet was given only ("user specified IP address is supported
+    only when connecting to networks with user configured subnets"). Picked, then the network
+    made again with it; taken meanwhile by another network, picked again."""
+    labels = [
+        "--label", f"{MANAGED_LABEL}=1", "--label", f"{SANDBOX_LABEL}={sandbox}",
+        "--label", f"{LAUNCHER_LABEL}={launcher_label()}",
+    ]  # fmt: skip
+    error = DockerError("no free subnet")
+    for _ in range(5):
+        docker("network", "create", "--internal", *labels, name)
+        subnet = docker(
+            "network", "inspect", name, "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}"
+        )
+        docker("network", "rm", name)
+        try:
+            docker("network", "create", "--internal", "--subnet", subnet, *labels, name)
+        except DockerError as e:
+            error = e
+            continue
+        return ipaddress.ip_network(subnet)
+    raise error
+
+
 class Docker(Runtime):
     prog = PROG
     errors = (DockerError,)
@@ -242,17 +268,7 @@ class Docker(Runtime):
         if not image_exists(PROXY_IMAGE):  # built by `image build-proxy` (A.7), never here
             raise DockerError(f"{PROXY_IMAGE} is not built: `{PROG} image build-proxy`")
         name = network_name(spec.name)
-        docker(
-            "network", "create", "--internal",
-            "--label", f"{MANAGED_LABEL}=1", "--label", f"{SANDBOX_LABEL}={spec.name}",
-            "--label", f"{LAUNCHER_LABEL}={launcher_label()}",
-            name,
-        )  # fmt: skip
-        subnet = ipaddress.ip_network(
-            docker(
-                "network", "inspect", name, "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}"
-            )
-        )
+        subnet = _internal_network(name, spec.name)
         proxy_ip = str(next(h for i, h in enumerate(subnet.hosts()) if i == 1))
         secret_hosts = instance.filter_settings()
         proxy = proxy_name(spec.name)

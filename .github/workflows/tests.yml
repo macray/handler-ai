@@ -26,8 +26,8 @@ jobs:
       HANDLER_TEST_STRICT: "1"
       HANDLER_TEST_RUNTIMES: podman,docker
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no major tags since its v8
       - run: uv sync --locked
       - name: The runtimes here (contract A.8)
         run: |
@@ -42,8 +42,8 @@ jobs:
     env:
       HANDLER_TEST_STRICT: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no major tags since its v8
       - run: uv sync --locked
       - run: uv run ty check --python-platform darwin
       - run: uv run pytest -n auto --dist loadfile -rs

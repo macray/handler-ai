@@ -118,11 +118,20 @@ def _spec_fd(spec: SandboxSpec) -> int:
         return os.dup(f.fileno())  # the dup keeps the unlinked file alive
 
 
-def _launch_argv(fd: int) -> list[str]:
-    """`launch` with the spec moved from `fd` to SPEC_FD by a shell that then becomes the runtime:
-    subprocess cannot move it itself (a dup2 in preexec_fn needs SPEC_FD in pass_fds, which fails
-    in the child when the parent's SPEC_FD is not inherited by a fork: macOS's kqueue)."""
-    return ["/bin/sh", "-c", f'exec "$0" launch {SPEC_FD}<&{fd} {fd}<&-', binary()]
+# Moves the spec from argv[1] to SPEC_FD, then becomes the runtime (argv[2:]).
+_MOVE_SPEC = (
+    "import os,sys;f=int(sys.argv[1]);os.dup2(f,%d);os.close(f);os.execvp(sys.argv[2],sys.argv[2:])"
+)
+
+
+def launch_argv(fd: int, runtime: str | None = None) -> list[str]:
+    """`launch` with the spec moved from `fd` to SPEC_FD by a small Python program that then becomes
+    the runtime. subprocess cannot move it itself (a dup2 in preexec_fn needs SPEC_FD in pass_fds,
+    which fails in the child when the parent's SPEC_FD is not inherited by a fork: macOS's kqueue);
+    nor can a shell portably: POSIX redirections take one digit (dash, Debian's and Ubuntu's
+    /bin/sh, refuses `3<&14`: "Bad fd number")."""
+    move = _MOVE_SPEC % SPEC_FD
+    return [sys.executable, "-I", "-S", "-c", move, str(fd), runtime or binary(), "launch"]
 
 
 def start(spec: SandboxSpec, **popen_kwargs: Any) -> subprocess.Popen[bytes]:
@@ -130,7 +139,7 @@ def start(spec: SandboxSpec, **popen_kwargs: Any) -> subprocess.Popen[bytes]:
     fd = _spec_fd(spec)
     try:
         return subprocess.Popen(  # ty: ignore[invalid-return-type]
-            _launch_argv(fd), pass_fds=(fd,), **popen_kwargs
+            launch_argv(fd), pass_fds=(fd,), **popen_kwargs
         )
     finally:
         os.close(fd)
@@ -141,7 +150,7 @@ async def start_async(spec: SandboxSpec, *, line_limit: int) -> asyncio.subproce
     fd = _spec_fd(spec)
     try:
         return await asyncio.create_subprocess_exec(
-            *_launch_argv(fd),
+            *launch_argv(fd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -158,7 +167,7 @@ async def start_piped(spec: SandboxSpec, *, line_limit: int) -> asyncio.subproce
     fd = _spec_fd(spec)
     try:
         return await asyncio.create_subprocess_exec(
-            *_launch_argv(fd),
+            *launch_argv(fd),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -176,7 +185,7 @@ def start_detached(spec: SandboxSpec) -> tuple[subprocess.Popen[bytes], int]:
     into an unlinked file, as a pipe would break with handlerd. Returns the process and that file,
     for `follow`; the caller closes it."""
     fd = _spec_fd(spec)
-    argv = _launch_argv(fd)
+    argv = launch_argv(fd)
     if os.environ.get("INVOCATION_ID") and (systemd_run := shutil.which("systemd-run")):
         scope = [systemd_run, "--user", "--scope", "--collect", "--quiet", f"--unit={spec.name}"]
         argv = [*scope, "--", *argv]
