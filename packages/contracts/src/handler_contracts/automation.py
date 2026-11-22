@@ -1,7 +1,8 @@
 """Contract I — Automations (`handler.automation/v1`): *when this happens, run that*. When a session
 stops or a schedule comes, handlerd runs the automation's run: the user's script in a sandbox (which
 may call models through handlerd's `llm` service, and whose files handlerd appends to knowledge
-notes), an agent with an interface (its result goes to the inbox), or an app's route.
+notes), an agent with an interface (its result goes to the inbox), an app's job, or an app's
+route.
 
 `Automation` is hand-written TOML (`<config>/automations/<name>/automation.toml`): unknown keys
 are errors. The rest is exchanged: the Control API's views and requests (I.9), and the `llm/v1`
@@ -13,7 +14,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AfterValidator, AwareDatetime, Field, model_validator
 
-from .common import AppName, Document, RefusedHost, StrictDocument
+from .common import AppName, Document, Duration, RefusedHost, StrictDocument, duration_minutes
 
 AUTOMATION_API_VERSION = "handler.automation/v1"
 AUTOMATION_FILE = "automation.toml"
@@ -40,9 +41,9 @@ def _output_path(p: str) -> str:
 
 
 class Schedule(StrictDocument):
-    """A `when` that is a time (I.2): every N minutes or hours, or at a local time of day."""
+    """A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day."""
 
-    every: Annotated[str, Field(pattern=r"^[1-9]\d{0,3}[mh]$")] | None = None  # "30m", "2h"
+    every: Duration | None = None  # "30m", "2h", "1d"
     at: Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")] | None = None  # local time
     days: list[Day] | None = None  # with `at`; default every day
 
@@ -60,9 +61,7 @@ class Schedule(StrictDocument):
 
     @property
     def every_minutes(self) -> int | None:
-        if self.every is None:
-            return None
-        return int(self.every[:-1]) * (60 if self.every.endswith("h") else 1)
+        return None if self.every is None else duration_minutes(self.every)
 
     @property
     def label(self) -> str:
@@ -105,6 +104,15 @@ class AutomationAgentRun(StrictDocument):
     input: AutomationAgentInput = AutomationAgentInput()
 
 
+class AutomationJobRun(StrictDocument):
+    """`run = { app, job, input? }`: a run of one of an app's jobs (H.1), by the Who works chosen
+    for it (H.2), unattended (I.3)."""
+
+    app: AppName
+    job: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,29}$")]  # one of its `jobs`
+    input: AutomationAgentInput = AutomationAgentInput()
+
+
 class AutomationAppCall(StrictDocument):
     """`run = { app, call }`: a call to an app's route, as the owner (I.3, H.9)."""
 
@@ -119,8 +127,14 @@ class Automation(StrictDocument):
     description: str | None = None
     when: AutomationEvent | Schedule
     only: AutomationOnly | None = None  # with `session.stopped`
-    # a script: a command line (`sh -c`), in its folder; or an agent run; or an app's route
-    run: Annotated[str, Field(min_length=1)] | AutomationAgentRun | AutomationAppCall
+    # a script: a command line (`sh -c`), in its folder; an agent run; an app's job's run; or an
+    # app's route
+    run: (
+        Annotated[str, Field(min_length=1)]
+        | AutomationAgentRun
+        | AutomationJobRun
+        | AutomationAppCall
+    )
     timeout_sec: Annotated[int, Field(ge=1, le=3600)] | None = None  # a script's, default 600
     services: AutomationServices | None = None  # a script's
     append: list[AutomationAppend] = []  # a script's
@@ -153,6 +167,10 @@ class Automation(StrictDocument):
     @property
     def agent_run(self) -> AutomationAgentRun | None:
         return self.run if isinstance(self.run, AutomationAgentRun) else None
+
+    @property
+    def job_run(self) -> AutomationJobRun | None:
+        return self.run if isinstance(self.run, AutomationJobRun) else None
 
     @property
     def app_call(self) -> AutomationAppCall | None:

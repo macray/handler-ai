@@ -381,6 +381,12 @@ class Runtime(ABC):
     def remove(self, instance: Instance) -> None:
         """Remove what the engine holds of it (its filter too), best effort, never raising."""
 
+    def start_engine(self) -> str | None:
+        """At handlerd's start (`start-engine`): the engine made ready to run sandboxes where it
+        does not start by itself; what was done, or why it could not be, in a sentence; None
+        when there is nothing to do (an engine that is always there: Podman, Docker)."""
+        return None
+
     @abstractmethod
     def sweep(self) -> list[str]:
         """Remove what the engine holds of sandboxes whose launcher is gone (`launcher_alive` on
@@ -663,6 +669,14 @@ def _said_start_failed(runtime: Runtime, name: str, code: int) -> int:
         print(f"{runtime.prog}: {why}", file=sys.stderr, flush=True)
         return SandboxExit.SETUP_FAILED
     return code
+
+
+def start_engine(runtime: Runtime) -> int:
+    """`start-engine`: what it did said on stderr; 0 even when the engine could not be started
+    (its check says so, and how to start it)."""
+    if said := runtime.start_engine():
+        print(f"{runtime.prog}: {said}", file=sys.stderr)
+    return 0
 
 
 def sweep(runtime: Runtime) -> int:

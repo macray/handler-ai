@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 
 from handler_contracts import ImageInfo, ProxyImage
 from handler_sandbox_kit import egress
+from handler_sandbox_kit.engine_output import Reason
 from handler_sandbox_kit.launcher import LAUNCHER_LABEL, MANAGED_LABEL, launcher_label
 
 from .podman import (
@@ -25,6 +26,7 @@ from .podman import (
     PodmanError,
     podman,
     quiet,
+    said,
 )
 
 MAX_READ_BYTES = 1024 * 1024
@@ -34,6 +36,18 @@ COPY_TRIES, COPY_WAIT = 4, 0.5  # `podman cp` (read, extract), when its mount is
 def _fail(message: str) -> int:
     print(f"handler-sandbox-podman: {message}", file=sys.stderr)
     return 1
+
+
+def _build(argv: list[str]) -> tuple[int, Reason]:
+    """Run `podman build`, its output (its own STEP lines, A.7) passed on as it comes; its exit
+    code, and the reason it gave when it failed."""
+    reason = Reason()
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        reason.feed(line)
+    return proc.wait(), reason
 
 
 def build(
@@ -55,9 +69,9 @@ def build(
         argv += ["--layers=false"] if no_intermediate else []
         for arg in build_args:
             argv += ["--build-arg", arg]
-        code = subprocess.run([*argv, str(context)], check=False).returncode
-        if code != 0:
-            return _fail(f"build failed (podman exit code {code})")
+        code, reason = _build([*argv, str(context)])
+        if code:
+            return _fail(reason.said(f"build failed (podman exit code {code})"))
         id_file.write_text(iidfile.read_text().strip().removeprefix("sha256:") + "\n")
     return 0
 
@@ -101,9 +115,9 @@ def build_proxy() -> int:
     with tempfile.TemporaryDirectory() as tmp, resources.as_file(context) as path:
         iidfile = Path(tmp) / "iid"
         argv = ["podman", "build", f"--iidfile={iidfile}", "--pull=always", "--no-cache"]
-        code = subprocess.run([*argv, str(path)], check=False).returncode
-        if code != 0:
-            return _fail(f"build failed (podman exit code {code})")
+        code, reason = _build([*argv, str(path)])
+        if code:
+            return _fail(reason.said(f"build failed (podman exit code {code})"))
         image_id = iidfile.read_text().strip().removeprefix("sha256:")
     started = subprocess.run(
         ["podman", "run", "--rm", "--network", "none", "--label", f"{MANAGED_LABEL}=1",
@@ -234,5 +248,7 @@ def remove(image_id: str) -> int:
 
 
 def pull(ref: str) -> int:
-    code = subprocess.run(["podman", "pull", "-q", ref], check=False).returncode
-    return _fail(f"cannot pull {ref} (podman exit code {code})") if code else 0
+    proc = subprocess.run(
+        ["podman", "pull", "-q", ref], capture_output=True, text=True, check=False
+    )
+    return _fail(f"cannot pull {ref}: {said(proc)}") if proc.returncode else 0

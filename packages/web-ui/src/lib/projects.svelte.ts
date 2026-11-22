@@ -8,13 +8,14 @@
 // through this module, ProjectEditor.svelte and AgentEditor.svelte.
 import { accessOf, noAccess, requested, type ModelAccess } from "./access";
 import { api } from "./api";
-import type { AccountInfo, AddonUse, Agent, AgentInterface, AgentOrigin, AgentRequest, ModelAccess as RequestedModel, Project, ProjectSettingsRequest, ProviderInfo } from "./contracts.gen";
+import type { AccountInfo, AddonUse, Agent, AgentInterface, AgentOrigin, AgentRequest, KnowledgeFolderUse, KnowledgeUse, ModelAccess as RequestedModel, Project, ProjectSettingsRequest, ProviderInfo } from "./contracts.gen";
 import { folderName } from "./agents";
 import { withEntry, withList, type OwnHosts } from "./hosts";
 import { NEW_AGENT, type Sandbox } from "./safety";
 import { allows } from "./areas.svelte";
 import { interfaceOf, newJob, switchedTo } from "./interface";
-import { freeName } from "./text";
+import { freeName, homePath } from "./text";
+import { envOf, envRows, type EnvRow } from "./env";
 
 /** What an agent is set to: the body of create and of a full update. */
 export type AgentSpec = Sandbox & {
@@ -23,25 +24,27 @@ export type AgentSpec = Sandbox & {
   description: string;
   instructions: string;
   display: boolean;
+  env: EnvRow[]; // its own environment variables, plain values (D.8)
   allow: string[];
   blocked: string[]; // the hosts the person keeps blocked, never also allowed (A.3)
   addons: AddonUse[]; // its own, not those its project gives (G.3)
-  knowledge: string[];
+  knowledge: KnowledgeFolderUse[]; // its notes folders, each read-only or read-write (D.5)
+  schemas: KnowledgeUse[]; // its knowledge uses: the schemas it reads or writes (D.29)
   default: boolean;
   remoteStart: boolean; // your paired devices may start sessions with it
   skills: string[]; // the skills it picks, not those its project gives (D.17)
   interface: string; // D.18, as JSON text: what its runs take and give back; "": none
   modelAlone: boolean; // no program: the model alone, on a provider, with no sandbox (D.18)
-  origin: AgentOrigin | null; // the definition it was set up from, kept for good (D.18, H.2)
+  origin: AgentOrigin | null; // the definition it was set up from, kept for good (D.18, D.23)
 };
 
-/** Where an agent lives, given when it is made and never changed (D.1): its project, its app
- *  (one of its parts, or Chat), or none: then its folder (null: a folder per session). */
-export type Home = Pick<AgentRequest, "projectId" | "app" | "chat" | "scope">;
+/** Where an agent lives, given when it is made and never changed (D.1): its project, Chat, or
+ *  none: then its folder (null: a folder per session). */
+export type Home = Pick<AgentRequest, "projectId" | "chat" | "scope">;
 
 /** An agent's home, to save it again. */
 export function homeOf(agent: Agent): Home {
-  return agent.projectId ? { projectId: agent.projectId } : { app: agent.app ?? null, chat: agent.chat ?? false, scope: agent.scope ?? null };
+  return agent.projectId ? { projectId: agent.projectId } : { chat: agent.chat ?? false, scope: agent.scope ?? null };
 }
 
 export function emptyAgent(model: ModelAccess = noAccess()): AgentSpec {
@@ -52,10 +55,12 @@ export function emptyAgent(model: ModelAccess = noAccess()): AgentSpec {
     instructions: "",
     ...NEW_AGENT,
     display: false,
+    env: [],
     allow: [],
     blocked: [],
     addons: [],
     knowledge: [],
+    schemas: [],
     default: false,
     remoteStart: false,
     skills: [],
@@ -79,7 +84,10 @@ export function withModelAlone(spec: AgentSpec, alone: boolean): AgentSpec {
     blocked: [],
     addons: alone ? [] : spec.addons,
     skills: alone ? [] : spec.skills,
+    knowledge: alone ? spec.knowledge.map((u) => ({ ...u, access: "read" })) : spec.knowledge, // it only reads
+    schemas: alone ? [] : spec.schemas, // no tools to work with them
     display: false,
+    env: alone ? [] : spec.env,
     model: alone ? kept : noAccess(),
   };
 }
@@ -96,10 +104,12 @@ export function agentSpec(agent: Agent, project: Pick<Project, "defaultAgent">):
     confinement: agent.confinement,
     permissions: agent.permissions,
     display: agent.display ?? false,
+    env: envRows(agent.env),
     allow: [...(agent.allow ?? [])],
     blocked: [...(agent.blocked ?? [])],
     addons: (agent.addons ?? []).map((u) => ({ ...u })),
-    knowledge: [...(agent.knowledge ?? [])],
+    knowledge: (agent.knowledge ?? []).map((u) => ({ ...u })),
+    schemas: (agent.schemas ?? []).map((u) => ({ ...u })),
     default: project.defaultAgent === agent.id,
     remoteStart: agent.remoteStart ?? false,
     skills: [...(agent.skills ?? [])],
@@ -133,6 +143,7 @@ export function agentBody(spec: AgentSpec, home: Home, confirmRisks = false, too
     description: text(spec.description),
     instructions: text(spec.instructions),
     interface: parseInterface(spec.interface),
+    env: envOf(spec.env),
     default: ofProject && isDefault,
     remoteStart: ofProject && remoteStart,
     confirmRisks,
@@ -282,7 +293,7 @@ export function byName(list: Project[]): Project[] {
 /** A folder as a row says it: `~` for the home (/home/<you>, /Users/<you>), and past four parts
  *  the middle cut (`~/Documents/…/thesis`); the whole path is in its tooltip. */
 export function shortFolder(folder: string): string {
-  const path = folder.replace(/\/+$/, "").replace(/^\/(home|Users)\/[^/]+(?=\/|$)/, "~");
+  const path = homePath(folder);
   const parts = path.split("/");
   return parts.length > 4 ? [parts[0], parts[1], "…", parts.at(-1)].join("/") : path;
 }
@@ -322,16 +333,28 @@ class ProjectStore {
   list = $state<Project[]>([]);
   loaded = $state(false);
   error = $state<string | null>(null);
-  async refresh(): Promise<void> {
-    try {
-      const list = await api.projects();
-      this.list = list;
-      this.error = null;
-    } catch (e) {
-      this.error = (e as Error).message;
-    } finally {
-      this.loaded = true;
-    }
+  // the lists asked for: an answer to one asked before the last is older than it, and dropped
+  // (the menu asks again on each page change; a slow answer must not undo a newer one); who
+  // asked for it waits for the last one's instead
+  private asked = 0;
+  private last: Promise<void> = Promise.resolve();
+
+  refresh(): Promise<void> {
+    const mine = ++this.asked;
+    const latest = () => mine === this.asked;
+    const done = api
+      .projects()
+      .then(
+        (list) => {
+          if (latest()) [this.list, this.error, this.loaded] = [list, null, true];
+        },
+        (e: Error) => {
+          if (latest()) [this.error, this.loaded] = [e.message, true];
+        },
+      )
+      .then(() => (latest() ? undefined : this.last));
+    this.last = done;
+    return done;
   }
 
   get(id: string | null | undefined): Project | undefined {

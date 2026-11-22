@@ -8,7 +8,7 @@ shape, in its final message). A job's runs are unattended; a brief's sessions ar
     check_instructions  the form's fields its instructions name, `{{key}}`, exist
     fill             instructions with the form's values in place of their placeholders
     check_input      a run's input against its agent's interface → its subject, digest set
-    misfit           why an agent's interface does not fit the one an app needs (H.2)
+    misfit           why an agent's interface does not fit the one one of Handler's needs wants
     subject_folder   the subject, a read-only folder at /subject/<name>
     request          the first request: instructions, input, subject, a job's rule for the result
     result_rule      that rule: how a run gives its result back
@@ -126,9 +126,10 @@ def errors(schema: dict[str, Any], value: Any) -> list[str]:
 
 
 def misfit(wanted: AgentInterface, interface: AgentInterface | None) -> str | None:
-    """Why an agent with `interface` cannot be given for an app's need of a job with `wanted`
-    (H.2), None when it fits: its form takes each field the app sends, of that type, and requires
-    none the app may leave out; its result requires each field the app's requires, of that type.
+    """Why an agent with `interface` cannot be given for one of Handler's needs of a job with
+    `wanted` (D.18), None when it fits: its form takes each field Handler sends, of that type, and
+    requires none Handler may leave out; its result requires each field the need's requires, of
+    that type.
     Properties, types and `required` only: not everything a JSON Schema can say."""
     if interface is None or interface.result is None:
         return "it is not a job"
@@ -209,10 +210,13 @@ def request(
     given: SessionInput,
     subject: SessionSubject | None = None,
     subject_notes: str | None = None,
+    *,
+    folders: str | None = None,
 ) -> str:
     """The request a session started from the form begins with: what the agent is for (its
-    instructions, the form's values in them), what it is given (every value, as JSON), and for a
-    job's run, how to give its result back."""
+    instructions, the form's values in them), what it is given (every value, as JSON; an app's
+    job's run, its `folders` section, app_jobs.place), and for a job's run, how to give its
+    result back."""
     text = fill(instructions, given.fields).strip() if instructions else ""
     parts = [text] if text else []
     if given.fields:
@@ -224,6 +228,8 @@ def request(
             f"Paths in your result are relative to that folder."
         )
         parts.append(text + (f"\n\n{subject_notes}" if subject_notes else ""))
+    if folders:
+        parts.append(folders)
     if interface.result is None:  # a brief: a chat goes on from there
         return "\n\n".join(parts)
     parts.append(result_rule(interface.result))
@@ -233,7 +239,11 @@ def request(
 def result_rule(schema: dict[str, Any]) -> str:
     """How a run gives its result back: the end of its first request (a job's, a plan's step's)."""
     return (
-        "## Result\n\nWhen you are done, end your final message with one fenced code block whose "
+        "## Result\n\nThis session ends as soon as your turn ends: whatever "
+        "still runs then (a command in the background, a task you wait to be told of) is "
+        "stopped, and what it gives is never read. Run what you need in the foreground, a "
+        "long command with a timeout long enough, and wait for its end before you answer.\n\n"
+        "When you are done, end your final message with one fenced code block whose "
         f"info string is `json {FENCE}`, holding one JSON value valid against this JSON Schema, "
         "and nothing after it:\n\n```json\n" + json.dumps(schema, indent=2) + "\n```"
     )

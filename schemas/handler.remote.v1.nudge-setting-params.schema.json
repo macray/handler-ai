@@ -1,0 +1,31 @@
+{
+  "$id": "urn:handler.remote/v1/nudge-setting-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/nudge_setting` \u2192 NudgeSettingAnswer: how often an app's nudge alerts the\nowner (H.17).",
+  "properties": {
+    "app": {
+      "title": "App",
+      "type": "string"
+    },
+    "nudge": {
+      "title": "Nudge",
+      "type": "string"
+    },
+    "setting": {
+      "enum": [
+        "default",
+        "once",
+        "silent"
+      ],
+      "title": "Setting",
+      "type": "string"
+    }
+  },
+  "required": [
+    "app",
+    "nudge",
+    "setting"
+  ],
+  "title": "NudgeSettingParams",
+  "type": "object"
+}

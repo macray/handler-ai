@@ -1,7 +1,8 @@
 # handler automation
 
 Create, try, turn on and follow an automation: when a session stops or at a time you set,
-Handler runs your script in a sandbox, one of your agents, or a route of one of your apps.
+Handler runs your script in a sandbox, one of your agents, or a job or a route of one of your
+apps.
 
 ## When to use it
 

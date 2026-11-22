@@ -2,6 +2,7 @@
 used as a remote browser server, so no browser or system libraries are needed on the host.
 `HANDLER_TEST_CHROMIUM=/usr/bin/chromium` uses a local Chromium instead (no image to pull)."""
 
+import functools
 import os
 import socket
 import subprocess
@@ -15,6 +16,7 @@ PW_VERSION = "1.63.0"
 PW_IMAGE = f"mcr.microsoft.com/playwright:v{PW_VERSION}-noble"
 
 
+@functools.cache  # asked by every file importing it, on every worker: podman is slow under load
 def image_present() -> bool:
     if os.environ.get("HANDLER_TEST_CHROMIUM"):
         return True

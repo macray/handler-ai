@@ -1,10 +1,27 @@
-# handler-relay (main.go), built for the platform the runtime builds for (its own Linux: arm64 in
-# Apple container's VMs). FROM scratch: the runtime exports its file (/handler-relay) to a folder
-# of the host, mounted read-only into the sandboxes that need it.
+# handler-relay (main.go) and fuse-overlayfs, built for the platform the runtime builds for (its
+# own Linux: arm64 in Apple container's VMs). FROM scratch: the runtime exports their files
+# (/handler-relay, /fuse-overlayfs) to a folder of the host, mounted read-only into the
+# sandboxes that need them.
 FROM docker.io/library/golang:1.25-alpine AS build
 WORKDIR /src
-COPY go.mod main.go ./
+COPY go.mod *.go ./
 RUN CGO_ENABLED=0 GOFLAGS=-trimpath go build -ldflags="-s -w" -o /handler-relay .
+
+# fuse-overlayfs, static: the caches' overlays the relay mounts (it opens /dev/fuse and mounts,
+# then hands the mount to this program, which serves it as the sandbox's user). The runtime's
+# own, whatever the sandbox's image has.
+FROM docker.io/library/alpine:3.22 AS overlay
+ARG FUSE_OVERLAYFS=1.18
+ARG FUSE_OVERLAYFS_SHA256=fdd1896c8de35a15eb14444d7880be81d635fcbbc4ad162d8bc3ccf5627aa8c7
+RUN apk add --no-cache build-base autoconf automake fuse3-static fuse3-dev linux-headers
+WORKDIR /src
+RUN wget -qO src.tar.gz \
+        "https://github.com/containers/fuse-overlayfs/archive/refs/tags/v${FUSE_OVERLAYFS}.tar.gz" \
+    && echo "${FUSE_OVERLAYFS_SHA256}  src.tar.gz" | sha256sum -c - \
+    && tar xzf src.tar.gz --strip-components=1 \
+    && ./autogen.sh && LIBS=-ldl LDFLAGS=-static ./configure && make \
+    && strip fuse-overlayfs && install -m 755 fuse-overlayfs /fuse-overlayfs
 
 FROM scratch
 COPY --from=build /handler-relay /handler-relay
+COPY --from=overlay /fuse-overlayfs /fuse-overlayfs

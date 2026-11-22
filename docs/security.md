@@ -9,7 +9,12 @@ says what those limits are, and what they leave open.
 - **Its folder, read-write.** The project's folder is mounted at the same path as on your
   computer. It must be inside one of your work folders (Settings → Folders), and Handler's own
   folders are always refused.
-- **What you give it, read-only:** its notes folders, its skills, its tools' programs.
+- **What you give it, read-only:** its notes folders, its skills, its tools' programs. A notes
+  folder you give it read-write (**Can write**, amber) is the exception: the agent can change or
+  delete any file in that folder; never its `.git`, which stays read-only. Handler keeps a history
+  of that folder out of the agent's reach, so a change can be seen and undone
+  ([notes](notes.md#see-what-changed-and-undo-it)); a link the agent makes there is never
+  followed.
 - **Nothing else of your computer.** Not your home, not your SSH keys, not your other projects.
   Each agent runs in its own container, as your user (never root), with no extra privileges
   and a read-only system: rootless Podman on Linux by default, a virtual machine of its own with
@@ -36,12 +41,14 @@ around the filter.
 The hosts an agent needs for its model and its tools are allowed for you, shown "required by
 …" in its settings (locked, with why); the others are yours to add, one by one (*Add a site*) or
 by letting it learn them (*Learn the sites it needs*). A host you do not want the
-agent to have, you can keep blocked: it stays refused, and the agent is told "Blocked by
-Handler's network filter on the user's choice: do not ask for pypi.org:443, go on without it."
+agent to have, you can keep blocked: it stays refused, even when a wider site you allowed covers
+it (`files.pypi.org` kept blocked, `*.pypi.org` allowed), and the agent is told "Blocked by
+Handler's network filter on the user's choice: do not ask for files.pypi.org:443, go on without
+it." A site the agent's model or tools need cannot be kept blocked: saving says what needs it.
 The network panel lists the hosts kept blocked, each with *Allow* and *Remove* (then it is
 undecided again, and the agent may ask for it). Its recent connections say what became of each
 request: ✓ reached (the host answered), ✗ "could not connect" with why ("connection refused":
-nothing listens there), ⛔ blocked, or kept blocked.
+nothing listens there), ⊘ blocked, or kept blocked.
 
 When the filter blocks a host you have not decided on, the session shows it where you look: a
 card in the conversation, "Handler's network filter blocked pypi.org:443 (3 times)", with *Allow
@@ -66,7 +73,7 @@ same way. A plan's step or an automation's run says it in its own result instead
 failed because of a blocked host says so ("pypi.org:443 was blocked by the network filter"),
 whatever the agent guessed; one that completed says "Completed, with 2 hosts refused", how many
 times each, what the agent did instead, and that the result may differ from what you would get
-with these hosts. Both offer *Allow and run again* (from that step, for a plan) and *Keep
+with these hosts. Both offer *Allow pypi.org:443 for Dev, run again* (from that step, for a plan) and *Keep
 blocked*. A host you keep blocked is never listed.
 
 ## Secrets
@@ -84,14 +91,17 @@ an agent can read, with that agent and why), then those in use, with where each 
 
 Handler never opens a port. It polls the gateway you host, and everything between your phone and
 your computer is end-to-end encrypted: the gateway can neither read it nor forge it. A family
-member's phone reaches only the apps you share with that person, never a session. Details:
-[your phone](phone.md#security).
+member's phone reaches only the apps you share with that person, never a session. How it works
+and how it is encrypted: [your phone](phone.md#how-it-works); what a gateway taken over can do:
+[security](phone.md#security).
 
 ## Apps
 
 Each app has its own web address, apart from Handler's web UI and from the other apps, runs in its
 own container with no network and none of your files unless its `app.toml` asks (shown before
 you deploy), and gets its secrets from you, never from the agent that wrote it. Only you deploy.
+A folder you give an app that writes it keeps its `.git` read-only, and Handler keeps a history
+of it out of the app's reach, so a change can be seen and undone on the app's page.
 
 ## What it does not protect
 
@@ -112,10 +122,14 @@ you deploy), and gets its secrets from you, never from the agent that wrote it. 
   agent that asked; *Windows on my screen* (the agent can open windows that look like other
   programs', and read what you copy). Each one on is an amber chip on the agent.
 - **Shared caches** (a project choosing the global caches) let what one project's agent writes
-  there reach another's.
+  there reach another's. Within a project, its agents share its caches, the container images they
+  downloaded too (with Apple's `container`, whatever their network: an image another agent
+  pulled is there for an agent whose network does not allow that registry).
 - **The container is not a virtual machine.** On Linux (and WSL 2), agents share your computer's
   kernel; a kernel flaw could let one out. With Apple's `container`, each sandbox is a virtual
-  machine of its own; with Docker Desktop or OrbStack, sandboxes share Docker's virtual machine.
+  machine of its own (an agent that runs containers loosens only its own: what it gives an
+  engine inside is in that machine); with Docker Desktop or OrbStack, sandboxes share Docker's
+  virtual machine.
 - **What an agent says is not checked.** Review what it changed (a session's Files) before you
   commit, deploy or run it.
 

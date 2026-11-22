@@ -17,8 +17,10 @@ def _in_userns(argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run([*prefix, *argv], capture_output=True, text=True, check=False)
 
 
-def _run(path: Path, before: list[str], after: list[str]) -> subprocess.CompletedProcess[str]:
-    return _in_userns([*before, str(path), *after])
+def _run(
+    paths: list[Path], before: list[str], after: list[str]
+) -> subprocess.CompletedProcess[str]:
+    return _in_userns([*before, *map(str, paths), *after])
 
 
 def size(paths: list[Path]) -> int:

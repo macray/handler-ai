@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from handler_contracts import (
@@ -64,6 +65,8 @@ PROG = "handler-sandbox-podman"
 # A.6: where the display's Wayland socket appears in the container, and its private runtime dir.
 DISPLAY_SOCKET = "/run/handler/wayland-0"
 DISPLAY_RUNTIME_DIR = "/run/handler/runtime"
+
+REMOVE_TIMEOUT = 30.0  # seconds a container's removal is waited for, at its end
 
 
 def proxy_name(name: str) -> str:
@@ -336,9 +339,9 @@ class Podman(Runtime):
         quiet("stop", "--time", "5", name)
 
     def remove(self, instance: Instance) -> None:
-        quiet("rm", "--force", "--time", "0", instance.spec.name)
+        remove_container(instance.spec.name)
         if instance.filtered:  # its proxy
-            quiet("rm", "--force", "--time", "0", proxy_name(instance.spec.name))
+            remove_container(proxy_name(instance.spec.name))
             quiet("network", "rm", "--force", network_name(instance.spec.name))
 
     def sweep(self) -> list[str]:
@@ -357,3 +360,19 @@ class Podman(Runtime):
             if not launcher_alive(net.get("labels", {}).get(LAUNCHER_LABEL, "")):
                 quiet("network", "rm", "--force", net["name"])
         return sorted(swept)
+
+
+def remove_container(name: str) -> None:
+    """Removes a container and waits until it is gone. A `--rm` one being removed by podman's
+    own cleanup as it ends makes `rm` fail while it still exists: its image is still in use
+    then, and a launcher ending at once would leave it behind (rule
+    `runtime.removes-only-an-unused-image`, A4)."""
+    deadline = time.monotonic() + REMOVE_TIMEOUT
+    while True:
+        quiet("rm", "--force", "--time", "0", name)
+        gone = subprocess.run(
+            ["podman", "container", "exists", name], capture_output=True, check=False
+        )
+        if gone.returncode != 0 or time.monotonic() > deadline:
+            return
+        time.sleep(0.2)

@@ -12,6 +12,7 @@ import pytest
 
 from handler_contracts import RuntimeCheck, SandboxSpec
 from handler_sandbox_docker import check, docker, images, launch
+from handler_sandbox_kit.engine_output import Reason
 from handler_sandbox_kit.launch import UnenforceableError, check_enforceable
 
 ROOTLESS = {"ServerVersion": "29.9.2", "SecurityOptions": ["name=seccomp", "name=rootless"]}
@@ -19,6 +20,7 @@ ROOTFUL = {"ServerVersion": "29.9.2", "OperatingSystem": "Arch Linux", "Security
 DESKTOP = {"ServerVersion": "29.1.0", "OperatingSystem": "Docker Desktop"}
 
 
+@pytest.mark.rule("confinement.privileged-is-never-root-on-the-computer")
 def test_the_engine_s_kind_from_docker_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(docker.sys, "platform", "linux")
     assert docker.engine_of(ROOTLESS).kind == "rootless"
@@ -84,7 +86,7 @@ def test_the_user_and_its_passwd_entry() -> None:
     assert launch.with_user(present, "agent:x:1000:1000::/h:/bin/sh", 1000) == present
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 def test_nested_subordinate_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     """Rootful: the host user's own range (the container's ids are the host's); a VM: every id
     of the sandbox's but the agent's."""
@@ -100,7 +102,7 @@ def test_nested_subordinate_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     assert docker.subid_file("gid", "rootful") == "501:100000:65536\n"
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 def test_nested_confinement_lets_an_engine_inside_make_its_namespaces() -> None:
     args = launch.confinement_args(
         SandboxSpec.model_construct(isolation="nested")  # only the level is read
@@ -110,6 +112,7 @@ def test_nested_confinement_lets_an_engine_inside_make_its_namespaces() -> None:
     assert "--security-opt=no-new-privileges" not in args  # newuidmap's file capabilities
 
 
+@pytest.mark.rule("runtime.an-image-id-is-a-reference")
 def test_an_image_id_is_a_reference_docker_takes() -> None:
     hex_id = "ab" * 32
     assert docker.reference(hex_id) == f"sha256:{hex_id}"
@@ -134,10 +137,10 @@ def test_an_image_id_given_to_a_build_is_tagged_for_it(
     monkeypatch.setattr(images, "docker", lambda *a, **k: calls.append(a) or "")
     built: list[list[str]] = []
 
-    def fake_build(argv: list[str]) -> int:
+    def fake_build(argv: list[str]) -> tuple[int, Reason]:
         built.append(argv)
         Path(argv[0].removeprefix("--iidfile=")).write_text("sha256:" + "cd" * 32)
-        return 0
+        return 0, Reason()
 
     monkeypatch.setattr(images, "_build", fake_build)
     hex_id = "ab" * 32
@@ -180,7 +183,7 @@ def test_the_check_only_asks_docker(
     assert RuntimeCheck.model_validate_json(capsys.readouterr().out).runtime.startswith("docker")
 
 
-@pytest.mark.rule("need.a-file-given-is-that-file")
+@pytest.mark.rule("app-need.a-file-given-is-that-file")
 @pytest.mark.parametrize("kind", ["vm", "rootful"])
 def test_a_file_is_linked_in_a_vm_and_mounted_on_linux(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str

@@ -30,9 +30,11 @@ installed with Handler as a `handler-sandbox-<name>` program; `list` shows those
   does not pull it (on Arch: `pacman -S docker-buildx`). Build the images again after switching
   to it.
 - `apple`: Apple's `container` on macOS 26 (Apple silicon), a virtual machine per sandbox.
-  **Experimental**: agents that run containers, privileged sandboxes and windows on your screen
-  are not available there yet ([known limitations](../known-limitations.md)). Offered on macOS
-  only: elsewhere `list` does not show it, and `use apple` answers that it is for macOS.
+  **Experimental**: privileged sandboxes and windows on your screen are not available there yet;
+  agents that run containers are, and an agent only adds to its caches
+  ([known limitations](../known-limitations.md)). Apple's container
+  service does not come back by itself after a restart of the Mac: Handler starts it when it
+  starts (at login), and `handler daemon log` says how it went. Offered on macOS only: elsewhere `list` does not show it, and `use apple` answers that it is for macOS.
 
 ## Subcommands
 

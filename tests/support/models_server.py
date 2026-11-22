@@ -1,6 +1,7 @@
 """A fake OpenAI-compatible model server for the provider tests (D.12): `GET /v1/models` answers
 `models` (OpenAI's `{"data": [...]}`), `GET /props` llama-server's `props` when given; `status`
-another answer instead. It keeps each request's path, headers and the address it came from.
+another answer instead; `redirect` a 308 to `https://` instead (as a server behind a proxy that
+sends `http://` there: `https://<its Host, without the port><path>`). It keeps each request's path, headers and the address it came from.
 Listening on every address (as `llama-server --host 0.0.0.0`) or on the loopback only (as
 llama-server by default). Runs in the test process."""
 
@@ -18,6 +19,7 @@ class ModelsServer:
         props: dict[str, Any] | None = None,
         listen: str = "0.0.0.0",
         status: int = 200,
+        redirect: bool = False,
     ) -> None:
         self.requests: list[dict[str, Any]] = []
         server = self
@@ -31,6 +33,13 @@ class ModelsServer:
                         "from": self.client_address[0],
                     }
                 )
+                if redirect:
+                    host = self.headers["Host"].rsplit(":", 1)[0]
+                    self.send_response(308)
+                    self.send_header("Location", f"https://{host}{self.path}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if status != 200:
                     answer, code = {"error": "no key"}, status
                 elif self.path == "/v1/models":

@@ -9,7 +9,7 @@ CheckError (the request is wrong), ForbiddenError (outside what handler allows),
 the current state, or a risk not confirmed).
 """
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from handler_contracts import (
@@ -21,10 +21,12 @@ from handler_contracts import (
     AgentRequest,
     AgentSettings,
     CreateProjectRequest,
+    KnowledgeFolderUse,
+    KnowledgeUse,
     ModelAccess,
     ProjectSettingsRequest,
 )
-from handler_harness import catalog
+from handler_harness import RenderError, catalog, harness_env
 
 from . import (
     access,
@@ -36,13 +38,22 @@ from . import (
     handler_needs,
     interfaces,
     knowledge,
+    knowledge_schemas,
+    launcher,
     llm,
     model_agent,
     runtime,
     skills,
     toolbox,
 )
-from .agents import AgentRecord, AgentRegistry, CheckedSettings, NotAgentsModelError, RunsAs
+from .agents import (
+    AgentRecord,
+    AgentRegistry,
+    CheckedSettings,
+    NotAgentsModelError,
+    RunsAs,
+    with_knowledge_tool,
+)
 from .projects import ProjectRecord, ProjectRegistry
 from .settings import Settings
 
@@ -98,14 +109,76 @@ def checked_settings(
     if twice := sorted({u.addon for u in body.addons} & {u.addon for u in given}):
         raise CheckError("given by its project", f"{', '.join(twice)}: its project gives it")
     notes = checked_knowledge(settings, body.knowledge, body.model_alone)
+    check_schemas(settings, body.schemas, body.model_alone)
     if not body.model_alone:  # no sandbox, no addons (its project's do not reach it)
         try:
-            addons.check(settings.bindings_dir, [*body.addons, *given])
+            uses = with_knowledge_tool([*body.addons, *given], bool(body.schemas))
+            selected = addons.check(settings.bindings_dir, uses)
         except addons.SelectionError as e:
             raise CheckError("tools unusable", str(e)) from None
         check_runtime_gives(body)
+        check_env(settings, body, model, selected)
+        check_blocked(settings, body, model, uses)
     own = body.model_dump(include=set(AgentSettings.model_fields) - {"model"})
     return CheckedSettings(**own | {"model": model, "scope": scope, "knowledge": notes})
+
+
+def check_env(
+    settings: Settings, body: AgentSettings, model: RunsAs, selected: list[addons.Selected]
+) -> None:
+    """The agent's own variables (D.8): none its harness sets on its model, in its permission
+    mode, none of its tools' (its own and its project's), none of the toolbox's daemons its
+    sandbox starts. A session on another model, a terminal or a harness changed since is
+    checked again when it starts (compose)."""
+    if not body.env:
+        return
+    try:
+        resolved = launcher.agent_spec(settings, model)
+        descriptor = catalog.get(resolved.harness).descriptor
+        owners = dict.fromkeys(
+            harness_env(descriptor, resolved, body.permissions), descriptor.product
+        )
+    except (launcher.AgentStartError, RenderError) as e:
+        raise CheckError("model access unusable", str(e)) from None
+    owners |= {name: f"the tool {tool}" for name, tool in addons.env_owners(selected).items()}
+    if body.schemas:
+        owners[compose.SCHEMAS_ENV] = "Handler (its schemas)"
+    started = compose.started_daemons(toolbox.daemons(settings), body.confinement, body.display)
+    owners |= {name: f"the toolbox ({d.command})" for d in started for name in d.env}
+    if taken := sorted(body.env.keys() & owners.keys()):
+        said = "; ".join(f"{name} is set by {owners[name]}" for name in taken)
+        raise CheckError("environment variables taken", said)
+
+
+def covers(entry: str, host: str) -> bool:
+    """Whether an entry (A.3) takes in every target of `host`, an entry too: itself, or a
+    wildcard over its domain on its port."""
+    if entry == host:
+        return True
+    name, _, port = entry.rpartition(":")
+    other, _, other_port = host.rpartition(":")
+    return name.startswith("*.") and port == other_port and other.endswith(name[1:])
+
+
+def check_blocked(
+    settings: Settings, body: AgentSettings, model: RunsAs, uses: list[AddonUse]
+) -> None:
+    """A filtered agent keeps no host blocked that its model or one of its tools requires: the
+    filter refuses a kept-blocked host whatever allows it (A.3), so the agent could not work."""
+    if body.network != "filtered" or not body.blocked:
+        return
+    try:
+        resolved = launcher.agent_spec(settings, model)
+        required = launcher.required_hosts(settings, resolved, uses)
+    except launcher.AgentStartError as e:
+        raise CheckError("model access unusable", str(e)) from None
+    if clash := [
+        f"{entry} ({r.host} is required by {r.by})"
+        for entry in body.blocked
+        for r in required
+        if covers(entry, r.host)
+    ]:
+        raise CheckError("a required host kept blocked", "; ".join(clash))
 
 
 def check_runtime_gives(body: AgentSettings) -> None:
@@ -142,19 +215,36 @@ def check_interface(interface: AgentInterface, permissions: str) -> None:
         )
 
 
-def checked_knowledge(settings: Settings, folders: list[str], model_alone: bool) -> list[str]:
-    """Its knowledge folders (D.5), as paths in the root; on the model alone, not more notes
-    than a call takes (D.18)."""
+def checked_knowledge(
+    settings: Settings, uses: list[KnowledgeFolderUse], model_alone: bool
+) -> list[KnowledgeFolderUse]:
+    """Its notes folders (D.5), as paths in the root with their access; on the model alone, read
+    only (it has no sandbox to write from) and not more notes than a call takes (D.18)."""
+    if model_alone and any(u.access == "write" for u in uses):
+        raise CheckError("notes unusable", "the model alone reads its notes only: it writes none")
     try:
         root, _ = knowledge.root(settings)
-        checked = knowledge.check(root, folders)
+        checked = knowledge.check(root, uses)
         if model_alone:
-            model_agent.knowledge_prompt(knowledge.notes(root, checked))
+            model_agent.knowledge_prompt(knowledge.notes(root, [u.folder for u in checked]))
     except knowledge.KnowledgeError as e:
         raise CheckError("notes unusable", str(e)) from None
     except model_agent.KnowledgeTooLargeError as e:
         raise CheckError("notes too large", str(e)) from None
     return checked
+
+
+def check_schemas(settings: Settings, uses: list[KnowledgeUse], model_alone: bool) -> None:
+    """Its knowledge uses (D.29): schemas of the Library an agent can use (those they extend
+    too); none on the model alone: no sandbox, no tool to work with them (D.18)."""
+    if not uses:
+        return
+    if model_alone:
+        raise CheckError("model alone", "a schema needs an agent program: it has no tools")
+    try:
+        knowledge_schemas.files(settings.schemas_dir, [u.schema_id for u in uses])
+    except knowledge_schemas.SchemaError as e:
+        raise CheckError("schemas unusable", str(e)) from None
 
 
 def session_model(settings: Settings, agent: AgentRecord, given: ModelAccess | None) -> RunsAs:
@@ -240,8 +330,9 @@ def _risk_value(settings: AgentSettings | None, name: str) -> str:
 
 def agent_risks(old: AgentSettings | None, new: AgentSettings) -> list[str]:
     """What a save gives the agent beyond what it had (a new one: beyond the preset of new
-    agents, D.8): a wider network (log only included), confinement or permission mode. None on
-    the model alone: no sandbox, no tools, nothing to widen (D.18)."""
+    agents, D.8): a wider network (log only included), confinement or permission mode, a notes
+    folder it may now write (D.5). None on the model alone: no sandbox, no tools, nothing to
+    widen (D.18)."""
     if new.model_alone:
         return []
     found = []
@@ -249,6 +340,10 @@ def agent_risks(old: AgentSettings | None, new: AgentSettings) -> list[str]:
         value = _risk_value(new, name)
         if rank[value] > rank[_risk_value(old, name)]:
             found.append(_RISK.get(value, f'{name} "{value}"'))
+    wrote = {u.folder for u in old.knowledge if u.access == "write"} if old else set()
+    for use in new.knowledge:
+        if use.access == "write" and use.folder not in wrote:
+            found.append(f"notes {use.folder} read-write: it can change or delete any file there")
     return found
 
 
@@ -323,22 +418,17 @@ def check_skills(settings: Settings, body: AgentRequest, project: ProjectRecord 
 
 
 def check_origin(
-    settings: Settings,
-    origin: AgentOrigin | None,
-    current: AgentRecord | None,
-    app_definition: Callable[[AgentOrigin], Path],
+    settings: Settings, origin: AgentOrigin | None, current: AgentRecord | None
 ) -> Path | None:
-    """What an agent is set up from: an app's need's definition (H.2, found by
-    `app_definition`), an agents file's agent (D.23, the file read) or one of Handler's needs'
-    definition (D.18, its current version); an agent keeps its origin (none stays none). Returns
+    """What an agent is set up from: an agents file's agent (D.23, the file read) or one of
+    Handler's needs' definition (D.18, its current version); an agent keeps its origin (none
+    stays none). Returns
     the definition's folder for a new agent (its skills go to the library, its checks to the
     agent), None otherwise."""
     if current is not None and origin != current.origin:
         raise ConflictError("origin cannot change", "an agent keeps what it was set up from")
     if origin is None or current is not None:
         return None
-    if origin.kind == "app":
-        return app_definition(origin)
     try:
         if origin.kind == "agents-file":
             return agents_files.part_folder(settings, origin)
@@ -347,31 +437,15 @@ def check_origin(
         raise (ConflictError if e.status == 409 else CheckError)(e.title, str(e)) from None
 
 
-def check_home(body: AgentRequest, current: AgentRecord | None, apps: Collection[str]) -> None:
-    """Its home (D.1, H.14): given at creation, never changed. An app's part is set up from
-    that app's need; Chat's agents are chats with no folder (each conversation gets one)."""
+def check_home(body: AgentRequest, current: AgentRecord | None) -> None:
+    """Its home (D.1): given at creation, never changed. Chat's agents are chats with no folder
+    (each conversation gets one)."""
     if current is not None:
-        if (body.project_id, body.app, body.chat) != (
-            current.project_id,
-            current.app,
-            current.chat,
-        ):
+        if (body.project_id, body.chat) != (current.project_id, current.chat):
             raise ConflictError("home cannot change", "an agent stays where it was made")
         return
-    from_app = body.origin.name if body.origin and body.origin.kind == "app" else None
-    if body.chat:
-        if body.scope is not None or body.interface is not None:
-            raise CheckError("a chat", "Chat's agents have no folder and no form")
-        return
-    if from_app != body.app:
-        why = (
-            f"set up from a need of the app {from_app}, it is one of its parts (app {from_app})"
-            if from_app
-            else f"one of the app {body.app}'s parts is set up from one of its needs"
-        )
-        raise CheckError("an app's agent", why)
-    if body.app is not None and body.app not in apps:
-        raise CheckError("unknown app", body.app)
+    if body.chat and (body.scope is not None or body.interface is not None):
+        raise CheckError("a chat", "Chat's agents have no folder and no form")
 
 
 def check_outside_identity(
@@ -424,7 +498,7 @@ def new_project_agents(
 ) -> list[CheckedSettings]:
     """A new project's agents (none, or more), checked, in its folder."""
     for a in body.agents:
-        if a.project_id is not None or a.app is not None or a.chat or a.scope is not None:
+        if a.project_id is not None or a.chat or a.scope is not None:
             raise CheckError("a new project's agent", "its home and folder are the project's")
     checked = [checked_settings(settings, a, body.folder, body.addons) for a in body.agents]
     for a, agent in zip(body.agents, checked, strict=True):

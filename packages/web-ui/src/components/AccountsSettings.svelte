@@ -1,6 +1,6 @@
 <script lang="ts">
   // Accounts (D.9), "Your subscriptions": a subscription one harness logs in with. Started from
-  // Model access (start), made here in one dialog (its name, suggested; its plan; who can use it;
+  // Model access (start), made here in one dialog (its name, suggested; its subscription; who can use it;
   // its login), logged in in one of two ways:
   // - a token login (Claude Code): the person runs the harness's sign-in themselves
   //   (`claude setup-token`) and gives the token it prints, pasted or where they keep it; handler
@@ -11,12 +11,15 @@
   // Renamed here while no agent uses it; deleted anyway, once confirmed: its agents then cannot
   // start until given another account. Its connectors (claude.ai MCP servers) are an option of
   // its own, in its Edit, with its description. Listed by name, once there is one; a row is its
-  // program, plan and description after a dot, its state said only when it needs the person,
-  // with the one thing to do (Log in, Log in again, Delete…); how it is logged in and its
+  // program, subscription and description after a dot, its state said only when it needs the person
+  // (Not logged in; Logged out <when>, a login it had that ended: lib/accounts), with the one thing
+  // to do (Log in, Log in again, Delete…); how it is logged in and its
   // automations' verdict in its Edit. The lists come from Model access.
+  import { ask } from "../lib/ask.svelte";
   import AreaTag from "./AreaTag.svelte";
   import AreasPicker from "./AreasPicker.svelte";
   import { ago } from "../lib/agents";
+  import { loginProblem } from "../lib/accounts";
   import SecretSource, { given, type Source } from "./SecretSource.svelte";
   import type { Snippet } from "svelte";
   import CommandLine from "./CommandLine.svelte";
@@ -34,18 +37,22 @@
     accounts,
     harnesses,
     listed,
+    dialogOnly = false,
     onchange,
+    onclosed,
   }: {
     accounts: AccountInfo[];
     listed: boolean; // the section shown, even empty (once there is an account or a provider)
+    dialogOnly?: boolean; // its dialog alone, never its section (a Connect over another page, ConnectDialogs)
     harnesses: HarnessInfo[]; // their login recipes
     onchange: () => Promise<void>; // reloads `accounts`
+    onclosed?: (made: string | null) => void; // its dialog closed: the account made there, if any
   } = $props();
 
-  // the panel open: a new account, an account's login, or its name, description, plan, connectors
+  // the panel open: a new account, an account's login, or its name, description, subscription, connectors
   type Panel = { kind: "new" } | { kind: "login"; name: string } | { kind: "edit"; name: string };
   let panel = $state<Panel | null>(null);
-  let form = $state({ name: "", harness: "", description: "", plan: "", connectors: false, areas: [] as string[] });
+  let form = $state({ name: "", harness: "", description: "", subscription: "", connectors: false, areas: [] as string[] });
   let token = $state<Source>({ kind: "secret", text: "" });
   let error = $state<string | null>(null);
   // a file login's terminal window, while waiting for it: what runs there, and the login it had before
@@ -53,6 +60,17 @@
   let elsewhere = $state(false); // a file login: giving the file of a login done elsewhere instead
   const WAIT = 3000; // ms between two looks at the account while its login window is open
   const SOON = 30 * 24 * 3600 * 1000; // a token expiring within this is said
+  let made: string | null = null; // the account its dialog made, told when it closes
+  let shown = false; // its dialog open, last we looked
+  $effect(() => {
+    const open = panel !== null;
+    if (open === shown) return;
+    shown = open;
+    if (!open) {
+      onclosed?.(made);
+      made = null;
+    }
+  });
 
   const withLogin = $derived(harnesses.filter((h) => h.login));
   const recipe = (harness: string | null | undefined) => harnesses.find((h) => h.name === harness)?.login;
@@ -75,7 +93,7 @@
       name: account?.name ?? "",
       harness: account?.harness ?? withLogin[0]?.name ?? "",
       description: account?.description ?? "",
-      plan: account?.plan ?? "",
+      subscription: account?.subscription ?? "",
       connectors: account?.connectors ?? false,
       areas: account?.areas ?? [],
     };
@@ -100,15 +118,15 @@
     }
   }
 
-  // the subscription's plan, for a harness that cannot learn it from its login (Claude Code)
-  const plans = $derived(recipe(form.harness)?.plans ?? []);
+  // which subscription it is, for a harness that cannot learn it from its login (Claude Code)
+  const subscriptions = $derived(recipe(form.harness)?.subscriptions ?? []);
   // its harness can use the account's own connectors (claude.ai MCP servers)
   const hasConnectors = $derived(harnesses.find((h) => h.name === form.harness)?.accountConnectors ?? false);
   const body = () => ({
     name: form.name.trim(),
     harness: form.harness,
     description: form.description.trim() || null,
-    plan: plans.includes(form.plan) ? form.plan : null,
+    subscription: subscriptions.includes(form.subscription) ? form.subscription : null,
     connectors: hasConnectors && form.connectors,
     areas: form.areas,
   });
@@ -123,6 +141,7 @@
       error = (e as Error).message;
       return;
     }
+    made = name;
     panel = { kind: "login", name };
     await onchange();
     if (recipe(form.harness)?.tokenCommand) await saveToken(name);
@@ -134,11 +153,9 @@
     const request: AccountLoginRequest = "value" in it ? { token: it.value } : { tokenRef: it.ref };
     return run(() => api.setAccountLogin(name, request));
   }
-  function remove(a: AccountInfo): void {
-    const used = a.agents?.length
-      ? `\n\nUsed by ${a.agents.join(", ")}: they will not start until you give them another account.`
-      : "";
-    if (confirm(`Delete the account ${a.name} and its login?${used}`)) void run(() => api.deleteAccount(a.name));
+  async function remove(a: AccountInfo): Promise<void> {
+    const detail = a.agents?.length ? `Used by ${a.agents.join(", ")}: they will not start until you give them another account.` : undefined;
+    if (await ask({ title: `Delete the account ${a.name} and its login?`, detail, yes: "Delete", danger: true })) void run(() => api.deleteAccount(a.name));
   }
 
   // the dialog: the account it is about, its title
@@ -207,10 +224,8 @@
    * its Edit, the line keeps its dot), or what is missing. */
   function status(a: AccountInfo): { text: string; tone: string; renew: boolean; quiet: boolean } {
     if (a.status === "invalid") return { text: "Can't be used", tone: "text-danger", renew: false, quiet: false };
-    if (a.status === "incomplete") {
-      const text = (a.problems ?? []).join("; ") || "not logged in";
-      return { text: text.charAt(0).toUpperCase() + text.slice(1), tone: "text-warn", renew: false, quiet: false };
-    }
+    const problem = loginProblem(a);
+    if (problem) return { text: problem.text, tone: "text-warn", renew: false, quiet: false };
     const where = { secret: "token kept by Handler", env: "token from an environment variable", file: "token from a file", command: "token from a command" };
     const how = a.token ? `Logged in · ${where[a.token]}` : "Logged in";
     if (a.expiresAt) {
@@ -252,7 +267,7 @@
   {#if login?.tokenCommand}
     <ol class="space-y-4 rounded-[10px] border bg-muted/30 p-4" data-testid="account-token-steps">
       {#snippet run()}
-        <p>In a terminal where {productName(harness)} is installed, run</p>
+        <p>In a terminal where {productName(harness)} is installed, on this computer or another one (Windows too: the token works anywhere), run</p>
         <CommandLine command={login?.tokenCommand ?? ""} />
       {/snippet}
       {#snippet prints()}
@@ -274,19 +289,19 @@
   {/if}
 {/snippet}
 
-<!-- the fields of an account's Edit: name, plan, description, areas, connectors -->
+<!-- the fields of an account's Edit: name, subscription, description, areas, connectors -->
 {#snippet fields()}
   {#snippet name()}<Input id="account-name" placeholder="e.g. claude-perso" bind:value={form.name} required data-testid="account-name" />{/snippet}
-  {#snippet plan()}
-    <NativeSelect.Root id="account-plan" class="w-full" bind:value={form.plan} data-testid="account-plan">
+  {#snippet subscription()}
+    <NativeSelect.Root id="account-subscription" class="w-full" bind:value={form.subscription} data-testid="account-subscription">
       <NativeSelect.Option value="">not set</NativeSelect.Option>
-      {#each plans as p (p)}<NativeSelect.Option value={p}>{p}</NativeSelect.Option>{/each}
+      {#each subscriptions as p (p)}<NativeSelect.Option value={p}>{p}</NativeSelect.Option>{/each}
     </NativeSelect.Root>
   {/snippet}
   {#snippet description()}<Input id="account-description" placeholder="e.g. your email" bind:value={form.description} />{/snippet}
   <div class="grid gap-4 sm:grid-cols-2">
     {@render field("Name", "account-name", name, "Yours to choose: two of one kind, e.g. pro and perso.")}
-    {#if plans.length}{@render field("Plan", "account-plan", plan, "Its sign-in does not tell.")}{/if}
+    {#if subscriptions.length}{@render field("Subscription", "account-subscription", subscription, "Its sign-in does not say which you have: pick it here.")}{/if}
   </div>
   {@render field("Description (optional)", "account-description", description)}
   <AreasPicker bind:value={form.areas} />
@@ -300,7 +315,7 @@
   {/if}
 {/snippet}
 
-{#if accounts.length || listed}
+{#if !dialogOnly && (accounts.length || listed)}
   <section class="enter space-y-3" id="accounts" data-testid="accounts">
     <h2 class="flex flex-wrap items-baseline gap-x-2 text-base font-semibold">
       Your subscriptions
@@ -328,7 +343,7 @@
                   >●{#if shown.quiet}<span class="sr-only">{" "}{shown.text}</span>{:else}{" "}{shown.text}{/if}</span
                 >
                 {#if a.status === "invalid" && a.error}<span class="whitespace-normal">{" "}· {a.error}</span>
-                {:else}<span>{shown.quiet ? " " : " · "}{[a.harness ? productName(a.harness) : null, a.plan, a.description].filter(Boolean).join(" · ")}</span>{/if}
+                {:else}<span>{shown.quiet ? " " : " · "}{[a.harness ? productName(a.harness) : null, a.subscription, a.description].filter(Boolean).join(" · ")}</span>{/if}
               </p>
               {#if a.error && a.status !== "invalid"}<p class="text-xs whitespace-normal text-danger">{a.error}</p>{/if}
             </div>
@@ -336,7 +351,7 @@
               {#if a.status === "invalid"}
                 <Button variant="outline" size="sm" onclick={() => remove(a)} data-testid="account-delete-row">Delete…</Button>
               {:else if login && (a.status !== "ready" || shown.renew)}
-                <Button variant="outline" size="sm" onclick={() => logIn(a)} data-testid="account-log-in">{a.status === "ready" ? "Log in again" : "Log in"}</Button>
+                <Button variant="outline" size="sm" onclick={() => logIn(a)} data-testid="account-log-in">{a.status === "ready" ? "Log in again" : (loginProblem(a)?.action ?? "Log in")}</Button>
               {/if}
               {#if a.harness}
                 <Button variant="ghost" size="sm" onclick={() => open({ kind: "edit", name: a.name }, a)} data-testid="account-edit">Edit</Button>
@@ -346,7 +361,7 @@
         {/each}
       </ul>
     {:else}
-      <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">No subscription yet. A Claude, ChatGPT or Mistral plan you pay for, for your own use.</p>
+      <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">No subscription yet. A Claude, ChatGPT or Mistral subscription you pay for, for your own use.</p>
     {/if}
   </section>
 {/if}
@@ -356,15 +371,15 @@
     {@const login = recipe(form.harness)}
     <form class="space-y-5" onsubmit={(e) => (e.preventDefault(), void create())} data-testid="account-form">
       {#snippet name()}<Input id="account-name" bind:value={form.name} required class="font-mono" data-testid="account-name" />{/snippet}
-      {#snippet plan()}
-        <NativeSelect.Root id="account-plan" class="w-full" bind:value={form.plan} data-testid="account-plan">
+      {#snippet subscription()}
+        <NativeSelect.Root id="account-subscription" class="w-full" bind:value={form.subscription} data-testid="account-subscription">
           <NativeSelect.Option value="">not set</NativeSelect.Option>
-          {#each plans as p (p)}<NativeSelect.Option value={p}>{p}</NativeSelect.Option>{/each}
+          {#each subscriptions as p (p)}<NativeSelect.Option value={p}>{p}</NativeSelect.Option>{/each}
         </NativeSelect.Root>
       {/snippet}
       <div class="grid gap-4 sm:grid-cols-2">
         {@render field("Name", "account-name", name, "Change it if you like: two of one kind, e.g. pro and perso.")}
-        {#if plans.length}{@render field("Plan", "account-plan", plan, "Its sign-in does not tell.")}{/if}
+        {#if subscriptions.length}{@render field("Subscription", "account-subscription", subscription, "Its sign-in does not say which you have: pick it here.")}{/if}
       </div>
       <AreasPicker bind:value={form.areas} />
       {#if login?.tokenCommand}

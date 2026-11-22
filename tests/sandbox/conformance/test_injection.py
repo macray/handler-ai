@@ -52,7 +52,7 @@ def _events(stderr: bytes) -> list[dict[str, str]]:
     ]
 
 
-@pytest.mark.rule("secrets.the-sandbox-never-holds-a-secret")
+@pytest.mark.rule("injection.the-sandbox-never-holds-a-secret")
 def test_value_reaches_its_host_in_place_of_the_phantom(
     runtime: Runtime, scope: Path, server: str
 ) -> None:
@@ -77,7 +77,7 @@ def test_value_reaches_its_host_in_place_of_the_phantom(
     assert {"decision": "injected", "host": server, "secret": "tests/token"} in injected
 
 
-@pytest.mark.rule("secrets.only-their-hosts-are-decrypted")
+@pytest.mark.rule("injection.only-their-hosts-are-decrypted")
 @requires_egress
 def test_only_secret_hosts_are_decrypted(runtime: Runtime, scope: Path) -> None:
     """A secret host's tunnel is decrypted (signed by the proxy's CA, which the sandbox trusts)
@@ -102,7 +102,7 @@ def test_only_secret_hosts_are_decrypted(runtime: Runtime, scope: Path) -> None:
     assert injected in _events(r.stderr)
 
 
-@pytest.mark.rule("secrets.a-phantom-going-elsewhere-is-refused")
+@pytest.mark.rule("injection.a-phantom-going-elsewhere-is-refused")
 def test_phantom_elsewhere_is_a_leak(runtime: Runtime, scope: Path, server: str) -> None:
     """A phantom the proxy sees going to another host (plain http here) is refused and reported,
     before anything reaches it."""
@@ -117,7 +117,7 @@ def test_phantom_elsewhere_is_a_leak(runtime: Runtime, scope: Path, server: str)
     assert leak in _events(r.stderr)
 
 
-@pytest.mark.rule("secrets.an-open-sandbox-gets-a-filter-for-them")
+@pytest.mark.rule("injection.an-open-sandbox-gets-a-filter-for-them")
 def test_open_sandbox_gets_a_proxy_for_its_secrets(
     runtime: Runtime, scope: Path, server: str
 ) -> None:
@@ -130,7 +130,7 @@ def test_open_sandbox_gets_a_proxy_for_its_secrets(
     assert not [e for e in _events(r.stderr) if e["decision"] in ("allowed", "unlisted")]
 
 
-@pytest.mark.rule("secrets.a-phantom-is-as-long-as-its-value")
+@pytest.mark.rule("injection.a-phantom-is-as-long-as-its-value")
 def test_phantom_as_long_as_its_value(runtime: Runtime, scope: Path) -> None:
     value, _ = _pair()
     doc = spec(scope, ["true"], network=_filtered("example.com:443"))

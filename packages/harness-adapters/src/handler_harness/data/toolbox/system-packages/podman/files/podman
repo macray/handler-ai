@@ -1,0 +1,77 @@
+#!/bin/sh
+# podman, its sandbox's state kept in the image store and freed once that sandbox has ended.
+#
+# The image store (~/.local/share/containers/storage) may be a cache shared with other
+# sandboxes (contract A.5). A container's files are in it, its record in podman's database: a
+# database in the sandbox's /tmp was lost with it, and its containers' files stayed in the store
+# for good. So each sandbox's database, volumes and networks are a folder of the store's
+# `handler-sandboxes/`, locked while the sandbox runs (a `flock` held by a process that ends
+# with it). The first call in a sandbox makes its own, then frees the folders whose lock is free:
+# their sandboxes have ended, their containers are removed through their own database (its run
+# root's path is the same in every sandbox), then the folder. Images stay: they are the store's.
+#
+# The sandbox's runtime may place the store elsewhere (CONTAINERS_STORAGE_CONF naming a
+# graphroot: Apple container, the sandbox's own disk) and add to podman's configuration
+# (CONTAINERS_CONF_OVERRIDE, dotted keys, no table header: Apple container, the way to its
+# network filter): the states follow the store, the runtime's keys are added to this one's.
+set -eu
+
+real=/usr/bin/podman
+store="${XDG_DATA_HOME:-$HOME/.local/share}/containers/storage"
+if [ -n "${CONTAINERS_STORAGE_CONF:-}" ]; then
+    root=$(sed -n 's/^graphroot *= *"\(.*\)"$/\1/p' "$CONTAINERS_STORAGE_CONF")
+    store=${root:-$store}
+fi
+states="$store/handler-sandboxes"
+given="${CONTAINERS_CONF_OVERRIDE:-}" # the runtime's
+mine="${TMPDIR:-/tmp}/handler-podman" # this sandbox's own: its /tmp, empty at its start
+
+# conf FOLDER: the configuration placing a state folder's database, volumes and networks (dotted
+# keys: the runtime's, added after, may set others of the same tables), then the runtime's
+conf() {
+    printf 'engine.static_dir = "%s/libpod"\nengine.volume_path = "%s/volumes"\n' "$1" "$1"
+    printf 'network.network_config_dir = "%s/networks"\n' "$1"
+    if [ -n "$given" ]; then cat "$given"; fi
+}
+
+setup() {
+    id=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+    new="$states/.new-$id" # not seen by the cleaning until locked
+    mkdir -p "$new/libpod" "$new/volumes" "$new/networks"
+    : >"$new/lock"
+    # held until this sandbox ends: the lock follows the file when its folder is renamed
+    # (not the setup's lock, fd 9: it would keep that one too)
+    setsid flock -x -o "$new/lock" sleep infinity </dev/null >/dev/null 2>&1 9>&- &
+    echo $! >"$mine/holder"
+    tries=0
+    while flock -x -n "$new/lock" true; do
+        tries=$((tries + 1))
+        [ "$tries" -lt 100 ] || { echo "podman: cannot lock $new/lock" >&2; exit 125; }
+        sleep 0.02
+    done
+    mv "$new" "$states/$id"
+    conf "$states/$id" >"$mine/containers.conf"
+    for ended in "$states"/*/; do
+        ended=${ended%/}
+        [ -f "$ended/lock" ] || continue
+        # its lock free: its sandbox has ended; held while freeing it, so by one sandbox only
+        flock -x -n "$ended/lock" sh -c '
+            conf=$(mktemp)
+            printf "%s" "$3" >"$conf"
+            CONTAINERS_CONF_OVERRIDE=$conf "$1" pod rm --all --force >/dev/null 2>&1 || true
+            CONTAINERS_CONF_OVERRIDE=$conf "$1" rm --all --force --time 0 >/dev/null 2>&1 || true
+            rm -f "$conf"
+            rm -rf "$2"
+        ' sh "$real" "$ended" "$(conf "$ended")" || true
+    done
+}
+
+if [ ! -f "$mine/containers.conf" ]; then
+    mkdir -p "$mine" "$states"
+    # two first calls at once: one sets up, the other waits for it
+    exec 9>"$mine/setup.lock"
+    flock -x 9
+    [ -f "$mine/containers.conf" ] || setup
+    exec 9>&-
+fi
+CONTAINERS_CONF_OVERRIDE="$mine/containers.conf" exec "$real" "$@"

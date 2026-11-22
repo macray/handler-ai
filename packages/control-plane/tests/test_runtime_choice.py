@@ -18,6 +18,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Settin
     sandbox_process.use(sandbox_process.DEFAULT_RUNTIME)
 
 
+@pytest.mark.rule("runtime.changed-only-when-nothing-runs")
 def test_the_system_s_runtime_unless_another_was_chosen(settings: Settings) -> None:
     assert runtime.load(settings) == ("apple" if sys.platform == "darwin" else "podman")
     (settings.config_dir / "runtime.toml").write_text('name = "other"\n')
@@ -50,6 +51,7 @@ def test_only_an_installed_runtime_is_chosen(
 
 
 @pytest.mark.parametrize("platform", ["linux", "win32", "darwin"])
+@pytest.mark.rule("runtime.changed-only-when-nothing-runs")
 def test_the_apple_runtime_is_offered_on_macos_only(
     settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:

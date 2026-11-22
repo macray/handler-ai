@@ -3,6 +3,7 @@
   // for a new automation, `job`, back to that automation once saved; a plan runner for the
   // review page `plan`, back to it once saved, the new agent chosen), or an existing one's settings, with Duplicate and Remove (the
   // last one too: the project stays, with no agent).
+  import { ask } from "../lib/ask.svelte";
   import Copy from "@lucide/svelte/icons/copy";
   import Trash from "@lucide/svelte/icons/trash-2";
   import { Button } from "$lib/components/ui/button";
@@ -64,7 +65,8 @@
     const running = agent.connections.length ? ` Its ${agent.connections.length} running session(s) are stopped.` : "";
     const stops = await deletionStops(agent);
     const last = project.agents.length === 1 ? ` ${project.name} stays, with no agent.` : "";
-    if (!confirm(`Remove the agent ${agentLabel(agent)} from ${project.name}?${running}${stops}${last}`)) return;
+    const detail = `${running}${stops}${last}`.trim() || undefined;
+    if (!(await ask({ title: `Remove the agent ${agentLabel(agent)} from ${project.name}?`, detail, yes: "Remove", danger: true }))) return;
     try {
       await api.deleteAgent(agent.id);
       void projects.refresh();

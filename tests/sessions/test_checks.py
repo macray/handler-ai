@@ -84,7 +84,7 @@ def wait_run_end(daemon: Daemon, agent: dict[str, Any]) -> dict[str, Any]:
     "check.free-text-is-never-compared",
     "check.passes-when-what-it-compares-comes-back",
     "check.runs-only-when-asked",
-    "check.a-check-run-is-a-run",
+    "check.a-run-of-the-job-out-of-its-history",
 )
 def test_a_run_kept_as_a_check_passes_then_fails(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
@@ -118,7 +118,9 @@ def test_a_run_kept_as_a_check_passes_then_fails(daemon: Daemon, stub: StubLlm) 
     assert session["origin"] == "check"
 
 
-@pytest.mark.rule("check.says-what-changed-since", "check.the-agent-s-not-its-settings")
+@pytest.mark.rule(
+    "check.says-what-changed-since", "check.kept-beside-the-agent-not-in-its-settings"
+)
 def test_what_changed_since_and_a_check_that_no_longer_fits(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "fits")
@@ -147,7 +149,7 @@ def test_what_changed_since_and_a_check_that_no_longer_fits(daemon: Daemon, stub
     assert r.status_code == 400 and "no check it can run" in r.text
 
 
-@pytest.mark.rule("check.the-agent-s-not-its-settings")
+@pytest.mark.rule("check.kept-beside-the-agent-not-in-its-settings")
 def test_checks_go_with_their_agent(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = answer("send")
     agent = job(daemon, "gone")

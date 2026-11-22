@@ -1,0 +1,198 @@
+{
+  "$id": "urn:handler.control/v1/notes-undo",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "NotesCommit": {
+      "description": "One state of a read-write notes folder kept by Handler (D.5): `first`, the history's\nstart (its files not listed); `changes`, what changed in a lapse (~5 min), with the agents\nthat could write then; `while-off`, what changed while handlerd was not running; `undo`,\na change put back.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "first",
+            "changes",
+            "while-off",
+            "undo"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "couldWrite": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NotesWriter"
+          },
+          "title": "Couldwrite",
+          "type": "array"
+        },
+        "undoes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Undoes"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/NotesFileChange"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "fileCount": {
+          "title": "Filecount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "at",
+        "kind",
+        "files",
+        "fileCount"
+      ],
+      "title": "NotesCommit",
+      "type": "object"
+    },
+    "NotesFileChange": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "change": {
+          "enum": [
+            "added",
+            "changed",
+            "deleted"
+          ],
+          "title": "Change",
+          "type": "string"
+        },
+        "link": {
+          "default": false,
+          "title": "Link",
+          "type": "boolean"
+        },
+        "added": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Added"
+        },
+        "removed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Removed"
+        },
+        "under": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Under"
+        }
+      },
+      "required": [
+        "path",
+        "change"
+      ],
+      "title": "NotesFileChange",
+      "type": "object"
+    },
+    "NotesWriter": {
+      "description": "An agent, or an app, that could write the folder and ran in a commit's lapse (its name\nthen): `agentId` for an agent, `app` for an app.",
+      "properties": {
+        "agentId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agentid"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "NotesWriter",
+      "type": "object"
+    }
+  },
+  "description": "An undo's result: its commit (None: the files were already as before), and the files\nleft as they are because a link or a folder is on their way.",
+  "properties": {
+    "commit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NotesCommit"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skipped": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Skipped",
+      "type": "array"
+    }
+  },
+  "required": [
+    "commit"
+  ],
+  "title": "NotesUndo",
+  "type": "object"
+}

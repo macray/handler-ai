@@ -1,0 +1,182 @@
+{
+  "$id": "urn:handler.control/v1/app-run",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "StartedByAction": {
+      "description": "A run one of the app's actions started (H.12), and how the person asked it: Ask's pick\n(D.24), its form filled on the app's page or on a phone (\"try\"), or a nudge (H.17).",
+      "properties": {
+        "by": {
+          "const": "action",
+          "default": "action",
+          "title": "By",
+          "type": "string"
+        },
+        "action": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Action",
+          "type": "string"
+        },
+        "via": {
+          "enum": [
+            "ask",
+            "try",
+            "nudge"
+          ],
+          "title": "Via",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "via"
+      ],
+      "title": "StartedByAction",
+      "type": "object"
+    },
+    "StartedByAutomation": {
+      "description": "A run an automation started (I.3): one the app suggested, or one of yours.",
+      "properties": {
+        "by": {
+          "const": "automation",
+          "default": "automation",
+          "title": "By",
+          "type": "string"
+        },
+        "automation": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Automation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "title": "StartedByAutomation",
+      "type": "object"
+    },
+    "StartedByCode": {
+      "description": "A run the app's code started (`POST /runs`, while answering the owner).",
+      "properties": {
+        "by": {
+          "const": "code",
+          "default": "code",
+          "title": "By",
+          "type": "string"
+        }
+      },
+      "title": "StartedByCode",
+      "type": "object"
+    }
+  },
+  "description": "A run of one of the app's jobs (`POST /runs`, `GET /runs`, `GET /runs/{id}`).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "job": {
+      "pattern": "^[a-z][a-z0-9-]{0,29}$",
+      "title": "Job",
+      "type": "string"
+    },
+    "startedBy": {
+      "discriminator": {
+        "mapping": {
+          "action": "#/$defs/StartedByAction",
+          "automation": "#/$defs/StartedByAutomation",
+          "code": "#/$defs/StartedByCode"
+        },
+        "propertyName": "by"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StartedByCode"
+        },
+        {
+          "$ref": "#/$defs/StartedByAction"
+        },
+        {
+          "$ref": "#/$defs/StartedByAutomation"
+        }
+      ],
+      "title": "Startedby"
+    },
+    "fields": {
+      "additionalProperties": true,
+      "title": "Fields",
+      "type": "object"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "waiting",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "at": {
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+    },
+    "endedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Endedat"
+    },
+    "result": {
+      "default": null,
+      "title": "Result"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "thenError": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thenerror"
+    }
+  },
+  "required": [
+    "id",
+    "job",
+    "startedBy",
+    "fields",
+    "sessionId",
+    "state",
+    "at"
+  ],
+  "title": "AppRun",
+  "type": "object"
+}

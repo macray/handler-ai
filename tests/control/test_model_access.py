@@ -4,6 +4,7 @@ allow-list, live on running sandboxes."""
 import json
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,7 +12,10 @@ import pytest
 from handler_sandbox_kit import egress
 from handler_sandbox_kit.launch import running_filter
 
+from ..apps.conftest import app_file
 from ..support.daemon import Daemon, require_echo_box, start_daemon
+
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +34,7 @@ id = "m1"
 
 
 @pytest.mark.rule(
-    "access.the-api-stores-what-it-is-given",
+    "access.a-secret-given-goes-to-the-store",
     "access.its-secrets-follow-it",
     "access.its-status-says-what-is-missing",
     "provider.its-endpoints-and-models-are-checked",
@@ -106,6 +110,33 @@ def test_a_provider_in_use_is_not_renamed_but_deleted(daemon: Daemon) -> None:
         assert model["provider"] == "used" and "no provider 'used'" in model["problem"]
 
 
+@pytest.mark.rule("access.in-use-is-never-renamed")
+def test_an_account_or_provider_an_app_s_who_works_uses_is_not_renamed(daemon: Daemon) -> None:
+    """H.2: an app's Who works, or a job's own, uses its account or provider as an agent does:
+    renaming it is refused, naming the app and the job.
+
+    If this fails: an app's jobs lose who runs them when you rename an account."""
+    (daemon.providers_dir / "app-key.toml").write_text(PROVIDER)
+    with daemon.http() as c:
+        r = c.post("/v1/accounts", json={"name": "app-plus", "harness": "codex"})
+        assert r.status_code == 201, r.text
+        assert c.post("/v1/apps", content=app_file(FIXTURES / "app-jobs")).status_code == 201
+        r = c.put("/v1/apps/cv/who-works", json={"program": "codex", "account": "app-plus"})
+        assert r.status_code == 200, r.text
+        own = {"program": "vibe", "provider": "app-key", "model": "m1"}
+        r = c.put("/v1/apps/cv/jobs/summarize/who-works", json=own)
+        assert r.status_code == 200, r.text
+        r = c.put("/v1/accounts/app-plus", json={"name": "app-plus2", "harness": "codex"})
+        assert r.status_code == 409 and "the app cv" in r.json()["detail"], r.text
+        renamed = {"name": "app-key2", "endpoints": {"openai-chat": "https://x.example"}}
+        r = c.put("/v1/providers/app-key", json=renamed | {"models": [{"id": "m1"}]})
+        assert r.status_code == 409 and "cv's job summarize" in r.json()["detail"], r.text
+        assert c.delete("/v1/apps/cv/jobs/summarize/who-works").status_code == 200
+        r = c.put("/v1/providers/app-key", json=renamed | {"models": [{"id": "m1"}]})
+        assert r.status_code == 200, r.text  # used by nobody now: renamed
+        assert c.delete("/v1/apps/cv").status_code == 204
+
+
 @pytest.mark.rule(
     "access.its-secrets-follow-it",
     "access.in-use-is-never-renamed",
@@ -113,7 +144,7 @@ def test_a_provider_in_use_is_not_renamed_but_deleted(daemon: Daemon) -> None:
     "account.of-a-harness-that-signs-in",
     "account.no-start-without-its-login",
     "account.its-login-file-is-kept-apart",
-    "secrets.set-by-their-owner",
+    "secrets.named-and-set-by-their-owner",
 )
 def test_accounts(daemon: Daemon) -> None:
     """D.9: created, logged in (a token or a file), renamed while unused, deleted."""
@@ -159,7 +190,7 @@ def test_accounts(daemon: Daemon) -> None:
 
 
 @pytest.mark.rule(
-    "access.the-api-stores-what-it-is-given",
+    "access.a-secret-given-goes-to-the-store",
     "access.its-secrets-follow-it",
     "account.the-sign-in-is-yours",
 )
@@ -215,21 +246,21 @@ def test_a_sign_in_code_is_not_a_token(daemon: Daemon) -> None:
 
 
 @pytest.mark.rule("access.its-status-says-what-is-missing", "account.of-a-harness-that-signs-in")
-def test_an_account_says_its_plan(daemon: Daemon) -> None:
-    """E, D.9: one of its harness's login plans (Claude Code cannot learn it from a token)."""
+def test_an_account_says_its_subscription(daemon: Daemon) -> None:
+    """E, D.9: one of its harness's login subscriptions (Claude Code cannot learn it from a token)."""
     with daemon.http() as c:
         body = {"name": "pro", "harness": "claude-code", "description": "me@example.org"}
-        r = c.post("/v1/accounts", json=body | {"plan": "pro"})
-        assert r.status_code == 201 and r.json()["plan"] == "pro", r.text
-        r = c.put("/v1/accounts/pro", json=body | {"plan": "max"})
-        assert r.status_code == 200 and r.json()["plan"] == "max"
-        assert 'plan = "max"' in (daemon.accounts_dir / "pro.toml").read_text()
-        r = c.put("/v1/accounts/pro", json=body | {"plan": "gold"})
+        r = c.post("/v1/accounts", json=body | {"subscription": "pro"})
+        assert r.status_code == 201 and r.json()["subscription"] == "pro", r.text
+        r = c.put("/v1/accounts/pro", json=body | {"subscription": "max"})
+        assert r.status_code == 200 and r.json()["subscription"] == "max"
+        assert 'subscription = "max"' in (daemon.accounts_dir / "pro.toml").read_text()
+        r = c.put("/v1/accounts/pro", json=body | {"subscription": "gold"})
         assert r.status_code == 409 and "not one of pro, max, team, enterprise" in r.text
-        r = c.post("/v1/accounts", json={"name": "plus", "harness": "codex", "plan": "pro"})
-        assert r.status_code == 409 and "has no plans" in r.text
+        r = c.post("/v1/accounts", json={"name": "plus", "harness": "codex", "subscription": "pro"})
+        assert r.status_code == 409 and "has no subscriptions" in r.text
         (daemon.accounts_dir / "pro.toml").write_text(
-            'apiVersion = "handler.account/v1"\nharness = "claude-code"\nplan = "gold"\n'
+            'apiVersion = "handler.account/v1"\nharness = "claude-code"\nsubscription = "gold"\n'
         )  # by hand
         [pro] = [a for a in c.get("/v1/accounts").json() if a["name"] == "pro"]
         assert pro["status"] == "invalid" and "gold" in pro["error"]

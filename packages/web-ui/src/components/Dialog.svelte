@@ -3,6 +3,7 @@
   // for what is made or changed in a few steps (pairing a device, a new account, a provider): the
   // page keeps its list, the dialog holds the form. `open` opens and closes it; closing it any way
   // (Esc, the ×, a Cancel) sets `open` back to false. Its body scrolls when taller than the window.
+  // Its `testid` only while open: two of one form (Model access's own, ConnectDialogs') are one.
   import type { Snippet } from "svelte";
   import X from "@lucide/svelte/icons/x";
   import { Button } from "$lib/components/ui/button";
@@ -40,7 +41,7 @@
     : 'w-[min(32rem,calc(100vw-2rem))]'} flex-col rounded-[14px] border bg-background p-0 text-sm text-foreground shadow-panel backdrop:bg-black/40 open:flex open:animate-[rise_var(--dur-3)_var(--ease)]"
   aria-labelledby={id}
   onclose={() => (open = false)}
-  data-testid={testid}
+  data-testid={open ? testid : undefined}
 >
   {#if open}
     <header class="flex items-start justify-between gap-4 px-6 pt-6 pb-4">

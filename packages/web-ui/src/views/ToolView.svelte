@@ -3,9 +3,13 @@
   // reaches, its state; a broken one's message in full), then your connections to it (a binding:
   // its settings and sealed secrets, who it is used by; Connect another, Edit in a dialog with
   // BindingForm; Delete there while nothing uses it), or "nothing to connect" for a tool with no
-  // setting, then what uses it (D.22) and the facts of what it brings; just installed
-  // (`connect`), its first connection's form opens. Its ⋯: its update,
+  // setting, then what uses it (D.22) and the facts of what it brings; `connect` (just installed,
+  // or Connect on the Tools shelf): a new connection's form opens. A tool with a connection check checks each
+  // connection once saved, by itself, and again on its Check: its row says Checking…, Works, or
+  // Fails with what the check printed (G.2). Its ⋯: its update,
   // installing it again, uninstalling it (no connection may use it).
+  import type { Snippet } from "svelte";
+  import { ask } from "../lib/ask.svelte";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import Link from "@lucide/svelte/icons/link";
   import Lock from "@lucide/svelte/icons/lock";
@@ -25,8 +29,8 @@
   import type { AddonInfo, BindingInfo, BindingRequest } from "../lib/contracts.gen";
   import { href, navigate } from "../lib/router.svelte";
   import { hasSlots } from "../lib/setup";
-  import { brokenBecause, sitesWords, TOOL_STATE, toolOrigin, toolState } from "../lib/tools";
-  import { freeName } from "../lib/text";
+  import { brokenBecause, sitesWords, TOOL_STATE, toolFrom, toolOrigin, toolState } from "../lib/tools";
+  import { freeName, homePath } from "../lib/text";
 
   let { name, connect: connectFirst = false }: { name: string; connect?: boolean } = $props();
 
@@ -38,7 +42,9 @@
   let panel = $state<Panel | null>(null);
   let menuOpen = $state(false);
   let installer = $state<AddonInstaller | null>(null);
-  let opened = false; // its first connection's form, opened once (`connect`)
+  let opened = false; // a new connection's form, opened once (`connect`)
+  let checking = $state<Record<string, boolean>>({});
+  let uncheckable = $state<Record<string, string>>({}); // why its check could not run
 
   async function load(): Promise<void> {
     try {
@@ -46,8 +52,8 @@
       tool = all.find((t) => t.name === name) ?? null;
       connections = bindings.filter((b) => b.addon === name);
       if (!tool) error = `No tool named ${name} is installed.`;
-      else if (connectFirst && !opened && hasSlots(tool) && !connections.length) {
-        opened = true; // once: the form of its first connection, just installed
+      else if (connectFirst && !opened && hasSlots(tool)) {
+        opened = true; // once: a new connection's form (just installed, or Connect on the shelf)
         void connect();
       }
     } catch (e) {
@@ -90,12 +96,31 @@
     panel = { kind: "new" };
   }
 
-  const create = (body: BindingRequest) => run(() => api.createBinding(body));
-  const update = (n: string, body: BindingRequest) => run(() => api.updateBinding(n, body));
-  const remove = (n: string) => confirm(`Delete the connection ${n} and its secrets?`) && run(() => api.deleteBinding(n));
+  /** Its tool's connection check (G.2), the connection's row following it. */
+  async function check(n: string): Promise<void> {
+    checking[n] = true;
+    delete uncheckable[n];
+    try {
+      await api.checkBinding(n);
+    } catch (e) {
+      uncheckable[n] = (e as Error).message;
+    } finally {
+      checking[n] = false;
+      await load();
+    }
+  }
+  const checks = $derived(!!tool?.connectionCheck?.length);
+  /** Saved, then checked by itself when its tool has a check: a failed check keeps it saved. */
+  async function saved(body: BindingRequest, save: () => Promise<unknown>): Promise<void> {
+    await run(save);
+    if (!error && checks) void check(body.name);
+  }
+  const create = (body: BindingRequest) => saved(body, () => api.createBinding(body));
+  const update = (n: string, body: BindingRequest) => saved(body, () => api.updateBinding(n, body));
+  const remove = async (n: string) => (await ask({ title: `Delete the connection ${n} and its secrets?`, yes: "Delete", danger: true })) && run(() => api.deleteBinding(n));
 
   async function uninstall(): Promise<void> {
-    if (!confirm(`Uninstall ${name}? Its folder and its image go; no connection may use it.`)) return;
+    if (!(await ask({ title: `Uninstall ${name}?`, detail: "Its folder and its image go; no connection may use it.", yes: "Uninstall", danger: true }))) return;
     try {
       await api.removeAddon(name);
       navigate({ view: "library", shelf: "tools" }, true);
@@ -173,9 +198,24 @@
                     {:else}
                       <p class="text-xs text-muted-foreground" data-testid="binding-use">{c.usedBy?.length ? `used by ${c.usedBy.join(", ")}` : "not used yet: give it to an agent in its settings"}</p>
                       {#if values(c)}<p class="fact truncate">{values(c)}</p>{/if}
+                      {#if checking[c.name]}
+                        <p class="text-xs text-muted-foreground" data-testid="binding-check">Checking it works…</p>
+                      {:else if uncheckable[c.name]}
+                        <p class="text-xs text-muted-foreground" data-testid="binding-check">Not checked: {uncheckable[c.name]}</p>
+                      {:else if c.checked?.ok}
+                        <p class="text-xs text-ok" data-testid="binding-check">Works</p>
+                      {:else if c.checked}
+                        <details class="text-xs" data-testid="binding-check">
+                          <summary class="cursor-pointer text-danger">Fails: {c.checked.error}</summary>
+                          {#if c.checked.output}<pre class="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 font-mono whitespace-pre-wrap">{c.checked.output}</pre>{/if}
+                        </details>
+                      {/if}
                     {/if}
                   </div>
                   {#if c.secrets?.length}<span class="inline-flex items-center gap-1 text-xs text-ok" title="Its secrets are in Handler's secret store, never shown again"><Lock class="size-3" />sealed</span>{/if}
+                  {#if checks && !c.error}
+                    <Button variant="ghost" size="sm" disabled={checking[c.name]} onclick={() => void check(c.name)} data-testid="binding-check-run">Check</Button>
+                  {/if}
                   <Button variant="ghost" size="sm" onclick={() => ((error = null), (panel = { kind: "edit", name: c.name }))} data-testid="binding-edit">Edit</Button>
                 </li>
               {/each}
@@ -190,13 +230,45 @@
 
       <section class="space-y-2">
         <h2 class="text-sm font-medium text-muted-foreground">What it brings</h2>
-        <dl class="space-y-2.5 rounded-[10px] border bg-card p-4 text-sm">
-          {#each [["Comes from", t.builtin ? "Handler (built in)" : (t.source ?? "your tools folder")], ["Its folder", t.directory], ["The sites it reaches", t.egress?.join(", ") || "none"], ["Programs", t.commands?.join(", ") || "none"], ["Skills", t.skills?.join(", ") || "none"], ["Settings", t.settings?.map((x) => x.name).join(", ") || "none"], ["Secrets", t.secretSlots?.map((x) => x.name).join(", ") || "none"], ["Image", t.image ? `${t.image}${t.imagePresent ? "" : " (not built yet)"}` : "none"], ["Needs from the toolbox", t.needs?.join(", ") || "nothing more"]] as [label, value] (label)}
+        <!-- every fact, each in words saying what it means for you; its values as code -->
+        <dl class="space-y-2.5 rounded-[10px] border bg-card p-4 text-sm" data-testid="tool-facts">
+          {#snippet fact(label: string, value: Snippet)}
             <div class="grid gap-1 sm:grid-cols-[11rem_1fr]">
               <dt class="text-muted-foreground">{label}</dt>
-              <dd class="font-mono text-xs leading-5 break-words">{value}</dd>
+              <dd class="leading-5 break-words">{@render value()}</dd>
             </div>
-          {/each}
+          {/snippet}
+          {#snippet codes(list: string[], sep = ", ")}{#each list as x, i (x)}{i ? sep : ""}<code class="font-mono text-xs">{x}</code>{/each}{/snippet}
+          {#snippet from()}{toolFrom(t)}{/snippet}
+          {#snippet reaches()}{#if t.egress?.length}{@render codes(t.egress)}{:else}no site{/if}{/snippet}
+          {#snippet gives()}
+            {@const cmds = t.commands ?? []}
+            {@const skills = t.skills ?? []}
+            {#if cmds.length}the {@render codes(cmds)} command{cmds.length === 1 ? "" : "s"}{:else}no command{/if} ·
+            {#if skills.length}the skill{skills.length === 1 ? "" : "s"} {@render codes(skills)}{:else}no skill{/if}
+          {/snippet}
+          {#snippet asks()}
+            {@const settings = t.settings ?? []}
+            {@const secrets = t.secretSlots ?? []}
+            {#if !settings.length && !secrets.length}nothing{:else}
+              {#if settings.length}the setting{settings.length === 1 ? "" : "s"} {@render codes(settings.map((x) => x.name))}{/if}{#if settings.length && secrets.length}, and {/if}
+              {#if secrets.length}the secret{secrets.length === 1 ? "" : "s"} {@render codes(secrets.map((x) => x.name))} (sealed: agents hold a stand-in){/if}
+            {/if}
+          {/snippet}
+          {#snippet checksWith()}{@render codes([(t.connectionCheck ?? []).join(" ")])}, run after each save{/snippet}
+          {#snippet adds()}{#if t.needs?.length}{@render codes(t.needs)}{:else}nothing{/if}{/snippet}
+          {#snippet folder()}<code class="font-mono text-xs" title={t.directory}>{homePath(t.directory)}</code>{/snippet}
+          {#snippet image()}{#if t.image}<code class="font-mono text-xs">{t.image}</code>{t.imagePresent ? "" : " (not built yet)"}{:else}none{/if}{/snippet}
+          {#snippet sourceId()}{#if t.source}<code class="font-mono text-xs" title={t.source}>{t.source.startsWith("/") ? homePath(t.source) : t.source}</code>{:else}none{/if}{/snippet}
+          {@render fact("From", from)}
+          {@render fact("Reaches", reaches)}
+          {@render fact("Gives agents", gives)}
+          {@render fact("Asks you for", asks)}
+          {#if t.connectionCheck?.length}{@render fact("Checks a connection", checksWith)}{/if}
+          {@render fact("Adds to the toolbox", adds)}
+          {@render fact("Its folder", folder)}
+          {@render fact("Its image", image)}
+          {@render fact("Source id", sourceId)}
         </dl>
         {#if used}<p class="text-xs text-muted-foreground">Uninstalling it waits until no agent uses its connections.</p>{/if}
       </section>

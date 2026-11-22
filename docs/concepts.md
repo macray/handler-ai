@@ -28,6 +28,11 @@ on its own: it reads what it is sent (the conversation, its form, its notes) and
 answers. Good for a quick chat, a draft from a form, or a job that judges or extracts something.
 Chosen in the agent's settings, *Who works*.
 
+**Who works.** The program, the account or API key, and the model that do the work: an agent's
+(in its settings), a helper's (on its card), an app's jobs (on its install page, and per job on
+its page). For work nobody follows (an automation's run) an API key is recommended: a
+subscription is for what you start and follow, and some refuse runs nobody follows.
+
 **Area.** What a project is for (Work, Personal, a client). Accounts and providers say which
 areas they are made for, so a work account never runs on a personal project.
 
@@ -42,7 +47,8 @@ last used; one waiting for you shows *Open session*, which goes straight to the 
 projects and apps you pin, mixed, in your order: the pin on a row or on a page puts one there,
 drag to reorder, × to unpin. Only your first project is pinned by itself. A dot beside a pinned
 project says what its sessions do: one waiting for you, working, or running; its colour is its
-area's.
+area's. **Running**, in the menu, shows every running session of every project and of the
+agents outside projects in one place, side by side (Chat's conversations stay in Chat).
 
 **Agent.** Who works on a project, for one goal ("Assistant", "Review"): its model, what it may do
 (network, permissions, sandbox) and what it gets (tools, skills, notes folders). Its page
@@ -64,13 +70,13 @@ attempt; the first one is the instructions as they were, to go back.
 
 **Agent outside projects.** An agent of no project: one you talk to about anything, with no
 folder (in *Chat*), one you make for a folder that is no project's (your notes, a weekly report),
-one Handler or an app uses, or one made by `handler run`, `handler acp` or `handler terminal` in
+one Handler uses (a helper), or one made by `handler run`, `handler acp` or `handler terminal` in
 a folder that is no project's (the same command in the same folder gives the same agent, called
 by its folder). Those not in Chat are under *Agents outside projects*, at the foot of the Projects page, a
 page that reads as a project's.
 
-**Chat.** Handler's own app, always there, in the menu once a model is connected (until then
-`http://127.0.0.1:7430/#/chat` opens it): talk about anything,
+**Chat.** Handler's own app, always there, in the menu (with no model connected yet, it says
+*Connect a model first*): talk about anything,
 with no folder of yours (each conversation starts with an empty one). Its **Talk** tab lists who
 you talk to (the Assistant for anything, a writing partner with its own instructions, a local
 model), each an agent with a name, how it behaves and its model; *Someone new* adds one. Its
@@ -86,7 +92,8 @@ minutes without anyone, it resumes when you come back.
 A *brief*: you fill in a form to start, then work on it together. A *job*: you fill in a form, it
 works alone and gives back a result (a **run**). A brief's or a job's instructions can use what
 the form was filled in with: *Insert from the form* under them puts a field there,
-`{{audience}}`. Every agent shows how it is used: *Talk*, *Brief* or *Job*.
+`{{audience}}`. Every agent shows how it is used: *Talk*, *Brief* or *Job*. An app's jobs are
+the same kind of work, but no agent of yours (below).
 
 **Helpers.** Agents Handler's own features use: the plan builder (*Plans*: writes plans with
 you, seeing the project read-only), Ask's router (*Ask*), the prompt writer (*Improve until they
@@ -118,8 +125,9 @@ choose. A filtered agent is told so when it
 starts: when it needs a blocked host it asks you to allow it, naming the host, and ends its
 turn; when it can do without, it goes on and says at the end what it did instead. A host you
 keep blocked (*Kept blocked*, in the network panel and the agent's settings) is refused the same
-way, and the agent is told not to ask for it again. A host is allowed or kept blocked, never
-both.
+way, even when a wider site you allowed covers it (`*.pypi.org`), and the agent is told not to
+ask for it again. A host is allowed or kept blocked, never both, and a host the agent's model or
+tools need cannot be kept blocked.
 
 **Permissions.** Whether the agent asks before acting: *Ask first*, *Auto edits*, *Auto-approve*.
 
@@ -140,8 +148,24 @@ its name, or, when it asks for settings and secrets, through a connection, one s
 **Skill.** Instructions an agent reads when they apply: Library → Skills, given by a project to
 all its agents or picked by one.
 
-**Notes folder.** Your notes, given read-only to the agents that need them.
+**Notes folder.** Your notes, given read-only to the agents that need them, or read-write to
+one that keeps documents there.
 [Notes folders](notes.md).
+
+**Notes history.** What Handler keeps of a folder an agent or an app may write, out of every
+agent's and app's reach: each change, when, which agents and apps could write then, and an Undo.
+In Library → Notes, the folder; an app's folder, on the app's page. [See what changed, and undo it](notes.md#see-what-changed-and-undo-it).
+
+**Schema.** The shape of one kind of document (contacts, decisions) an agent reads or writes in
+your notes: Library → Schemas, picked in the agent's settings. An agent with one gets the
+`knowledge` tool to write such documents. [Documents of a known
+shape](notes.md#documents-of-a-known-shape).
+
+**Environment variables.** Set in the agent's sandbox, as you type them in its settings
+(Environment variables, `--env`): a switch such as `ASTRO_TELEMETRY_DISABLED=1`. They are kept
+in plain text and go with the agent when you export it: never a key or a token, which a tool's
+connection gives. A variable Handler, the agent's program or one of its tools already sets is
+refused, saying who sets it.
 
 **Toolbox.** The system every agent works in, the same for all: Handler's base (`git`, Python,
 Node, the usual tools), the system packages you turn on (podman, a browser, compilers) and your
@@ -152,7 +176,7 @@ system package it adds there, once you agree. Settings → Expert → Sandboxes 
 ## Around your agents
 
 **Automation.** *When this happens, run that*: when a session stops or at a time, your script,
-one of your agents or one of your apps. [Automations](automations.md).
+one of your agents, or one of your apps' jobs or routes. [Automations](automations.md).
 
 **Plan.** Long work in steps, written with the plan builder (or by an agent in its folder), which
 you approve once: Handler runs the steps one after another, each a new session of an agent of the
@@ -162,7 +186,7 @@ project, and stops at the first step not done. [Plans](plans.md).
 project, here or on another computer, or to give to someone: *Export agents* in a project's ⋯.
 It holds their instructions, form, skills and checks, never what is yours (the accounts or
 providers they run on, the folder, which connection or notes folder you gave them,
-their conversations). *From a file* in **Library → Agents → Get more** (or another project's ⋯ →
+their conversations). *From a file* in **Library → Agents → Community** (or another project's ⋯ →
 *Get agents…*) opens one page: where, what
 each agent needs from you (its model…), and what it will be allowed to do. The agents made are
 yours: nothing follows the file afterwards. [`handler project
@@ -173,19 +197,26 @@ you something (answered right in its list), a run or a plan that failed. It is q
 green dot while something runs, and turns amber with the count when something waits; the browser
 tab says the count too (`(2) Handler`). It never makes a sound nor a notification.
 
-**Inbox.** What Handler tells you: your agents' results, your apps' notifications, failed runs;
+**Inbox.** What Handler tells you: your agents' results, your apps' notifications and what they ask you to do, failed runs;
 reached from the foot of the bell's list. A message tied to one of your apps opens it.
 
 **Library.** Where you get and manage what you and your agents use, a shelf each: for you, Apps
-and Agents (every agent you have, by project, each saying where it came from); for your agents, Tools (tools, and your connections to them), Skills, Notes (notes folders)
-and Automations, each with *Yours* and *Get more* (what the sources offer, Handler's examples).
-It is in the menu once you have a project.
+and Agents (every agent you have, by project, each saying where it came from); for your agents, Tools (tools, and your connections to them), Skills, Notes (notes folders),
+Schemas and Automations; all but Notes and Schemas with *Yours* and *Community* at the head of
+their list (what Handler and the sources you added offer, Handler's own marked *from Handler*;
+Handler's examples).
+It is in the menu from the first day, with or without a project.
 
 **App.** A small web app an agent writes for you and you deploy, used from your desktop or
-your phone. It says what it needs in its own words (a folder, an agent, a key) and you give it
-those when you install it. It may work on an agent's folder and run that agent when you ask it to
-(a notes app and the agent it brings). Handler offers some (Notes, Tracker), installed from
-Library → Apps → Get more; you open them from Apps. [Apps](apps.md).
+your phone. It says what it needs in its own words (a folder, a key) and you give it those when
+you install it, with who works on its jobs. Handler offers some (Notes, Tracker), installed from
+Library → Apps → Community; you open them from Apps. [Apps](apps.md).
+
+**Job (an app's).** Work an app asks a model to do ("tells you what to do next"): the app brings
+its instructions, what it is given and gives back, and the folders it reads or writes (its *Can
+do*); you choose who works on it. It runs when you ask the app (a click, one of its actions), or
+from an automation; its result goes back to the app and to your inbox. The app's page lists its
+jobs, each with its Who works and its Can do, then their runs. [Apps](apps.md#its-jobs).
 
 **Source.** A git repository Handler reads to offer apps, agents and tools: Handler's own, and
 any you add in Settings → Expert → Sources (you trust it: Handler does not check what is in it). What a
@@ -205,12 +236,12 @@ you (sessions and apps) or to a family member (only the apps shared with them).
 | agent / account / provider / harness | The agent is who works, for one goal; it runs a harness (the program) on an account (your subscription) or a provider (an API, a local model). |
 | tool / connection | A tool is the package, given to an agent by its name; a connection is one set of its settings and secrets (one store, one token), given with it when it asks for some (`--tool github=github-agent`). |
 | tool / system package | A tool is for the agents you give it to, run from a folder of its own; a system package is installed in the toolbox, for every agent (a browser, a compiler a tool needs). |
-| agent / agent outside projects / an app's agent | All are agents; one outside projects belongs to no project: someone you talk to in *Chat* (no folder), one made on the *Agents outside projects* page, for Handler, or by the command line in a folder that is no project's. An app's agent is one of that app's parts: on its page only, started by it. |
+| agent / agent outside projects / an app's job | The first two are agents; one outside projects belongs to no project: someone you talk to in *Chat* (no folder), one made on the *Agents outside projects* page, for Handler, or by the command line in a folder that is no project's. An app's job is no agent: work the app brings, run by the Who works you choose for the app, started by the app only. |
 | source / agents file / app file | A source offers things to install from a git repository, read again over time; an agents file or an app file is one export, given once. What comes from either is installed the same way. |
 | agents file / project | A project is a folder and the agents working in it; an agents file is some of those agents written to set them up again in another project, without your folder, accounts or connections. |
 | plan / subscription | A plan is steps written with the plan builder (or an agent) and Handler runs; what you pay a vendor for (Claude Pro or Max) is your subscription. |
 | session / run | A session is a conversation (a brief's starts from its form); a run is a job's session, started from a form, unattended, with a result. |
-| run / automation run | A run is one of an agent with an interface; an automation's run is what the automation ran once (its script, an agent's run, an app's route). |
+| run / automation run | A run is one of an agent's job or of an app's job; an automation's run is what the automation ran once (its script, an agent's run, an app's job or route). |
 | session / harness terminal | A session is held by Handler and shown everywhere; `handler terminal` is the harness's own terminal UI in the agent's sandbox, for as long as the terminal is open. |
 
 Where each of these is kept: [where things are kept](configuration.md).

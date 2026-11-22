@@ -10,6 +10,7 @@
   // skill for, and "Save as a new skill" keeps the change to a copy (with its other files). Below: what handler found in its
   // files, its reviews and "Edit with an agent" (SkillReview, D.18). Just imported (already in the
   // library): a panel says so first, with the next steps, checking it and choosing who gets it.
+  import { ask } from "../lib/ask.svelte";
   import UsesPanel from "../components/UsesPanel.svelte";
   import CircleCheck from "@lucide/svelte/icons/circle-check";
   import Download from "@lucide/svelte/icons/download";
@@ -39,7 +40,7 @@
 
   const SKILL_FILE = "SKILL.md";
   const FOLDERS = ["scripts", "references", "assets"];
-  const list = href({ view: "skills" });
+  const list = href({ view: "library", shelf: "skills" });
 
   // SKILL.md, as a form and as last read (to tell what changed)
   let skill = $state<SkillInfo | null>(null);
@@ -103,8 +104,10 @@
   }
 
   /** Open a file (null: SKILL.md), read again from handlerd; asks before dropping unsaved edits. */
+  const dropChanges = (): Promise<boolean> => ask({ title: `Drop your changes to ${file?.path}?`, yes: "Drop them", danger: true });
+
   async function select(path: string | null): Promise<void> {
-    if (fileChanged && !confirm(`Drop your changes to ${file?.path}?`)) return;
+    if (fileChanged && !(await dropChanges())) return;
     adding = false;
     if (path === null || !name) {
       file = null;
@@ -186,18 +189,18 @@
   }
 
   async function removeFile(): Promise<void> {
-    if (!file || !name || !confirm(`Delete ${file.path}?`)) return;
+    if (!file || !name || !(await ask({ title: `Delete ${file.path}?`, yes: "Delete", danger: true }))) return;
     const path = file.path;
     if (await act(async () => (skill = await api.deleteSkillFile(name ?? "", path)))) file = null;
   }
 
   async function removeSkill(): Promise<void> {
     if (!skill) return;
-    const users = skill.usedBy?.length ? ` It is taken from ${skill.usedBy.join(", ")}.` : "";
-    if (!confirm(`Delete the skill ${skill.name} and its folder?${users}`)) return;
+    const detail = skill.usedBy?.length ? `It is taken from ${skill.usedBy.join(", ")}.` : undefined;
+    if (!(await ask({ title: `Delete the skill ${skill.name} and its folder?`, detail, yes: "Delete", danger: true }))) return;
     if (await act(() => api.deleteSkill(skill?.name ?? ""))) {
       leaving.unsaved = false;
-      navigate({ view: "skills" }, true);
+      navigate({ view: "library", shelf: "skills" }, true);
     }
   }
 
@@ -209,10 +212,10 @@
     });
   }
 
-  function addFile(): void {
+  async function addFile(): Promise<void> {
     const path = newPath.trim().replace(/^\/+/, "");
     if (!path) return;
-    if (fileChanged && !confirm(`Drop your changes to ${file?.path}?`)) return;
+    if (fileChanged && !(await dropChanges())) return;
     file = { path, text: "", was: null, size: 0, executable: path.startsWith("scripts/"), isNew: true };
     newPath = "";
     adding = false;

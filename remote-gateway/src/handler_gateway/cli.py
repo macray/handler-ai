@@ -1,7 +1,7 @@
 """handler-gateway — run the gateway, and manage the hosts allowed to use it.
 
     handler-gateway serve [--host 127.0.0.1] [--port 7431] [--client DIR]
-    handler-gateway add-host NAME   prints the host token (give it to handler: Settings → Remote)
+    handler-gateway add-host NAME   prints the host token (for handler: Settings → Your phone)
     handler-gateway hosts           hosts and how many devices each registered
     handler-gateway remove-host ID  the host and its devices
 

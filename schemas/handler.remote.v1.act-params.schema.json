@@ -1,0 +1,39 @@
+{
+  "$id": "urn:handler.remote/v1/act-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/act` \u2192 RemoteActionRun: an action done from the owner's device, its form\nfilled; from a nudge (H.17), which it makes done when it succeeds.",
+  "properties": {
+    "app": {
+      "title": "App",
+      "type": "string"
+    },
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "fields": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Fields",
+      "type": "object"
+    },
+    "nudge": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nudge"
+    }
+  },
+  "required": [
+    "app",
+    "action"
+  ],
+  "title": "ActParams",
+  "type": "object"
+}

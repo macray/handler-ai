@@ -18,13 +18,14 @@ import pytest
 from websockets.asyncio.server import ServerConnection, serve
 
 from handler_cli.client import ClientError
-from handler_cli.session_commands import acknowledge_outside, flag_changes, settle_flags
+from handler_cli.session_commands import acknowledge_outside, flag_changes, prepare, settle_flags
 from handler_cli.terminal import Terminal
 from handler_harness.render import FILTERED_NETWORK
 
 from ..support.acp_client import AcpClient
 from ..support.daemon import Daemon
 from .test_cli import HANDLER, env, handler
+from .test_setup import FakeBuilds
 
 
 def sessions(daemon: Daemon) -> list[dict[str, Any]]:
@@ -74,8 +75,11 @@ def test_run_is_an_ad_hoc_session_here(daemon: Daemon) -> None:
     )
     listed = handler(daemon, "session", "list").stdout
     assert sid in listed and str(here) in listed
+    row = next(line for line in listed.splitlines() if line.startswith(sid))
+    assert row.split()[1] in ("idle", "working"), row  # the web UI's words, not "running"
     shown = handler(daemon, "session", "show", sid).stdout
     assert "fake · account fake" in shown and str(here) in shown and f"/#/sessions/{sid}" in shown
+    assert session["origin"] == "cli" and "(cli)" in shown  # started here, not in the web UI
     # no account or provider named, several ready: which one?
     r = handler(daemon, "run", "--detach", cwd=here)
     assert r.returncode != 0 and "which account or provider?" in r.stderr
@@ -90,8 +94,17 @@ def test_run_names_an_agent_of_the_project_of_the_folder(daemon: Daemon) -> None
     r = handler(daemon, "run", "Review", "-p", "report", "--detach", cwd=inside)
     assert r.returncode == 0, r.stderr
     sid = session_id(r.stdout)
-    # the agent's instructions, what its filtered network means, then the request
-    events(daemon, sid, json.dumps(f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport")[1:-1])
+    # the agent's instructions and what its filtered network means: Handler's line, sent before
+    # the request
+    log = events(daemon, sid, '\\"prompt\\"')  # the agent's report of what it was sent
+    said = [json.loads(line) for line in log.splitlines()]
+    told = f"Be brief.\n\n{FILTERED_NETWORK}"
+    assert [e["text"] for e in said if e.get("event") == "instructed"] == [told]
+    chunks = [e["update"] for e in said if e["kind"] == "update"]
+    report = "".join(
+        u["content"]["text"] for u in chunks if u["sessionUpdate"] == "agent_message_chunk"
+    )
+    assert json.loads(report)["prompt"] == [f"{told}\n\nreport"]
     assert next(s for s in sessions(daemon) if s["id"] == sid)["projectId"] == p["id"]
     assert "review" in handler(daemon, "session", "list").stdout
     r = handler(daemon, "run", "nope", cwd=folder)
@@ -114,7 +127,7 @@ def test_a_project_with_no_agent_yet_refuses(daemon: Daemon) -> None:
 
 
 @pytest.mark.rule(
-    "cli.the-folder-decides-the-project", "cli.another-area-runs-only-outside-once-confirmed"
+    "cli.the-folder-decides-the-project", "cli.a-model-of-another-area-needs-anyway-and-a-yes"
 )
 def test_the_project_s_folder_decides_the_agent(daemon: Daemon) -> None:
     """In a project's folder, `handler run` uses its agents and their settings; another account runs
@@ -236,8 +249,8 @@ def test_terminal_client(daemon: Daemon) -> None:
                 seen.append(out.get(timeout=0.5))
 
     try:
-        expect("> Your network goes through Handler's network filter")  # replayed: its first
-        expect("hello")  # prompt, what its filtered network means before the request
+        expect("> hello")  # replayed: its first prompt, the person's words alone
+        assert not any("network filter" in line for line in seen)  # Handler's are not
         proc.stdin.write("report\n")
         proc.stdin.flush()
         expect('"mode": "yolo"')
@@ -376,7 +389,7 @@ def test_attach_stdio_and_acp_agent_bridge_a_session(daemon: Daemon) -> None:
     assert next(s for s in sessions(daemon) if s["id"] == sid)["state"] == "running"
 
 
-@pytest.mark.rule("cli.another-area-runs-only-outside-once-confirmed")
+@pytest.mark.rule("cli.a-model-of-another-area-needs-anyway-and-a-yes")
 def test_anyway_with_an_account_not_for_the_area_is_typed_yes(monkeypatch: Any) -> None:
     """D.19: --anyway in a Work project's folder with a Personal account: the person types yes in
     a terminal; anything else, and no terminal at all, does not start it."""
@@ -431,7 +444,7 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
     flags["permissions"] = None
     flags |= {"display": False, "allow": ["b.test:443", "a.test:443"], "tool": None}
     flags["keep_blocked"] = None
-    args = argparse.Namespace(**flags, notes=None, save=False)
+    args = argparse.Namespace(**flags, notes=None, schema=None, env=None, save=False)
     d: Any = FakeDaemon()
     monkeypatch.setattr("sys.stdin", Terminal())
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
@@ -446,18 +459,20 @@ def test_a_flag_that_differs_is_saved_once_the_person_says_yes(monkeypatch: Any)
     assert body["model"] == {"account": "fake", "harness": "fake"}
     assert (body["name"], body["scope"], body["skills"]) == ("tests", "/code/x", ["s"])
     saved.clear()
-    same = argparse.Namespace(**flags | {"log_only": False}, notes=None, save=False)
+    same = argparse.Namespace(
+        **flags | {"log_only": False}, notes=None, schema=None, env=None, save=False
+    )
     assert settle_flags(d, agent | {"allow": ["a.test:443", "b.test:443"]}, same, None)
     assert saved == []  # nothing differs: nothing asked, nothing saved
 
 
-@pytest.mark.rule("save.a-host-is-allowed-or-kept-blocked")
+@pytest.mark.rule("save.a-host-is-in-one-list-and-never-a-required-one-blocked")
 def test_keep_blocked_and_allow_take_a_host_off_the_other_list() -> None:
     """--keep-blocked adds to the hosts kept blocked and takes them off the allowed ones;
     --allow the reverse (A.3: never both)."""
     agent = {"allow": ["a.test:443", "b.test:443"], "blocked": ["c.test:443"]}
     none = {"network": None, "log_only": False, "containers": False, "permissions": None}
-    none |= {"display": False, "tool": None, "notes": None}
+    none |= {"display": False, "tool": None, "notes": None, "schema": None, "env": None}
     args = argparse.Namespace(**none, allow=None, keep_blocked=["a.test:443"])
     assert flag_changes(agent, args) == (
         {"blocked": ["a.test:443", "c.test:443"], "allow": ["b.test:443"]},
@@ -468,3 +483,85 @@ def test_keep_blocked_and_allow_take_a_host_off_the_other_list() -> None:
         {"allow": ["a.test:443", "b.test:443", "c.test:443"], "blocked": []},
         ["allow + c.test:443"],
     )
+
+
+@pytest.mark.rule("cli.a-flag-is-never-ignored")
+def test_env_sets_or_removes_a_variable() -> None:
+    """--env NAME=VALUE sets it, NAME= removes it; the same value changes nothing."""
+    agent = {"env": {"A": "1", "B": "2"}}
+    none = {"network": None, "log_only": False, "containers": False, "permissions": None}
+    none |= {"display": False, "tool": None, "notes": None, "allow": None, "keep_blocked": None}
+    none["schema"] = None
+    args = argparse.Namespace(**none, env=["A=1", "B=", "C=3"])
+    assert flag_changes(agent, args) == ({"env": {"A": "1", "C": "3"}}, ["env - B", "env C=3"])
+    assert flag_changes(agent, argparse.Namespace(**none, env=["A=1"])) == ({}, [])
+    with pytest.raises(ClientError, match="NAME=VALUE"):
+        flag_changes(agent, argparse.Namespace(**none, env=["A"]))
+
+
+@pytest.mark.rule("cli.a-flag-is-never-ignored")
+def test_notes_gives_a_folder_read_only_or_read_write() -> None:
+    """--notes FOLDER adds it read-only, FOLDER=write read-write (D.5); one already given
+    another way is changed, the same changes nothing."""
+    agent = {"knowledge": [{"folder": "me", "access": "read"}]}
+    none = {"network": None, "log_only": False, "containers": False, "permissions": None}
+    none |= {"display": False, "tool": None, "allow": None, "keep_blocked": None, "env": None}
+    none["schema"] = None
+    args = argparse.Namespace(**none, notes=["contacts=write", "me", "a=b"])
+    assert flag_changes(agent, args) == (
+        {
+            "knowledge": [
+                {"folder": "a=b", "access": "read"},
+                {"folder": "contacts", "access": "write"},
+                {"folder": "me", "access": "read"},
+            ]
+        },
+        ["notes + contacts (read-write), a=b"],
+    )
+    args = argparse.Namespace(**none, notes=["me=write"])
+    assert flag_changes(agent, args) == (
+        {"knowledge": [{"folder": "me", "access": "write"}]},
+        ["notes + me (read-write)"],
+    )
+    assert flag_changes(agent, argparse.Namespace(**none, notes=["me=read"])) == ({}, [])
+
+
+@pytest.mark.rule("cli.a-flag-is-never-ignored")
+def test_schema_gives_a_knowledge_use() -> None:
+    """--schema ID gives a schema to read, ID=write one it writes (D.29), as --notes."""
+    agent = {"schemas": [{"schemaId": "books@1", "access": "read"}]}
+    none = {"network": None, "log_only": False, "containers": False, "permissions": None}
+    none |= {"display": False, "tool": None, "allow": None, "keep_blocked": None, "env": None}
+    args = argparse.Namespace(**none, notes=None, schema=["contacts@1=write", "books@1"])
+    assert flag_changes(agent, args) == (
+        {
+            "schemas": [
+                {"schemaId": "books@1", "access": "read"},
+                {"schemaId": "contacts@1", "access": "write"},
+            ]
+        },
+        ["schemas + contacts@1 (writes)"],
+    )
+
+
+def test_run_prepares_the_program_a_session_waits_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`handler run` on an agent program not built yet (F.1 `missingImage`): its build starts, as
+    the web UI's Prepare now, followed here; with --detach, started and left to run, the session
+    starting by itself with its request.
+
+    If this fails: `handler run` fails in 2 s, "the image of pi is not built yet", and leaves a
+    session that never starts."""
+    monkeypatch.setenv("HANDLER_CACHE_DIR", str(tmp_path))
+    waiting = {"id": "s_1", "state": "stopped", "missingImage": "pi", "request": "fix the bug"}
+    fake = FakeBuilds()
+    assert prepare(fake, waiting, detach=False) is None  # ty: ignore[invalid-argument-type]
+    out = capsys.readouterr().out
+    assert fake.started == ["pi"] and "pi is not prepared on this computer yet" in out
+    assert "done in" in out
+    fake = FakeBuilds()
+    assert prepare(fake, waiting, detach=True) == 0  # ty: ignore[invalid-argument-type]
+    assert fake.started == ["pi"]
+    assert "The session starts once it is ready: with your request." in capsys.readouterr().out
+    assert prepare(fake, waiting | {"state": "running"}, detach=True) is None  # ty: ignore[invalid-argument-type]

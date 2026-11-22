@@ -14,8 +14,9 @@ from pathlib import Path
 
 from .launcher import MANAGED_LABEL
 
-# runs `[*before, <the folder as the command sees it>, *after]` (folder, before, after)
-Run = Callable[[Path, list[str], list[str]], subprocess.CompletedProcess[str]]
+# runs `[*before, <the folders as the command sees them>, *after]` (folders, before, after), in
+# one call: entering the runtime's place (`podman unshare`, a container) costs more than `du`
+Run = Callable[[list[Path], list[str], list[str]], subprocess.CompletedProcess[str]]
 Engine = Callable[..., str]  # the engine's CLI: `podman(*args, check=…)`
 
 
@@ -25,15 +26,19 @@ def _fail(prog: str, message: str) -> int:
 
 
 def size(prog: str, paths: list[Path], run: Run) -> int:
-    """Prints `{path: bytes on disk}` as JSON, a path that does not exist: 0."""
+    """Prints `{path: bytes on disk}` as JSON, a path that does not exist: 0. One `du` for them
+    all (`-l`: a hard link shared between two is counted in both, as one `du` each would)."""
     sizes = dict.fromkeys(map(str, paths), 0)
-    for path in paths:  # one `du` each: hard links shared between two are counted in both
-        if not path.exists():
-            continue
-        result = run(path, ["du", "-s", "--block-size=1"], [])
-        if result.returncode != 0 or not result.stdout:
-            return _fail(prog, f"cannot measure {path}: {result.stderr.strip()}")
-        sizes[str(path)] = int(result.stdout.split()[0])
+    found = [p for p in dict.fromkeys(paths) if p.exists()]
+    if not found:
+        print(json.dumps(sizes))
+        return 0
+    result = run(found, ["du", "-s", "-l", "--block-size=1"], [])
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or len(lines) != len(found):
+        return _fail(prog, f"cannot measure {', '.join(map(str, found))}: {result.stderr.strip()}")
+    for path, line in zip(found, lines, strict=True):  # in the order given
+        sizes[str(path)] = int(line.split()[0])
     print(json.dumps(sizes))
     return 0
 
@@ -90,7 +95,7 @@ def clear(prog: str, path: Path, run: Run, engine: Engine, errors: type[Exceptio
     if reason := _refusal(path, engine, errors):
         return _fail(prog, reason)
     entries = ["-mindepth", "1", "-maxdepth", "1"]
-    result = run(path, ["find"], [*entries, "-exec", "rm", "-rf", "{}", "+"])
+    result = run([path], ["find"], [*entries, "-exec", "rm", "-rf", "{}", "+"])
     if result.returncode != 0:
         return _fail(prog, f"cannot clear {path}: {result.stderr.strip()}")
     return 0

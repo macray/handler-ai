@@ -12,6 +12,6 @@ export default defineConfig({
     // a single page (no file can be fetched there). Keep it that way: no dynamic import().
     assetsInlineLimit: 100_000_000,
     cssCodeSplit: false,
-    rollupOptions: { output: { inlineDynamicImports: true } },
+    rolldownOptions: { output: { codeSplitting: false } },
   },
 });

@@ -2,245 +2,6 @@
   "$id": "urn:handler.control/v1/app",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
-    "AgentDefinition": {
-      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)\nand those Handler ships for its needs (D.18).",
-      "properties": {
-        "agentName": {
-          "title": "Agentname",
-          "type": "string"
-        },
-        "agentDescription": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Agentdescription"
-        },
-        "instructions": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Instructions"
-        },
-        "network": {
-          "default": "filtered",
-          "enum": [
-            "none",
-            "filtered",
-            "open"
-          ],
-          "title": "Network",
-          "type": "string"
-        },
-        "egress": {
-          "default": "enforce",
-          "enum": [
-            "enforce",
-            "log-only"
-          ],
-          "title": "Egress",
-          "type": "string"
-        },
-        "allow": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Allow",
-          "type": "array"
-        },
-        "confinement": {
-          "default": "strict",
-          "enum": [
-            "strict",
-            "nested",
-            "privileged"
-          ],
-          "title": "Confinement",
-          "type": "string"
-        },
-        "permissions": {
-          "default": "bypass",
-          "enum": [
-            "ask",
-            "accept-edits",
-            "bypass"
-          ],
-          "title": "Permissions",
-          "type": "string"
-        },
-        "skills": {
-          "default": [],
-          "items": {
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-            "type": "string"
-          },
-          "title": "Skills",
-          "type": "array"
-        },
-        "interface": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AgentInterface"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "addons": {
-          "default": [],
-          "items": {
-            "pattern": "^[a-z0-9][a-z0-9-]*$",
-            "type": "string"
-          },
-          "title": "Addons",
-          "type": "array"
-        },
-        "knowledge": {
-          "default": [],
-          "items": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "pattern": "^[^/\\x00]",
-            "type": "string"
-          },
-          "title": "Knowledge",
-          "type": "array"
-        },
-        "display": {
-          "default": false,
-          "title": "Display",
-          "type": "boolean"
-        },
-        "modelAlone": {
-          "default": false,
-          "title": "Modelalone",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "agentName"
-      ],
-      "title": "AgentDefinition",
-      "type": "object"
-    },
-    "AgentInterface": {
-      "description": "How a session of an agent starts and ends (D.18): a form (one of its fields may name a\nskill of the library to work on, its subject), and maybe the result its final message holds.\nWith a result, a job: each run is unattended, so in permission mode `bypass` (no one is there\nto answer its requests). Without, a brief: the form starts a session you then work in.",
-      "properties": {
-        "fields": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fields"
-        },
-        "result": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Result"
-        },
-        "timeoutSec": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 86400,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Timeoutsec"
-        }
-      },
-      "title": "AgentInterface",
-      "type": "object"
-    },
-    "AgentOrigin": {
-      "description": "What an agent was set up from, kept for good: the definition of an app's need (H.2), an\nagents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it\ncame from: where the agent lives is its home (`projectId`, `app`, `chat`).",
-      "properties": {
-        "kind": {
-          "enum": [
-            "app",
-            "agents-file",
-            "handler-need"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
-        "name": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-          "title": "Name",
-          "type": "string"
-        },
-        "agent": {
-          "anyOf": [
-            {
-              "maxLength": 64,
-              "minLength": 1,
-              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Agent"
-        },
-        "version": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Version"
-        }
-      },
-      "required": [
-        "kind",
-        "name"
-      ],
-      "title": "AgentOrigin",
-      "type": "object"
-    },
     "AppAction": {
       "description": "One of an app's actions (H.12), as its page and Ask's router see it.",
       "properties": {
@@ -264,7 +25,7 @@
         "by": {
           "enum": [
             "code",
-            "agent"
+            "job"
           ],
           "title": "By",
           "type": "string"
@@ -281,6 +42,11 @@
           ],
           "default": null,
           "title": "Fields"
+        },
+        "inAsk": {
+          "default": true,
+          "title": "Inask",
+          "type": "boolean"
         }
       },
       "required": [
@@ -289,91 +55,6 @@
         "by"
       ],
       "title": "AppAction",
-      "type": "object"
-    },
-    "AppAgentNeed": {
-      "description": "An agent an app needs (current or source version, H.2), the one given for it, and the\nperson's agents that fit it (D.18: its form takes what the app sends, its result gives what\nthe app reads; it works in the folder given for `worksIn`).",
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
-        "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
-        "worksIn": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Worksin"
-        },
-        "definition": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AgentDefinition"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "origin": {
-          "$ref": "#/$defs/AgentOrigin"
-        },
-        "agentId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Agentid"
-        },
-        "problem": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Problem"
-        },
-        "fits": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Fits",
-          "type": "array"
-        }
-      },
-      "required": [
-        "name",
-        "origin"
-      ],
-      "title": "AppAgentNeed",
       "type": "object"
     },
     "AppDeployment": {
@@ -452,30 +133,40 @@
       "title": "AppFileNeed",
       "type": "object"
     },
-    "AppManifestAgentNeed": {
-      "additionalProperties": false,
-      "description": "A job the app starts runs of (H.11): which agent is the person's choice at install, one of\ntheirs that fits or one set up from the definition the app ships.",
+    "AppJob": {
+      "description": "One of an app's jobs (H.1), as its page shows it: what it does and reaches, who runs it.",
       "properties": {
-        "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
-        "from": {
-          "title": "From",
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Name",
           "type": "string"
         },
-        "worksIn": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "canDo": {
+          "$ref": "#/$defs/AppJobCanDo"
+        },
+        "whoWorks": {
           "anyOf": [
             {
-              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "$ref": "#/$defs/WhoWorks"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "own": {
+          "default": false,
+          "title": "Own",
+          "type": "boolean"
+        },
+        "problem": {
+          "anyOf": [
+            {
               "type": "string"
             },
             {
@@ -483,13 +174,63 @@
             }
           ],
           "default": null,
-          "title": "Worksin"
+          "title": "Problem"
         }
       },
       "required": [
-        "from"
+        "name",
+        "description",
+        "canDo"
       ],
-      "title": "AppManifestAgentNeed",
+      "title": "AppJob",
+      "type": "object"
+    },
+    "AppJobCanDo": {
+      "description": "What a job reaches (H.1), its declaration's: the folders given to the app's files needs it\nreads or writes, those it works in, its schemas, its hosts.",
+      "properties": {
+        "files": {
+          "default": {},
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "enum": [
+                "read",
+                "write"
+              ],
+              "type": "string"
+            }
+          },
+          "title": "Files",
+          "type": "object"
+        },
+        "worksIn": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]{0,29}$",
+            "type": "string"
+          },
+          "title": "Worksin",
+          "type": "array"
+        },
+        "schemas": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "pattern": "^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$",
+            "type": "string"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        }
+      },
+      "title": "AppJobCanDo",
       "type": "object"
     },
     "AppManifestFileNeed": {
@@ -566,25 +307,37 @@
           "default": false,
           "title": "Notify",
           "type": "boolean"
-        },
-        "agents": {
-          "default": {},
-          "maxProperties": 10,
-          "patternProperties": {
-            "^[a-z][a-z0-9-]{0,29}$": {
-              "$ref": "#/$defs/AppManifestAgentNeed"
-            }
-          },
-          "title": "Agents",
-          "type": "object"
         }
       },
       "title": "AppManifestNeeds",
       "type": "object"
     },
+    "AppManifestNudgeRemind": {
+      "additionalProperties": false,
+      "description": "How often an open nudge alerts again, by default (the person tones it per nudge, H.17):\nevery `every`, `times` times after its first alert.",
+      "properties": {
+        "every": {
+          "pattern": "^[1-9]\\d{0,3}[mhd]$",
+          "title": "Every",
+          "type": "string"
+        },
+        "times": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Times",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "every"
+      ],
+      "title": "AppManifestNudgeRemind",
+      "type": "object"
+    },
     "AppManifestSuggestedAutomation": {
       "additionalProperties": false,
-      "description": "An automation the app suggests (`[[automations]]`, I.1): made by the person from the app's\npage, off until they turn it on; its results open the app.",
+      "description": "An automation the app suggests (`[[automations]]`, I.1): installed with the app, made and\nturned on at Install unless the person switches it off there (`optional`: off unless they\nswitch it on; the CLI asks for each); later made from the app's page, off; its results open\nthe app.",
       "properties": {
         "description": {
           "minLength": 1,
@@ -596,6 +349,11 @@
         },
         "run": {
           "$ref": "#/$defs/AppManifestSuggestedRun"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
         }
       },
       "required": [
@@ -608,24 +366,205 @@
     },
     "AppManifestSuggestedRun": {
       "additionalProperties": false,
-      "description": "What a suggested automation runs: the agent given for one of the app's needs.",
+      "description": "What a suggested automation runs: one of the app's jobs (`job`, with its `input`), or one\nof its routes (`call`, as a person's automation calls it: `run = { app, call }`, I.3).",
       "properties": {
-        "agent": {
-          "pattern": "^[a-z][a-z0-9-]{0,29}$",
-          "title": "Agent",
-          "type": "string"
+        "job": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job"
         },
         "input": {
           "$ref": "#/$defs/AutomationAgentInput",
           "default": {
             "fields": {}
           }
+        },
+        "call": {
+          "anyOf": [
+            {
+              "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call"
+        }
+      },
+      "title": "AppManifestSuggestedRun",
+      "type": "object"
+    },
+    "AppNudge": {
+      "description": "One of an app's nudges (H.17), as its page shows it: what it asks, what a click opens,\nits reminders as the app says them and as you set them.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open"
+        },
+        "remind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppManifestNudgeRemind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ifIgnored": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ifignored"
+        },
+        "setting": {
+          "default": "default",
+          "enum": [
+            "default",
+            "once",
+            "silent"
+          ],
+          "title": "Setting",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ownWhen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nextAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nextat"
+        },
+        "prepared": {
+          "default": false,
+          "title": "Prepared",
+          "type": "boolean"
+        },
+        "off": {
+          "default": false,
+          "title": "Off",
+          "type": "boolean"
         }
       },
       "required": [
-        "agent"
+        "name",
+        "description"
       ],
-      "title": "AppManifestSuggestedRun",
+      "title": "AppNudge",
+      "type": "object"
+    },
+    "AppOffered": {
+      "description": "The version the source an app came from offers, as read last (D.26), while it differs\nfrom its kept code's: Update takes it, then deploys it (H.6).",
+      "properties": {
+        "source": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "title": "Source",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "changes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changes"
+        },
+        "addedNeeds": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Addedneeds",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source",
+        "version"
+      ],
+      "title": "AppOffered",
       "type": "object"
     },
     "AppSecret": {
@@ -673,6 +612,18 @@
           ],
           "default": null,
           "title": "Description"
+        },
+        "changes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changes"
         },
         "error": {
           "anyOf": [
@@ -725,12 +676,12 @@
     },
     "Schedule": {
       "additionalProperties": false,
-      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
+      "description": "A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.",
       "properties": {
         "every": {
           "anyOf": [
             {
-              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "pattern": "^[1-9]\\d{0,3}[mhd]$",
               "type": "string"
             },
             {
@@ -780,6 +731,68 @@
       },
       "title": "Schedule",
       "type": "object"
+    },
+    "WhoWorks": {
+      "description": "Who runs an app's jobs (H.2): a program (a harness) on an account or a provider, and a\nmodel; no program: the model alone, on a provider (D.18), for a job reaching no folder, tool\nor host. One per app, chosen by the person, and maybe one of a job's own.",
+      "properties": {
+        "program": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Program"
+        },
+        "account": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Account"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        }
+      },
+      "title": "WhoWorks",
+      "type": "object"
     }
   },
   "description": "An app (H): its code kept by Handler (H.15), what is installed, its backend's state.",
@@ -788,6 +801,18 @@
       "pattern": "^[a-z][a-z0-9-]{0,29}$",
       "title": "Name",
       "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
     },
     "description": {
       "anyOf": [
@@ -852,6 +877,17 @@
     "source": {
       "$ref": "#/$defs/AppSource"
     },
+    "offered": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppOffered"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "secrets": {
       "default": [],
       "items": {
@@ -866,14 +902,6 @@
         "$ref": "#/$defs/AppFileNeed"
       },
       "title": "Files",
-      "type": "array"
-    },
-    "agents": {
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/AppAgentNeed"
-      },
-      "title": "Agents",
       "type": "array"
     },
     "suggests": {
@@ -926,10 +954,32 @@
       "title": "Actions",
       "type": "array"
     },
-    "askable": {
-      "default": true,
-      "title": "Askable",
-      "type": "boolean"
+    "nudges": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppNudge"
+      },
+      "title": "Nudges",
+      "type": "array"
+    },
+    "whoWorks": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WhoWorks"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "jobs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppJob"
+      },
+      "title": "Jobs",
+      "type": "array"
     }
   },
   "required": [

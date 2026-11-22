@@ -54,8 +54,8 @@ export type Day = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 export const DAYS: Day[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 export const WEEKDAYS: Day[] = ["mon", "tue", "wed", "thu", "fri"];
 
-/** A schedule's form (I.2): every N minutes or hours, or at a time on some days. */
-export type ScheduleForm = { kind: "every"; n: number; unit: "m" | "h" } | { kind: "at"; at: string; days: Day[] };
+/** A schedule's form (I.2): every N minutes, hours or days, or at a time on some days. */
+export type ScheduleForm = { kind: "every"; n: number; unit: "m" | "h" | "d" } | { kind: "at"; at: string; days: Day[] };
 
 export const SCHEDULE_PRESETS: { label: string; form: ScheduleForm }[] = [
   { label: "Every hour", form: { kind: "every", n: 1, unit: "h" } },
@@ -135,18 +135,13 @@ export type AutomationForm = {
 /** A definition as the form shows it; null when the form cannot say it (a script, `only` with
  *  agents or several projects): its file is then where it is edited. */
 export function formOf(definition: Automation | null | undefined): AutomationForm | null {
-  if (!definition || typeof definition.run === "string") return null;
+  if (!definition || typeof definition.run === "string" || "job" in definition.run) return null; // a script, an app's job
   const only = definition.only;
   if (only?.agent?.length || (only?.project?.length ?? 0) > 1) return null;
   const when = definition.when;
-  let schedule: ScheduleForm = { kind: "at", at: "08:30", days: [...DAYS] };
-  if (typeof when !== "string") {
-    if (when.every) {
-      const m = /^(\d+)([mh])$/.exec(when.every);
-      if (!m) return null;
-      schedule = { kind: "every", n: Number(m[1]), unit: m[2] as "m" | "h" };
-    } else schedule = { kind: "at", at: when.at ?? "08:30", days: when.days?.length ? DAYS.filter((d) => when.days?.includes(d)) : [...DAYS] };
-  }
+  let schedule: ScheduleForm | null = { kind: "at", at: "08:30", days: [...DAYS] };
+  if (typeof when !== "string") schedule = scheduleFormOf(when);
+  if (!schedule) return null;
   const run = definition.run;
   return {
     on: typeof when === "string" ? "stop" : "time",
@@ -164,10 +159,19 @@ export function formOf(definition: Automation | null | undefined): AutomationFor
   };
 }
 
+/** A Schedule as its form shows it; null when it cannot. */
+export function scheduleFormOf(when: Schedule): ScheduleForm | null {
+  if (when.every) {
+    const m = /^(\d+)([mhd])$/.exec(when.every);
+    return m ? { kind: "every", n: Number(m[1]), unit: m[2] as "m" | "h" | "d" } : null;
+  }
+  return { kind: "at", at: when.at ?? "08:30", days: when.days?.length ? DAYS.filter((d) => when.days?.includes(d)) : [...DAYS] };
+}
+
 /** How often a schedule runs, in words: "about 24 runs a day", "5 runs a week". */
 export function howOften(form: ScheduleForm): string {
   if (form.kind === "at") return `${form.days.length} run${form.days.length === 1 ? "" : "s"} a week`;
-  const minutes = form.n * (form.unit === "h" ? 60 : 1);
+  const minutes = form.n * { m: 1, h: 60, d: 1440 }[form.unit];
   if (minutes <= 1440) {
     const day = Math.round(1440 / minutes);
     return `${1440 % minutes ? "about " : ""}${day} run${day === 1 ? "" : "s"} a day`;
@@ -176,8 +180,8 @@ export function howOften(form: ScheduleForm): string {
   return week >= 1 ? `about ${week} run${week === 1 ? "" : "s"} a week` : "less than one run a week";
 }
 
-/** What it runs, as the Library's filters say it: one of your agents, an app's route, or your
- *  script; null while its definition cannot be read. */
+/** What it runs, as the Library's filters say it: one of your agents, an app's route or job
+ *  ("app"), or your script; null while its definition cannot be read. */
 export type RunsKind = "agent" | "app" | "script";
 export function runsKind(definition: Automation | null | undefined): RunsKind | null {
   const run = definition?.run;
@@ -193,5 +197,6 @@ export function runsWords(definition: Automation | null | undefined, agentName?:
   if (run === undefined) return "";
   if (typeof run === "string") return "your script";
   if ("agent" in run) return agentName || run.agent;
+  if ("job" in run) return `${run.app}'s job ${run.job}`;
   return `${run.app}'s route`;
 }

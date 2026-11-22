@@ -49,7 +49,7 @@ def write(tmp_path: Path, events: list[dict[str, Any]]) -> Path:
     return log
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_read_keeps_the_slice(tmp_path: Path) -> None:
     log = write(tmp_path, LOG)
     assert [e["seq"] for e in transcript.read(log, 3, 6)] == [3, 4, 5, 6]
@@ -57,7 +57,7 @@ def test_read_keeps_the_slice(tmp_path: Path) -> None:
     assert transcript.read(tmp_path / "missing", 1, 2) == []
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_render_joins_chunks_and_merges_tool_calls() -> None:
     out = transcript.render(LOG, [("Agent", "dev"), ("Events", "1 to 12")])
     assert out.startswith("# Session transcript\n\n- Agent: dev\n- Events: 1 to 12\n")
@@ -73,7 +73,7 @@ def test_render_joins_chunks_and_merges_tool_calls() -> None:
     assert out.index("[7] Tool call") < out.index("[8] Permission") < out.index("[10] Agent")
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_tool_io_is_cut_and_fenced() -> None:
     long = "a" * 2500 + "`````" + "b" * 2000
     call = update(1, sessionUpdate="tool_call", toolCallId="t", title="cat", rawOutput=long)
@@ -83,13 +83,13 @@ def test_tool_io_is_cut_and_fenced() -> None:
     assert transcript.fenced("x ````` y").startswith("``````\n")
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_an_update_of_a_call_started_before_the_slice_is_shown() -> None:
     late = update(5, sessionUpdate="tool_call_update", toolCallId="old", status="completed")
     assert "### [5] Tool call: old (completed)" in transcript.render([late], [])
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_redacted_with_raw_and_json_escaped_values() -> None:
     secret = 'sk-"quoted"-value'
     out = transcript.render([update(1, **text("agent_message_chunk", f"key {secret}"))], [])

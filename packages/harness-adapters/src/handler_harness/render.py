@@ -86,6 +86,7 @@ def render(
     instructions: str | None = None,
     network: NetworkMode = "none",
     caches: list[tuple[CacheDeclaration, str]] | None = None,
+    unattended: bool = False,
 ) -> HarnessLaunch:
     """Return the launch intent.
 
@@ -104,33 +105,27 @@ def render(
     `permission_mode`: the agent's starting mode (D.8), one the descriptor maps.
     `caches`: each cache the agent gets (the toolbox's, its addons') with its host folder, as the
     agent's project shares them.
+    `unattended`: a run's sandbox (D.18), which gets the descriptor's `unattendedEnv` too.
     """
     if agent.harness != descriptor.name:
         raise RenderError(f"agent is for harness '{agent.harness}', not '{descriptor.name}'")
 
     state = state_needs(descriptor, agent, session_state, state_root, login_file)
     provided = express_provider(descriptor, agent, provider_key)
+    env = launch_env(descriptor, agent, permission_mode, provided, account_token)
+    if unattended:
+        env |= descriptor.unattended_env or {}
+    session = SessionDefaults(
+        mode_id=descriptor.permissions[permission_mode].session_mode,
+        meta=descriptor.session_meta or None,
+    )
     login = descriptor.login if agent.account else None
-    token_env = {login.token: account_token} if login and login.token and account_token else {}
-    env = dict(descriptor.env or {}) | token_env | provided.env | plan_env(login, agent)
-    mode = descriptor.permissions.get(permission_mode)  # decision 4: ACP, env fallback
-    if mode is None:
-        raise RenderError(
-            f"harness '{descriptor.name}' has no permission mode '{permission_mode}' "
-            f"(it offers: {', '.join(descriptor.permissions)})"
-        )
-    env |= mode.env or {}
-    session = SessionDefaults(mode_id=mode.session_mode)
-    config = agent.config
-    if agent.provider_spec is not None and config is not None:
-        # the provider's model is written in the harness's configuration, not chosen over ACP
-        config = config.model_copy(update={"model": None})
+    token_env = [login.token] if login and login.token and account_token else []
     secret_env = [*token_env, *provided.secret_env]
-    session, config_env = apply_neutral_config(
-        descriptor, config, session, mcp_servers or [], secret_env=secret_env
+    session, _ = apply_neutral_config(
+        descriptor, neutral_config(agent), session, mcp_servers or [], secret_env=secret_env
     )
     egress = [host for host, _ in harness_hosts(descriptor, agent, mcp_servers or [])]
-    env |= config_env
 
     argv, extra_files = list(descriptor.acp_command), mcp_config_file(descriptor, session)
     if terminal is not None:
@@ -252,11 +247,54 @@ def _state_source(
     return None
 
 
-def plan_env(login: LoginRecipe | None, agent: AgentSpec) -> dict[str, str]:
-    """The account's plan, where the harness reads it (its login's `planEnv`)."""
-    if login is None or login.plan_env is None or agent.account_plan is None:
+def launch_env(
+    descriptor: HarnessDescriptor,
+    agent: AgentSpec,
+    permission_mode: PermissionMode,
+    provided: providers.Expressed,
+    account_token: str | None,
+) -> dict[str, str]:
+    """The variables a launch of `agent` sets, but a terminal's (B.3): the harness's own, its
+    account's token and subscription, its provider's, its permission mode's, the account connectors'
+    switch."""
+    login = descriptor.login if agent.account else None
+    token_env = {login.token: account_token} if login and login.token and account_token else {}
+    env = dict(descriptor.env or {}) | token_env | provided.env | subscription_env(login, agent)
+    mode = descriptor.permissions.get(permission_mode)  # its ACP session mode, or `env` (pi)
+    if mode is None:
+        raise RenderError(
+            f"harness '{descriptor.name}' has no permission mode '{permission_mode}' "
+            f"(it offers: {', '.join(descriptor.permissions)})"
+        )
+    env |= mode.env or {}
+    _, config_env = apply_neutral_config(descriptor, neutral_config(agent), SessionDefaults(), [])
+    return env | config_env
+
+
+def harness_env(
+    descriptor: HarnessDescriptor, agent: AgentSpec, permission_mode: PermissionMode
+) -> list[str]:
+    """The variables a launch of `agent` in that permission mode sets, whatever its secrets'
+    values (a terminal's aside), a run's too: those an agent's own variables may not set (D.8)."""
+    provided = express_provider(descriptor, agent, "-")
+    env = launch_env(descriptor, agent, permission_mode, provided, "-")
+    return sorted(env.keys() | (descriptor.unattended_env or {}).keys())
+
+
+def neutral_config(agent: AgentSpec) -> NeutralConfig | None:
+    """The agent's neutral config; on a provider without its model, which is written in the
+    harness's configuration, not chosen over ACP."""
+    config = agent.config
+    if agent.provider_spec is not None and config is not None:
+        config = config.model_copy(update={"model": None})
+    return config
+
+
+def subscription_env(login: LoginRecipe | None, agent: AgentSpec) -> dict[str, str]:
+    """The account's subscription, where the harness reads it (its login's `subscriptionEnv`)."""
+    if login is None or login.subscription_env is None or agent.account_subscription is None:
         return {}
-    return {login.plan_env: agent.account_plan}
+    return {login.subscription_env: agent.account_subscription}
 
 
 def express_provider(
@@ -317,7 +355,7 @@ def cache_folders(
     for cache, source in caches:
         target = expand_home(cache.target, descriptor.home)
         path = f"{target}/{cache.bin}" if cache.bin else None
-        found.append(CacheFolder(source=source, target=target, path=path))
+        found.append(CacheFolder(source=source, target=target, path=path, kind=cache.kind))
     return found
 
 
@@ -417,17 +455,10 @@ def mcp_config_file(descriptor: HarnessDescriptor, session: SessionDefaults) -> 
     adapter expands `${VAR}` in them)."""
     if descriptor.mcp_config_file is None or not session.mcp_servers:
         return []
-    entries: dict[str, dict[str, object]] = {}
-    for server in session.mcp_servers:
-        if isinstance(server, StdioMcpServer):
-            entry: dict[str, object] = {"command": server.command, "args": server.args}
-            if server.env:
-                entry["env"] = {e.name: e.value for e in server.env}
-        else:  # http, with an SSE fallback
-            entry = {"url": server.url}
-            if server.headers:
-                entry["headers"] = {h.name: h.value for h in server.headers}
-        entries[server.name] = entry | {"directTools": True}
+    entries = {  # as Claude Code's, but untyped: an http one with an SSE fallback
+        name: {k: v for k, v in entry.items() if k != "type"} | {"directTools": True}
+        for name, entry in _mcp_entries(session.mcp_servers).items()
+    }
     # no installing servers from the model's `mcp` tool, no `mcpScript` JavaScript tool
     settings = {"allowInstall": False, "scriptMode": False}
     content = json.dumps({"settings": settings, "mcpServers": entries}, indent=2) + "\n"

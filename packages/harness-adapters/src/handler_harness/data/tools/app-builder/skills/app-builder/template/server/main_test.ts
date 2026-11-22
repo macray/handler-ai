@@ -32,3 +32,21 @@ test("refuses an empty note", async () => {
   const res = await call(openDb(":memory:"), "POST", "/api/notes", { text: " " });
   expect(res.status).toBe(400);
 });
+
+test("the action add answers in a sentence", async () => {
+  const db = openDb(":memory:");
+  const res = await call(db, "POST", "/api/actions/add", { text: "call the bank" });
+  expect(await res.json()).toEqual({ status: "ok", summary: "Noted: call the bank" });
+  const empty = await call(db, "POST", "/api/actions/add", { text: " " });
+  expect(((await empty.json()) as { status: string }).status).toBe("failed");
+});
+
+test("the job draft's then saves the note it gave back, and nothing when it failed", async () => {
+  const db = openDb(":memory:");
+  const ended = (state: string, result: unknown) =>
+    call(db, "POST", "/api/drafts/ended", { runId: "r_1", job: "draft", state, fields: { request: "kettle" }, result });
+  expect((await ended("succeeded", { status: "ok", summary: "On the kettle.", note: "Descale it monthly" })).status).toBe(200);
+  expect((await ended("failed", null)).status).toBe(200);
+  const notes = (await (await call(db, "GET", "/api/notes")).json()) as { text: string }[];
+  expect(notes.map((n) => n.text)).toEqual(["Descale it monthly"]);
+});

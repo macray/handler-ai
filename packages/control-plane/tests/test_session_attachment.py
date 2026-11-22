@@ -56,3 +56,24 @@ def test_a_client_that_stops_reading_is_closed_as_too_slow_while_another_gets_ev
         assert reader.closed is None
 
     asyncio.run(scenario())
+
+
+def test_a_client_gone_is_written_to_no_more() -> None:
+    """A send that fails (its socket closing) ends the attachment's writing: what is put after it
+    is dropped, not tried one message after another (the client re-attaches from its `afterSeq`)."""
+
+    async def scenario() -> None:
+        tries: list[str] = []
+
+        async def send(text: str) -> None:
+            tries.append(text)
+            raise RuntimeError("Cannot call send once a close message has been sent")
+
+        attachment = Attachment(send, Client().close)
+        attachment.put({"n": 0})
+        await _until(lambda: attachment.closed)
+        attachment.put({"n": 1})
+        await asyncio.sleep(0)
+        assert tries == ['{"n": 0}'] and attachment.writer.done()
+
+    asyncio.run(scenario())

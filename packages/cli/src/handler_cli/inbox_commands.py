@@ -6,9 +6,8 @@ them blocked). OPENS: the app a message opens (`handler app open NAME`)."""
 import argparse
 from typing import Any
 
-from .automation_commands import when_at
 from .client import Daemon
-from .output import one_line, refused_hosts, table
+from .output import one_line, refused_hosts, table, when_at
 
 
 def add_parser(sub: Any) -> None:

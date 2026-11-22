@@ -80,6 +80,7 @@ def test_paths_stay_in_the_folder(root: Path, tmp_path: Path, path: str) -> None
     assert not e.value.missing
 
 
+@pytest.mark.rule("files.no-link-leads-out")
 def test_read_shows_text_images_and_only_the_size_of_the_rest(root: Path, tmp_path: Path) -> None:
     none = tmp_path / "none.json"
     (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 8)

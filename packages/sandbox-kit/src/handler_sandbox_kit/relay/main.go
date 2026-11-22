@@ -9,6 +9,14 @@
 // gives the host's socket to that user, empties the capability bounding set, sets
 // no_new_privs (which Apple's `container` cannot) and becomes the user, before anything else.
 //
+// With --overlay LOWER:UPPER:WORK:TARGET (repeatable, with --user; CAP_SYS_ADMIN too; a cache
+// inside another after it), a cache:
+// LOWER the cache's folder (read-only), UPPER and WORK the sandbox's own writes, TARGET where the
+// sandbox sees it. Once the bounding set is empty and no_new_privs set, the relay opens
+// /dev/fuse, mounts TARGET with it, and hands the mount to fuse-overlayfs (beside this program)
+// running as the user, every file shown as the user's: the program serving the overlay has no
+// capability, and the sandbox never has LOWER writable.
+//
 // With --host, a sandbox with no network reaches the host through that one socket (Apple's
 // `container run --volume <socket>:<path>`: each connect a new connection to it). Each listener
 // gives the sandbox's programs an address leading to a target of the host: its network filter's
@@ -33,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,21 +56,31 @@ func (l *listeners) String() string     { return strings.Join(*l, ",") }
 func (l *listeners) Set(v string) error { *l = append(*l, v); return nil }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "merge" { // merge.go
+		mergeMain(os.Args[2:])
+	}
 	user := flag.String("user", "", "UID:GID to become (started as root)")
 	host := flag.String("host", "", "the host's socket")
 	var listen listeners
 	flag.Var(&listen, "listen", "tcp:HOST:PORT=NAME or unix:PATH=NAME (repeatable, with --host)")
 	var serves listeners
 	flag.Var(&serves, "serve", "unix:PATH=NAME, the host reaching PATH as NAME (repeatable, with --host)")
+	var mounts setup
+	flag.Var(&mounts.overlays, "overlay", "LOWER:UPPER:WORK:TARGET, a cache's overlay (repeatable, with --user)")
+	flag.StringVar(&mounts.nested, "nested", "", "DISK: what an engine inside needs (with --user)")
+	flag.StringVar(&mounts.registries, "registries", "", "FILE: added to the image's registries.conf, on the disk (with --nested)")
 	flag.Parse()
 	if (len(listen) > 0 || len(serves) > 0) && *host == "" {
 		fail("--listen and --serve need --host")
+	}
+	if (len(mounts.overlays) > 0 || mounts.nested != "") && *user == "" {
+		fail("--overlay and --nested need --user")
 	}
 	if flag.NArg() == 0 {
 		fail("no command")
 	}
 	if *user != "" {
-		become(*user, *host)
+		become(*user, *host, mounts)
 	}
 	for _, spec := range listen {
 		addr, name, ok := strings.Cut(spec, "=")
@@ -125,9 +144,20 @@ func park(host, name, address string) {
 	}
 }
 
+// setup: what the relay sets up as root before it becomes the user.
+type setup struct {
+	overlays   listeners
+	nested     string // the disk, when an engine runs inside (nested.go)
+	registries string // the runtime's registries.conf entries (its images mirror), with nested
+}
+
 // become gives the host's socket to uid:gid, then drops every privilege for good: the bounding
-// set and no_new_privs on every thread (children inherit them), then the groups and ids.
-func become(user, host string) {
+// set and no_new_privs on every thread (children inherit them), then the groups and ids. The
+// caches' overlays and the disk's folders are mounted in between: what the relay still holds
+// (its effective capabilities) mounts them, what it starts to serve them inherits neither. With
+// --nested the bounding set keeps an engine's capabilities and no_new_privs is not set: the
+// engine's newuidmap and newgidmap need their file capabilities (nested.go).
+func become(user, host string, mounts setup) {
 	uidText, gidText, ok := strings.Cut(user, ":")
 	uid, err1 := strconv.Atoi(uidText)
 	gid, err2 := strconv.Atoi(gidText)
@@ -139,11 +169,27 @@ func become(user, host string) {
 			fail("the host's socket: %v", err)
 		}
 	}
-	for c := uintptr(0); c <= 63; c++ { // EINVAL past the kernel's last capability
-		syscall.AllThreadsSyscall(syscall.SYS_PRCTL, prCapbsetDrop, c, 0)
+	for _, spec := range mounts.overlays {
+		prepareOverlay(spec, uid, gid)
 	}
-	if _, _, e := syscall.AllThreadsSyscall(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0); e != 0 {
-		fail("no_new_privs: %v", e)
+	if mounts.nested != "" {
+		prepareNested(mounts.nested, uid, gid)
+		if mounts.registries != "" {
+			composeRegistries(mounts.nested, mounts.registries)
+		}
+	}
+	for c := uintptr(0); c <= 63; c++ { // EINVAL past the kernel's last capability
+		if mounts.nested == "" || !engineCaps[c] {
+			syscall.AllThreadsSyscall(syscall.SYS_PRCTL, prCapbsetDrop, c, 0)
+		}
+	}
+	if mounts.nested == "" {
+		if _, _, e := syscall.AllThreadsSyscall(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0); e != 0 {
+			fail("no_new_privs: %v", e)
+		}
+	}
+	for _, spec := range mounts.overlays {
+		mountOverlay(spec, uid, gid)
 	}
 	if err := syscall.Setgroups(nil); err != nil {
 		fail("groups: %v", err)
@@ -160,6 +206,86 @@ const (
 	prCapbsetDrop   = 24 // PR_CAPBSET_DROP
 	prSetNoNewPrivs = 38 // PR_SET_NO_NEW_PRIVS
 )
+
+// overlayParts splits --overlay's LOWER:UPPER:WORK:TARGET, four absolute paths.
+func overlayParts(spec string) (lower, upper, work, target string) {
+	parts := strings.Split(spec, ":")
+	if len(parts) != 4 {
+		fail("bad --overlay %q", spec)
+	}
+	for _, p := range parts {
+		if !strings.HasPrefix(p, "/") || strings.Contains(p, ",") {
+			fail("bad --overlay %q", spec)
+		}
+	}
+	return parts[0], parts[1], parts[2], parts[3]
+}
+
+// prepareOverlay makes the sandbox's writes' folders, the user's (the mount point is made when
+// mounted: inside another cache, it is made in that cache's overlay).
+func prepareOverlay(spec string, uid, gid int) {
+	_, upper, work, target := overlayParts(spec)
+	for _, dir := range []string{upper, work} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fail("overlay %s: %v", target, err)
+		}
+		if err := os.Chown(dir, uid, gid); err != nil {
+			fail("overlay %s: %v", target, err)
+		}
+	}
+}
+
+// overlayWait: how long the relay waits for an overlay's program to answer, at most.
+const overlayWait = 10 * time.Second
+
+// mountOverlay mounts TARGET with a /dev/fuse of its own, then starts fuse-overlayfs on that
+// mount as uid:gid: no capability (the bounding set is empty, the ids not root's), no_new_privs.
+func mountOverlay(spec string, uid, gid int) {
+	lower, upper, work, target := overlayParts(spec)
+	self, err := os.Executable()
+	if err != nil {
+		fail("overlay %s: %v", target, err)
+	}
+	program := filepath.Join(filepath.Dir(self), "fuse-overlayfs")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		fail("overlay %s: %v", target, err)
+	}
+	dev, err := os.OpenFile("/dev/fuse", os.O_RDWR, 0)
+	if err != nil {
+		fail("overlay %s: %v", target, err)
+	}
+	options := fmt.Sprintf(
+		"fd=%d,rootmode=40000,user_id=%d,group_id=%d,allow_other,default_permissions",
+		dev.Fd(), uid, gid)
+	flags := uintptr(syscall.MS_NOSUID | syscall.MS_NODEV)
+	if err := syscall.Mount("fuse-overlayfs", target, "fuse.fuse-overlayfs", flags, options); err != nil {
+		fail("overlay %s: mount: %v", target, err)
+	}
+	cmd := exec.Command(program, "-f", "-o", fmt.Sprintf(
+		"lowerdir=%s,upperdir=%s,workdir=%s,squash_to_uid=%d,squash_to_gid=%d",
+		lower, upper, work, uid, gid), "/dev/fd/3")
+	cmd.ExtraFiles = []*os.File{dev} // its fd 3
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: []uint32{}},
+		Setsid:     true, // a terminal's signals are the agent's
+	}
+	if err := cmd.Start(); err != nil {
+		fail("overlay %s: %v", target, err)
+	}
+	dev.Close() // the mount is the program's alone: if it ends, the mount answers ENOTCONN
+	go cmd.Wait()
+	answered := make(chan error, 1)
+	go func() { _, err := os.Stat(target); answered <- err }()
+	select {
+	case err := <-answered:
+		if err != nil {
+			fail("overlay %s: %v", target, err)
+		}
+	case <-time.After(overlayWait):
+		fail("overlay %s: fuse-overlayfs did not answer", target)
+	}
+}
 
 func serve(l net.Listener, host, name string) {
 	for {

@@ -17,12 +17,13 @@
   import AgentReceipt from "./AgentReceipt.svelte";
   import AgentSchedules from "./AgentSchedules.svelte";
   import InterfaceStrip from "./InterfaceStrip.svelte";
-  import ModelChoice from "./ModelChoice.svelte";
+  import WhoWorksChoice from "./WhoWorksChoice.svelte";
   import RunForm from "./RunForm.svelte";
   import Timeline, { type TimelineEntry } from "./Timeline.svelte";
   import UseChip from "./UseChip.svelte";
   import UsesPanel from "./UsesPanel.svelte";
   import { accessLabel } from "../lib/access";
+  import { menuUse } from "../lib/menuuse.svelte";
   import { terminalsOf } from "../lib/agents";
   import type { Agent, AutomationView, ModelAccess, Project, Session } from "../lib/contracts.gen";
   import { useOfAgent } from "../lib/interface";
@@ -39,7 +40,6 @@
     tags,
     onstarted,
     onchanged,
-    partOf = null,
     say,
     tabbed = false,
     caches,
@@ -52,7 +52,6 @@
     tags?: Snippet; // beside its name: what it is in its place (its project's default, what uses it)
     onstarted?: () => void; // a session or a run started here
     onchanged?: () => void; // the agent changed here (an improvement's attempt kept, D.21)
-    partOf?: string | null; // the app it is one of the parts of (H.14): started by it, never here
     say?: string; // a chat's first message, typed in its box (Ask's "Start a chat about it")
     tabbed?: boolean; // a project's Sessions tab: the box and what it did, nothing above
     caches?: Project["caches"]; // its project's (a shared one is said in amber)
@@ -112,7 +111,7 @@
         title: "a terminal",
         note: "handler terminal",
         fact: accessLabel(t.conn.terminal),
-        action: { label: "Open", href: href({ view: "terminal", agent: t.agent.id, connection: t.conn.id }), primary: true },
+        action: { label: "Open", href: href({ view: "running", terminal: t.conn.id }), primary: true },
         testid: "live-terminal",
       }),
     ),
@@ -128,7 +127,7 @@
         dot: state === "running" ? "working" : verdict && verdict.tone !== "muted" ? verdict.tone : state === "done" ? "ended" : "danger",
         title: inputSummary(r) ?? "a run",
         note: verdict?.value ?? (r.waitingFor ? "waiting for its turn" : state),
-        fact: [startedBy(r), accessLabel(r)].join(" · "),
+        fact: [startedBy(r, (n) => menuUse.title(n)), accessLabel(r)].join(" · "),
         action: { label: "Result", href: href({ view: "run", id: r.id }), testid: "run-link" },
       };
     }),
@@ -184,20 +183,10 @@
   {/if}
   {#if error}<p class="text-sm text-danger" data-testid="project-error">{error}</p>{/if}
 
-  {#snippet byItsApp(app: string)}
-    <p class="rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground" data-testid="agent-part-of">
-      One of <a class="text-link hover:underline" href={href({ view: "apps", app })}>{app}</a>'s parts: it runs when you use {app} (what you ask it, its screen, what it runs by
-      itself), never on its own here.
-    </p>
-  {/snippet}
   {#if agent.interface?.result}
-    {#if partOf}
-      {@render byItsApp(partOf)}
-    {:else}
-      <div class="console term-surface p-4">
-        <div class="font-sans">{#key agent.id}<RunForm {agent} ondefault={makeDefault} {chips} onstarted={(run) => (onstarted?.(), navigate({ view: "run", id: run.id }))} />{/key}</div>
-      </div>
-    {/if}
+    <div class="console term-surface p-4">
+      <div class="font-sans">{#key agent.id}<RunForm {agent} ondefault={makeDefault} {chips} onstarted={(run) => (onstarted?.(), navigate({ view: "run", id: run.id }))} />{/key}</div>
+    </div>
     {#if !tabbed}
       <AgentReceipt {agent} {edit} />
     {/if}
@@ -209,9 +198,7 @@
       <Timeline entries={runEntries} empty="No run yet." />
     </section>
   {:else}
-    {#if partOf}
-      {@render byItsApp(partOf)}
-    {:else if agent.interface}
+    {#if agent.interface}
       <div class="console term-surface p-4" data-testid="project-brief">
         <div class="font-sans">{#key agent.id}<RunForm {agent} ondefault={makeDefault} {chips} onstarted={(s) => (onstarted?.(), open(s))} />{/key}</div>
       </div>
@@ -238,7 +225,7 @@
           />
         </div>
         <div class="console-run">
-          <ModelChoice {agent} bind:value={model} ondefault={makeDefault} />
+          {#key agent.id}<WhoWorksChoice {agent} bind:value={model} ondefault={makeDefault} />{/key}
           {@render chips()}
           <span id="project-request-hint" class="ml-auto text-xs text-muted-foreground max-lg:hidden">{tabbed ? "" : "↵ to start · empty: an open chat"}</span>
           <Button type="submit" size="sm" class="max-lg:ml-auto" disabled={starting} data-testid="project-start-button"><Play />Start</Button>

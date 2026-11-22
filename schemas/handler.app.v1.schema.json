@@ -4,7 +4,7 @@
   "$defs": {
     "AppManifestAction": {
       "additionalProperties": false,
-      "description": "An action: something the person can ask the app in a sentence (H.12), what Ask's router\nreads, what the app's page lists (with Try). Done by its code (`route`: the backend answers an\nActionResult at once) or by one of its agents (`agent`: a run of the agent given for that need,\nits form filled with the action's fields).",
+      "description": "An action: something the person can ask the app in a sentence (H.12), what Ask's router\nreads, what the app's page lists (with Try). Done by its code (`route`: the backend answers an\nActionResult at once) or by one of its jobs (`job`: a run of it, its form the job's).",
       "properties": {
         "description": {
           "maxLength": 200,
@@ -36,7 +36,7 @@
           "default": null,
           "title": "Route"
         },
-        "agent": {
+        "job": {
           "anyOf": [
             {
               "pattern": "^[a-z][a-z0-9-]{0,29}$",
@@ -47,7 +47,7 @@
             }
           ],
           "default": null,
-          "title": "Agent"
+          "title": "Job"
         },
         "fields": {
           "anyOf": [
@@ -67,46 +67,6 @@
         "description"
       ],
       "title": "AppManifestAction",
-      "type": "object"
-    },
-    "AppManifestAgentNeed": {
-      "additionalProperties": false,
-      "description": "A job the app starts runs of (H.11): which agent is the person's choice at install, one of\ntheirs that fits or one set up from the definition the app ships.",
-      "properties": {
-        "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
-        "from": {
-          "title": "From",
-          "type": "string"
-        },
-        "worksIn": {
-          "anyOf": [
-            {
-              "pattern": "^[a-z][a-z0-9-]{0,29}$",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Worksin"
-        }
-      },
-      "required": [
-        "from"
-      ],
-      "title": "AppManifestAgentNeed",
       "type": "object"
     },
     "AppManifestFileNeed": {
@@ -147,6 +107,111 @@
       "title": "AppManifestFileNeed",
       "type": "object"
     },
+    "AppManifestJob": {
+      "additionalProperties": false,
+      "description": "A job (H.1): work of the app's that needs a model, run by the Who works the person chose\nfor the app. Its instructions are `jobs/<name>.md` of the app's folder; what it reaches (its\nfolders and their access, its schemas, its hosts) is declared here, said before a deploy that\nadds to it.",
+      "properties": {
+        "description": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "files": {
+          "default": {},
+          "maxProperties": 10,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,29}$": {
+              "enum": [
+                "read",
+                "write"
+              ],
+              "type": "string"
+            }
+          },
+          "title": "Files",
+          "type": "object"
+        },
+        "worksIn": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]{0,29}$",
+            "type": "string"
+          },
+          "title": "Worksin",
+          "type": "array"
+        },
+        "schemas": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "pattern": "^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$",
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Schemas",
+          "type": "array"
+        },
+        "egress": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Egress",
+          "type": "array"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "result": {
+          "additionalProperties": true,
+          "title": "Result",
+          "type": "object"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9]\\d{0,3}[mhd]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "then": {
+          "anyOf": [
+            {
+              "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Then"
+        }
+      },
+      "required": [
+        "description",
+        "result"
+      ],
+      "title": "AppManifestJob",
+      "type": "object"
+    },
     "AppManifestNeeds": {
       "additionalProperties": false,
       "description": "What the app may reach (H.2). Shown when it is deployed; more than before is flagged.",
@@ -183,20 +248,138 @@
           "default": false,
           "title": "Notify",
           "type": "boolean"
-        },
-        "agents": {
-          "default": {},
-          "maxProperties": 10,
-          "patternProperties": {
-            "^[a-z][a-z0-9-]{0,29}$": {
-              "$ref": "#/$defs/AppManifestAgentNeed"
-            }
-          },
-          "title": "Agents",
-          "type": "object"
         }
       },
       "title": "AppManifestNeeds",
+      "type": "object"
+    },
+    "AppManifestNudge": {
+      "additionalProperties": false,
+      "description": "A nudge (H.17): something the app asks a person to do, under a name that stays the same\nfrom one to the next (`daily-log`). A click opens one of its actions' form (`action`) or a\npage of its UI (`open`): the manifest's, never the call's.",
+      "properties": {
+        "description": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9/_.~%-]*(\\?[A-Za-z0-9=&_.~%-]*)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open"
+        },
+        "remind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppManifestNudgeRemind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ifIgnored": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ifignored"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prepare": {
+          "anyOf": [
+            {
+              "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prepare"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "const": "next",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "AppManifestNudge",
+      "type": "object"
+    },
+    "AppManifestNudgeRemind": {
+      "additionalProperties": false,
+      "description": "How often an open nudge alerts again, by default (the person tones it per nudge, H.17):\nevery `every`, `times` times after its first alert.",
+      "properties": {
+        "every": {
+          "pattern": "^[1-9]\\d{0,3}[mhd]$",
+          "title": "Every",
+          "type": "string"
+        },
+        "times": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Times",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "every"
+      ],
+      "title": "AppManifestNudgeRemind",
       "type": "object"
     },
     "AppManifestServer": {
@@ -213,7 +396,7 @@
     },
     "AppManifestSuggestedAutomation": {
       "additionalProperties": false,
-      "description": "An automation the app suggests (`[[automations]]`, I.1): made by the person from the app's\npage, off until they turn it on; its results open the app.",
+      "description": "An automation the app suggests (`[[automations]]`, I.1): installed with the app, made and\nturned on at Install unless the person switches it off there (`optional`: off unless they\nswitch it on; the CLI asks for each); later made from the app's page, off; its results open\nthe app.",
       "properties": {
         "description": {
           "minLength": 1,
@@ -225,6 +408,11 @@
         },
         "run": {
           "$ref": "#/$defs/AppManifestSuggestedRun"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
         }
       },
       "required": [
@@ -237,23 +425,41 @@
     },
     "AppManifestSuggestedRun": {
       "additionalProperties": false,
-      "description": "What a suggested automation runs: the agent given for one of the app's needs.",
+      "description": "What a suggested automation runs: one of the app's jobs (`job`, with its `input`), or one\nof its routes (`call`, as a person's automation calls it: `run = { app, call }`, I.3).",
       "properties": {
-        "agent": {
-          "pattern": "^[a-z][a-z0-9-]{0,29}$",
-          "title": "Agent",
-          "type": "string"
+        "job": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job"
         },
         "input": {
           "$ref": "#/$defs/AutomationAgentInput",
           "default": {
             "fields": {}
           }
+        },
+        "call": {
+          "anyOf": [
+            {
+              "pattern": "^POST /api/[A-Za-z0-9/_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call"
         }
       },
-      "required": [
-        "agent"
-      ],
       "title": "AppManifestSuggestedRun",
       "type": "object"
     },
@@ -318,12 +524,12 @@
     },
     "Schedule": {
       "additionalProperties": false,
-      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
+      "description": "A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.",
       "properties": {
         "every": {
           "anyOf": [
             {
-              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "pattern": "^[1-9]\\d{0,3}[mhd]$",
               "type": "string"
             },
             {
@@ -387,6 +593,20 @@
       "title": "Name",
       "type": "string"
     },
+    "title": {
+      "anyOf": [
+        {
+          "maxLength": 60,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
     "version": {
       "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.-]+)?$",
       "title": "Version",
@@ -403,6 +623,20 @@
       ],
       "default": null,
       "title": "Description"
+    },
+    "changes": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Changes"
     },
     "server": {
       "$ref": "#/$defs/AppManifestServer",
@@ -422,8 +656,7 @@
         "egress": [],
         "secrets": [],
         "files": {},
-        "notify": false,
-        "agents": {}
+        "notify": false
       }
     },
     "routes": {
@@ -460,6 +693,28 @@
       "title": "Actions",
       "type": "object"
     },
+    "jobs": {
+      "default": {},
+      "maxProperties": 10,
+      "patternProperties": {
+        "^[a-z][a-z0-9-]{0,29}$": {
+          "$ref": "#/$defs/AppManifestJob"
+        }
+      },
+      "title": "Jobs",
+      "type": "object"
+    },
+    "nudges": {
+      "default": {},
+      "maxProperties": 10,
+      "patternProperties": {
+        "^[a-z][a-z0-9-]{0,29}$": {
+          "$ref": "#/$defs/AppManifestNudge"
+        }
+      },
+      "title": "Nudges",
+      "type": "object"
+    },
     "resources": {
       "anyOf": [
         {
@@ -470,6 +725,17 @@
         }
       ],
       "default": null
+    },
+    "schemas": {
+      "default": [],
+      "items": {
+        "maxLength": 128,
+        "pattern": "^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$",
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Schemas",
+      "type": "array"
     }
   },
   "required": [

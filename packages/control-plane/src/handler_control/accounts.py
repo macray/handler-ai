@@ -1,5 +1,5 @@
 """Accounts — contract E, D.9: `~/.config/handler-ai/accounts/<name>.toml`, a subscription one
-harness logs in with (its harness, a description, its plan), one per file, name = file stem. Written
+harness logs in with (its harness, a description, its subscription), one per file, name = file stem. Written
 through the Control API, or by hand.
 
 Its login (the harness's `[login]`, contract B): a token login's token is the person's own (they
@@ -70,19 +70,19 @@ def load(path: Path) -> LoadedAccount:
     elif account.connectors and descriptor.account_connectors is None:
         error = f"connectors: {product} has no account connectors"
     else:
-        error = plan_error(account.harness, login, account.plan)
+        error = subscription_error(account.harness, login, account.subscription)
     if error is not None:
         return LoadedAccount(name, path, None, error)
     return LoadedAccount(name, path, account, login=login)
 
 
-def plan_error(harness: str, login: LoginRecipe, plan: str | None) -> str | None:
-    """A plan must be one its harness's login knows."""
-    if plan is None or plan in login.plans:
+def subscription_error(harness: str, login: LoginRecipe, subscription: str | None) -> str | None:
+    """A subscription must be one its harness's login knows."""
+    if subscription is None or subscription in login.subscriptions:
         return None
-    if not login.plans:
-        return f"plan: harness '{harness}' has no plans"
-    return f"plan: '{plan}' is not one of {', '.join(login.plans)}"
+    if not login.subscriptions:
+        return f"subscription: harness '{harness}' has no subscriptions"
+    return f"subscription: '{subscription}' is not one of {', '.join(login.subscriptions)}"
 
 
 def get(directory: Path, name: str) -> LoadedAccount:
@@ -143,14 +143,14 @@ def create(
     harness: str,
     description: str | None,
     *,
-    plan: str | None = None,
+    subscription: str | None = None,
     connectors: bool = False,
     areas: list[str] | None = None,
 ) -> LoadedAccount:
     target = directory / f"{name}.toml"
     if target.exists():
         raise AccountError(f"account '{name}' exists")
-    _write(target, harness, description, plan, connectors, areas or [])
+    _write(target, harness, description, subscription, connectors, areas or [])
     loaded = load(target)
     if loaded.account is None:
         target.unlink()
@@ -166,14 +166,14 @@ def update(
     *,
     name: str,
     description: str | None,
-    plan: str | None = None,
+    subscription: str | None = None,
     connectors: bool = False,
     areas: list[str] | None = None,
 ) -> LoadedAccount:
-    """Its description, its plan, its connectors, its areas, and its name: the file, the login
+    """Its description, its subscription, its connectors, its areas, and its name: the file, the login
     and its token follow."""
     assert old.account is not None and old.login is not None
-    if (error := plan_error(old.account.harness, old.login, plan)) is not None:
+    if (error := subscription_error(old.account.harness, old.login, subscription)) is not None:
         raise AccountError(error)
     target = directory / f"{name}.toml"
     token = old.account.token
@@ -186,7 +186,7 @@ def update(
         if isinstance(token, StoreSecret) and token.secret == token_path(old.name):
             token = StoreSecret(secret=token_path(name))
         old.path.unlink()
-    _write(target, old.account.harness, description, plan, connectors, areas or [], token)
+    _write(target, old.account.harness, description, subscription, connectors, areas or [], token)
     loaded = load(target)
     if loaded.account is None:
         raise AccountError(loaded.error or "invalid account")
@@ -250,14 +250,14 @@ def forget_login(loaded: LoadedAccount, credentials: Path, store: secrets.Secret
 def _rewrite(loaded: LoadedAccount, token: SecretRef | None) -> None:
     a = loaded.account
     assert a is not None
-    _write(loaded.path, a.harness, a.description, a.plan, a.connectors, a.areas, token)
+    _write(loaded.path, a.harness, a.description, a.subscription, a.connectors, a.areas, token)
 
 
 def _write(  # noqa: PLR0917 — the account file's fields, in its order
     target: Path,
     harness: str,
     description: str | None,
-    plan: str | None,
+    subscription: str | None,
     connectors: bool,
     areas: list[str],
     token: SecretRef | None = None,
@@ -267,8 +267,8 @@ def _write(  # noqa: PLR0917 — the account file's fields, in its order
     doc["harness"] = harness
     if description:
         doc["description"] = description
-    if plan:
-        doc["plan"] = plan
+    if subscription:
+        doc["subscription"] = subscription
     if connectors:
         doc["connectors"] = True
     if areas:

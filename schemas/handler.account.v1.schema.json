@@ -91,7 +91,7 @@
       "default": null,
       "title": "Description"
     },
-    "plan": {
+    "subscription": {
       "anyOf": [
         {
           "minLength": 1,
@@ -102,7 +102,7 @@
         }
       ],
       "default": null,
-      "title": "Plan"
+      "title": "Subscription"
     },
     "connectors": {
       "default": false,

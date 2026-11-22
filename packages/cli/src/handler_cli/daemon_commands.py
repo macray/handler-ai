@@ -11,12 +11,15 @@ handler daemon log [-f]              its log (-f: follow it)
 """
 
 import argparse
+import glob
 import os
 import plistlib
 import pwd
+import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -80,8 +83,72 @@ def wsl() -> bool:
 # ── systemd (Linux, WSL) ────────────────────────────────────────────────
 
 
+WSL_CONFIGS = "/mnt/c/Users/*/.wslconfig"  # Windows' user folders, as WSL mounts them
+
+
+def keeps_running() -> list[str]:
+    """What stops handlerd, a user service, besides you (each a `warn` line of setup): systemd
+    stops a user's services when they log out unless lingering is on (an SSH session, a server);
+    WSL stops the whole distribution a while after its last window closes unless
+    `.wslconfig` says `instanceIdleTimeout=-1`."""
+    said = []
+    user = os.environ.get("USER") or str(os.getuid())
+    try:
+        linger = subprocess.run(
+            ["loginctl", "show-user", user, "--property=Linger", "--value"],
+            capture_output=True, text=True, timeout=10, check=False,
+        ).stdout.strip()  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        linger = ""
+    if linger == "no":
+        said.append(
+            "handlerd stops when you log out (or close your last SSH session), and with it your "
+            f"sessions: sudo loginctl enable-linger {user}"
+        )
+    if wsl() and not any(
+        re.search(r"(?m)^\s*instanceIdleTimeout\s*=\s*-1\s*$", _read(p))
+        for p in glob.glob(WSL_CONFIGS)
+    ):
+        said.append(
+            "WSL stops Linux, and handlerd, about 15 seconds after its last window closes: add "
+            "`[general]` and `instanceIdleTimeout=-1` to C:\\Users\\<you>\\.wslconfig, then "
+            "`wsl --shutdown` in PowerShell"
+        )
+    return said
+
+
+def _read(path: str) -> str:
+    try:
+        return Path(path).read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def _unquoted(value: str) -> str:
+    """A value of `systemctl show-environment`, which quotes one with spaces or escapes `$'…'`."""
+    if not (value.startswith("$'") and value.endswith("'")):
+        return value
+    escaped = value[2:-1].encode()  # \xNN, \n…; UTF-8 bytes as they are
+    return escaped.decode("unicode_escape").encode("latin-1").decode()
+
+
+def _manager_environment() -> dict[str, str]:
+    """systemd's user manager's own environment, not this shell's (empty without one)."""
+    try:
+        shown = subprocess.run(["systemctl", "--user", "show-environment"],
+                               capture_output=True, text=True, check=False)  # fmt: skip
+    except FileNotFoundError:
+        return {}
+    pairs = (line.partition("=") for line in shown.stdout.splitlines() if shown.returncode == 0)
+    return {name: _unquoted(value) for name, _, value in pairs}
+
+
 def unit_path() -> Path:
-    xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    """Where systemd's user manager looks: under its own XDG_CONFIG_HOME, or its home's
+    `.config`; this shell's XDG_CONFIG_HOME, if custom, is only carried into the unit."""
+    manager = _manager_environment()
+    home = manager.get("HOME", pwd.getpwuid(os.getuid()).pw_dir)
+    xdg = Path(manager.get("XDG_CONFIG_HOME", Path(home) / ".config"))
     return xdg / "systemd" / "user" / UNIT_NAME
 
 
@@ -138,11 +205,32 @@ def plist_bytes() -> bytes:
 
 
 def _launchctl(*args: str) -> int:
+    sys.stdout.flush()  # what was printed before comes before launchctl's own errors
     return subprocess.run(["launchctl", *args], check=False).returncode
 
 
 def _domain() -> str:
     return f"gui/{os.getuid()}"
+
+
+# launchd stops a job with SIGTERM, then SIGKILL after its exit timeout (5 s on macOS 26,
+# 20 s in launchd.plist(5)): well within this
+UNLOAD_WAIT = 30.0
+
+
+def _unload_launch_agent() -> None:
+    """The loaded handlerd, if any, out of launchd. `bootout` returns before that handlerd has
+    exited, and until it has, launchd refuses to bootstrap the same label (`5: Input/output
+    error`): `handler setup` run again would leave no service, the old handlerd still answering
+    while it shuts down. So this waits until launchd no longer knows the job."""
+    job = f"{_domain()}/{LABEL}"
+    subprocess.run(["launchctl", "bootout", job], capture_output=True, check=False)
+    deadline = time.monotonic() + UNLOAD_WAIT
+    while time.monotonic() < deadline:
+        known = subprocess.run(["launchctl", "print", job], capture_output=True, check=False)
+        if known.returncode != 0:
+            return
+        time.sleep(0.2)
 
 
 # ── the commands ────────────────────────────────────────────────────────
@@ -160,8 +248,7 @@ def install(dry_run: bool) -> int:
     print(f"wrote {path}")
     if macos():
         log_path().parent.mkdir(parents=True, exist_ok=True)
-        bootout = ["launchctl", "bootout", f"{_domain()}/{LABEL}"]  # an older one, if loaded
-        subprocess.run(bootout, capture_output=True, check=False)
+        _unload_launch_agent()  # an older one, if loaded
         return _launchctl("bootstrap", _domain(), str(path))
     return _systemctl("daemon-reload") or _systemctl("enable", "--now", UNIT_NAME)
 

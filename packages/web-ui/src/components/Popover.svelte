@@ -1,6 +1,7 @@
 <script lang="ts">
   // A small panel opened from a button (the page's ⋯, the box's chips): on the page's top layer,
-  // under the button (above it when the window has no room under it; or right-aligned with it),
+  // under the button (above it when the window has no room under it; or right-aligned with it; or
+  // beside it, on its right, its foot level with the button's: the menu's set-up card),
   // closed by a click elsewhere or Escape. `trigger` renders the button with the props it needs;
   // `children` the panel, given `close` (a menu's rows: buttons of class `menu-item`).
   import type { Snippet } from "svelte";
@@ -17,7 +18,7 @@
     children,
   }: {
     open?: boolean;
-    align?: "start" | "end";
+    align?: "start" | "end" | "beside";
     label: string; // the panel's name, for assistive technology
     width?: string; // a CSS width
     testid?: string;
@@ -29,11 +30,15 @@
   let panel = $state<HTMLElement | null>(null);
   let at = $state({ top: 0, left: 0, right: 0 });
 
-  /** Under the button, or above it when the window has no room under it. */
+  /** Under the button, or above it when the window has no room under it; or beside it. */
   function place(): void {
     const r = anchor?.getBoundingClientRect();
     if (!r) return;
     const height = panel?.offsetHeight ?? 0;
+    if (align === "beside") {
+      at = { top: Math.max(8, r.bottom - height), left: r.right + 10, right: 0 };
+      return;
+    }
     const under = r.bottom + 6 + height <= window.innerHeight - 8 || r.top - 6 - height < 8;
     at = { top: under ? r.bottom + 6 : r.top - 6 - height, left: r.left, right: window.innerWidth - r.right };
   }
@@ -63,7 +68,8 @@
 
 <svelte:window onpointerdown={outside} onkeydown={(e) => open && e.key === "Escape" && close()} onresize={() => open && place()} />
 
-<span bind:this={anchor} class="inline-flex">
+<!-- beside: the button is a card, the width of where it is -->
+<span bind:this={anchor} class={align === "beside" ? "flex" : "inline-flex"}>
   {@render trigger({ onclick: toggle, "aria-expanded": open, "aria-haspopup": "dialog" })}
 </span>
 {#if open}
@@ -114,5 +120,10 @@
     width: 15px;
     height: 15px;
     color: var(--muted-foreground);
+  }
+  /* a row that deletes (Uninstall…): red, its icon too */
+  .popover :global(.menu-item.text-danger),
+  .popover :global(.menu-item.text-danger svg) {
+    color: var(--danger);
   }
 </style>

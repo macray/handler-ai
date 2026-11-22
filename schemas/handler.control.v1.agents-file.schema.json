@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "AgentDefinition": {
-      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)\nand those Handler ships for its needs (D.18).",
+      "description": "What an agent set up from it starts with (D.18): everything but what it runs as and where\nit works, its defaults; `skills` come with it, installed in the library when it is set up.\nAn agents file's agents are definitions (D.23), and so are those Handler ships for its needs\n(D.18).",
       "properties": {
         "agentName": {
           "title": "Agentname",
@@ -122,10 +122,28 @@
           "title": "Knowledge",
           "type": "array"
         },
+        "schemas": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/KnowledgeUse"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
         "display": {
           "default": false,
           "title": "Display",
           "type": "boolean"
+        },
+        "env": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
         },
         "modelAlone": {
           "default": false,
@@ -250,6 +268,31 @@
         "compare"
       ],
       "title": "AgentsFileCheck",
+      "type": "object"
+    },
+    "KnowledgeUse": {
+      "description": "A schema an agent reads or writes (D.29): it gets that schema, read-only; its documents\nare in its notes folders. `write`: it may make and change documents of that schema (where:\nits read-write folders, D.5).",
+      "properties": {
+        "schemaId": {
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$",
+          "title": "Schemaid",
+          "type": "string"
+        },
+        "access": {
+          "default": "read",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "title": "Access",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaId"
+      ],
+      "title": "KnowledgeUse",
       "type": "object"
     }
   },

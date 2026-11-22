@@ -149,16 +149,16 @@
           "default": null,
           "title": "Help"
         },
-        "plans": {
+        "subscriptions": {
           "default": [],
           "items": {
             "minLength": 1,
             "type": "string"
           },
-          "title": "Plans",
+          "title": "Subscriptions",
           "type": "array"
         },
-        "planEnv": {
+        "subscriptionEnv": {
           "anyOf": [
             {
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -169,7 +169,7 @@
             }
           ],
           "default": null,
-          "title": "Planenv"
+          "title": "Subscriptionenv"
         }
       },
       "required": [
@@ -181,6 +181,7 @@
       "type": "object"
     }
   },
+  "description": "GET /v1/harnesses (D.2): what a harness's descriptor says (B.1), nothing of its image.",
   "properties": {
     "name": {
       "title": "Name",
@@ -193,35 +194,6 @@
     "image": {
       "title": "Image",
       "type": "string"
-    },
-    "imagePresent": {
-      "title": "Imagepresent",
-      "type": "boolean"
-    },
-    "version": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Version"
-    },
-    "builtAt": {
-      "anyOf": [
-        {
-          "format": "date-time",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Builtat"
     },
     "providerProtocols": {
       "default": [],
@@ -297,8 +269,7 @@
   "required": [
     "name",
     "product",
-    "image",
-    "imagePresent"
+    "image"
   ],
   "title": "HarnessInfo",
   "type": "object"

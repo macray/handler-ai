@@ -50,6 +50,22 @@
       ],
       "default": null,
       "title": "Timezone"
+    },
+    "via": {
+      "default": "web",
+      "enum": [
+        "web",
+        "phone",
+        "cli",
+        "key"
+      ],
+      "title": "Via",
+      "type": "string"
+    },
+    "spoken": {
+      "default": false,
+      "title": "Spoken",
+      "type": "boolean"
     }
   },
   "required": [

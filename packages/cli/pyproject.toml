@@ -4,11 +4,16 @@ dynamic = ["version"]  # handlerd's: `handler --version` in a checkout too
 license = "Apache-2.0"
 description = "handler: command line client of the control plane daemon (contracts C and D)"
 requires-python = ">=3.12"
-dependencies = ["handler-contracts", "httpx>=0.28", "websockets>=17"]
+dependencies = [
+    "handler-contracts",
+    "httpx>=0.28",
+    "sounddevice>=0.5; sys_platform == 'darwin'",  # `handler ask --listen` records on a Mac
+    "websockets>=17",
+]
 
 [project.scripts]
-handler = "handler_cli.cli:main"
-handler-ai = "handler_cli.cli:main"  # the same CLI: `uvx handler-ai` runs it
+handler = "handler_cli.entry:main"
+handler-ai = "handler_cli.entry:main"  # the same CLI: `uvx handler-ai` runs it
 
 [tool.uv]
 # an editable install reads its version again when handlerd's changes

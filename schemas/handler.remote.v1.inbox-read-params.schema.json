@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.remote/v1/inbox-read-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/inbox_read` \u2192 InboxMessage: one of the device's person's messages marked\nread, as the computer marks it (H.9, I.3).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "InboxReadParams",
+  "type": "object"
+}

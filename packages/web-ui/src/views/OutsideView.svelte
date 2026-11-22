@@ -2,11 +2,9 @@
   // Agents outside projects: the agents of no project that are not Chat's, laid out as a project's page
   // (its agents on the left, the chosen one's workspace beside them), without what only a project
   // has (its folder, caches, settings). Three groups: yours (each in its folder, or a brief or a
-  // job with none); those Handler or your apps use (D.18, H.2), each saying for what; and those
-  // the command line made outside projects (no name: called by their folder), folded. Who you talk
-  // to with no folder is in Chat (their `chat`, D.1); the agents set up for an app are its
-  // parts, on its page only (H.14).
-  import AppWindow from "@lucide/svelte/icons/app-window";
+  // job with none); those Handler uses (D.18), each saying for what; and those the command line
+  // made outside projects (no name: called by their folder), folded. Who you talk to with no folder
+  // is in Chat (their `chat`, D.1).
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Plus from "@lucide/svelte/icons/plus";
   import Sparkles from "@lucide/svelte/icons/sparkles";
@@ -18,9 +16,10 @@
   import SessionStatus from "../components/SessionStatus.svelte";
   import { accessLabel } from "../lib/access";
   import { folderName, whereLabel } from "../lib/agents";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import { usedFor } from "../lib/apps";
-  import type { Agent, App, AutomationView, HandlerNeed, Session } from "../lib/contracts.gen";
+  import type { Agent, AutomationView, HandlerNeed, Session } from "../lib/contracts.gen";
   import { agentLabel } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { sessions, type SessionStatus as Status } from "../lib/sessions.svelte";
@@ -31,7 +30,6 @@
   let list = $state<Session[]>([]); // their sessions and runs, any state
   let automations = $state<AutomationView[]>([]);
   let needs = $state<HandlerNeed[]>([]);
-  let apps = $state<App[]>([]);
   let loaded = $state(false);
   let error = $state<string | null>(null);
   let unfolded = $state(false); // the command line's agents shown
@@ -39,23 +37,21 @@
   $effect(() => {
     void sessions.stopping.size; // a session closed here has stopped: load again
     const load = () =>
-      Promise.all([api.agents(), api.sessions(), api.automations().catch(() => []), api.handlerNeeds().catch(() => []), api.apps().catch(() => [])]).then(
-        ([all, s, auto, b, a]) => {
-          agents = all.filter((x) => !x.projectId && !x.app && !x.chat).sort((x, y) => (y.lastUsedAt ?? y.createdAt).localeCompare(x.lastUsedAt ?? x.createdAt));
+      Promise.all([api.agents(), api.sessions(), api.automations().catch(() => []), api.handlerNeeds().catch(() => [])]).then(
+        ([all, s, auto, b]) => {
+          agents = all.filter((x) => !x.projectId && !x.chat).sort((x, y) => (y.lastUsedAt ?? y.createdAt).localeCompare(x.lastUsedAt ?? x.createdAt));
           list = s.filter((x) => !x.projectId);
           automations = auto;
           needs = b;
-          apps = a;
           loaded = true;
         },
         (e: Error) => (error = e.message),
       );
     void load();
-    const timer = setInterval(load, 5000); // sessions and terminals come and go
-    return () => clearInterval(timer);
+    return onChange(["sessions", "agents", "automations", "handler-needs"], () => void load());
   });
 
-  const uses = $derived(new Map(agents.map((a) => [a.id, usedFor(a, needs, apps)])));
+  const uses = $derived(new Map(agents.map((a) => [a.id, usedFor(a, needs)])));
   const used = $derived(agents.filter((a) => uses.get(a.id)?.length));
   const commandLine = $derived(agents.filter((a) => !a.name && !uses.get(a.id)?.length));
   const yours = $derived(agents.filter((a) => a.name && !uses.get(a.id)?.length));
@@ -117,9 +113,9 @@
             </ul>
           {/if}
           {#if used.length}
-            <h2 class="section-label px-2.5 pt-4 pb-1.5">For Handler and your apps</h2>
+            <h2 class="section-label px-2.5 pt-4 pb-1.5">For Handler</h2>
             <ul class="space-y-0.5" data-testid="outside-used">
-              {#each used as a (a.id)}{@render pick(a, (uses.get(a.id) ?? []).map((r) => r.label).join(", "))}{/each}
+              {#each used as a (a.id)}{@render pick(a, (uses.get(a.id) ?? []).join(", "))}{/each}
             </ul>
           {/if}
           {#if commandLine.length}
@@ -145,9 +141,9 @@
         {#if agent}
           <AgentWorkspace {agent} {list} {automations} edit={href({ view: "edit-ad-hoc", id: agent.id })}>
             {#snippet tags()}
-              {#each uses.get(agent.id) ?? [] as r (r.label)}
+              {#each uses.get(agent.id) ?? [] as r (r)}
                 <span class="inline-flex items-center gap-1 rounded-[5px] bg-muted px-1.5 py-px text-xs font-medium text-muted-foreground" data-testid="agent-role"
-                  >{#if r.app}<AppWindow class="size-3" />{:else}<Sparkles class="size-3" />{/if}{r.label}</span
+                  ><Sparkles class="size-3" />{r}</span
                 >
               {/each}
             {/snippet}

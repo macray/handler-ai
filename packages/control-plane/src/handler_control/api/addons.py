@@ -3,7 +3,6 @@ sources.py (D.26), listing addons in catalog.py (G.1), rebuilding their images i
 (G.4)."""
 
 import asyncio
-import contextlib
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
@@ -17,7 +16,7 @@ from handler_harness import addons as addon_catalog
 
 from .. import addon_folders, addon_install, bindings, toolbox
 from ..agents import addons_in_use
-from ..builds import ADDON_PREFIX, BuildBusyError
+from ..builds import ADDON_PREFIX
 from ..settings import Settings
 from .catalog import addon_info
 from .common import Context, ProblemError, dump, log, parse_body
@@ -60,10 +59,7 @@ def add_addon_install_routes(app: FastAPI, ctx: Context) -> None:
         if installed.adds:
             build = apply_adds(ctx, installed.adds, [name] if image else [])
         elif image is not None and not await asyncio.to_thread(needs_lacking, settings, name):
-            # another build running: built later (Settings → Sandboxes,
-            # `handler image rebuild addon:<name>`)
-            with contextlib.suppress(BuildBusyError):
-                build = ctx.builds.start(f"{ADDON_PREFIX}{name}")
+            build = ctx.builds.start_soon(f"{ADDON_PREFIX}{name}")  # None: after the running one
         elif image is not None:  # built once the toolbox gives what it needs
             ctx.builds.waiting.add(name)
         info = await asyncio.to_thread(addon_info, settings, ctx.builds, name)

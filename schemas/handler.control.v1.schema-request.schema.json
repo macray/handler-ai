@@ -1,0 +1,23 @@
+{
+  "$id": "urn:handler.control/v1/schema-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A schema into the Library (D.29), as its file's text. One with that `$id` already there\nand different is refused (409) unless `replace`; the same is kept as it is.",
+  "properties": {
+    "content": {
+      "maxLength": 262144,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "replace": {
+      "default": false,
+      "title": "Replace",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "SchemaRequest",
+  "type": "object"
+}

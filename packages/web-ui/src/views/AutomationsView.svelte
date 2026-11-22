@@ -3,8 +3,9 @@
   // folder of ~/.config/handler-ai/automations. Yours: filtered by what they run (one of your
   // agents, an app's route, your script), a row each (AutomationRow: when → what it runs → where
   // → its last result, its switch), Pause all (each one off; on again from its page, the
-  // approval) and New automation. Get more: the examples Handler ships, a script copied to your
+  // approval) and New automation. Community: the examples Handler ships, a script copied to your
   // folder, off, from a dialog.
+  import { ask } from "../lib/ask.svelte";
   import FileCode from "@lucide/svelte/icons/file-code";
   import Plus from "@lucide/svelte/icons/plus";
   import { Button } from "$lib/components/ui/button";
@@ -14,15 +15,16 @@
   import Dialog from "../components/Dialog.svelte";
   import LoadingCards from "../components/LoadingCards.svelte";
   import ShelfBar from "../components/ShelfBar.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import { runsKind, type RunsKind } from "../lib/automations";
   import type { Agent, AutomationExample, AutomationView } from "../lib/contracts.gen";
   import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
-  import { LIBRARY_WIDTH } from "../lib/library";
+  import { LIBRARY_WIDTH, type ShelfLists } from "../lib/library";
   import { agentLabel, projects } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
 
-  let { more = false }: { more?: boolean } = $props();
+  let { more = false, lists }: { more?: boolean; lists?: ShelfLists } = $props();
 
   let automations = $state<AutomationView[] | null>(null);
   let examples = $state<AutomationExample[]>([]);
@@ -44,8 +46,9 @@
 
   $effect(() => {
     void load();
-    const timer = setInterval(load, 5000); // runs start when sessions stop, at their times
-    return () => clearInterval(timer);
+    const stop = onChange(["automations"], () => void load()); // its runs, its state
+    const timer = setInterval(load, 5000); // its files: edited in your editor too, not handlerd's to tell
+    return () => (stop(), clearInterval(timer));
   });
 
   const shown = $derived((automations ?? []).filter((a) => only === "all" || runsKind(a.definition) === only));
@@ -69,7 +72,8 @@
   }
 
   async function pauseAll(): Promise<void> {
-    if (!confirm(`Turn off ${on.length === 1 ? "the automation that is on" : `the ${on.length} automations that are on`}? Each one is turned on again from its page.`)) return;
+    const title = `Turn off ${on.length === 1 ? "the automation that is on" : `the ${on.length} automations that are on`}?`;
+    if (!(await ask({ title, detail: "Each one is turned on again from its page.", yes: "Turn off" }))) return;
     pausing = true;
     error = null;
     try {
@@ -109,7 +113,7 @@
 
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full {LIBRARY_WIDTH} space-y-5 px-8 py-6">
-    <ShelfBar>
+    <ShelfBar {lists}>
       {#snippet filters()}
         {#if !more && automations?.length}
           <div class="inline-flex rounded-lg bg-muted p-0.5" role="radiogroup" aria-label="what they run">

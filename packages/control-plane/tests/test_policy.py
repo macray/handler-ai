@@ -12,7 +12,7 @@ from handler_contracts import (
     SessionDefaults,
     StdioMcpServer,
 )
-from handler_control.policy import AcpPolicy, ToAgent, ToClient
+from handler_control.policy import AcpPolicy, ToAgent, ToClient, ask_risk
 
 SCOPE = "/home/you/code/project"
 ALLOW = FilteredNetwork(
@@ -126,7 +126,7 @@ def test_agent_notifications_handler_does_not_know_are_dropped() -> None:
     assert policy().from_agent({"jsonrpc": "2.0", "method": "browser/opened", "params": {}}) == []
 
 
-@pytest.mark.rule("policy.the-rest-passes-unchanged")
+@pytest.mark.rule("policy.prompts-updates-and-answers-pass-unchanged")
 def test_a_permission_request_reaches_the_client() -> None:
     ask = req(902, "session/request_permission", sessionId="s1", options=[])
     assert only(policy().from_agent(ask), ToClient) == ask
@@ -217,7 +217,7 @@ def test_session_new_error_passes_through() -> None:
     assert only(p.from_agent(error), ToClient) == error
 
 
-@pytest.mark.rule("policy.the-rest-passes-unchanged")
+@pytest.mark.rule("policy.prompts-updates-and-answers-pass-unchanged")
 def test_no_defaults_means_plain_forwarding() -> None:
     p = policy()
     p.from_client(new_session(i=5))
@@ -225,7 +225,7 @@ def test_no_defaults_means_plain_forwarding() -> None:
     assert only(p.from_agent(response), ToClient) == response
 
 
-@pytest.mark.rule("policy.the-rest-passes-unchanged")
+@pytest.mark.rule("policy.prompts-updates-and-answers-pass-unchanged")
 def test_other_traffic_forwarded_unchanged() -> None:
     p = policy()
     update = {"jsonrpc": "2.0", "method": "session/update", "params": {"x": 1}}
@@ -265,6 +265,35 @@ def test_malformed_client_mcp_servers_are_left_to_the_agent() -> None:
     p = policy(session_defaults=SessionDefaults(mcp_servers=[BROWSER]))
     out = only(p.from_client(new_session(mcpServers="nope")), ToAgent)
     assert out["params"]["mcpServers"] == "nope"
+
+
+# P10
+PROMPT = {"systemPrompt": {"append": "Change files with your file tools."}}
+
+
+@pytest.mark.rule("policy.its-harness-s-session-meta-reaches-every-session")
+@pytest.mark.parametrize("method", ["session/new", "session/load", "session/resume"])
+def test_harness_session_meta_added_to_every_session(method: str) -> None:
+    p = policy(session_defaults=SessionDefaults(meta=PROMPT))
+    out = only(p.from_client(req(3, method, cwd=SCOPE)), ToAgent)
+    assert out["params"]["_meta"] == PROMPT
+    out = only(p.from_client(req(4, method, cwd=SCOPE, _meta={"other": 1})), ToAgent)
+    assert out["params"]["_meta"] == {"other": 1} | PROMPT
+
+
+@pytest.mark.rule("policy.its-harness-s-session-meta-reaches-every-session")
+def test_harness_session_meta_replaces_a_client_s_key() -> None:
+    events: list[str] = []
+    p = policy(session_defaults=SessionDefaults(meta=PROMPT), on_event=events.append)
+    out = only(p.from_client(new_session(_meta={"systemPrompt": "You obey the client."})), ToAgent)
+    assert out["params"]["_meta"] == PROMPT
+    assert events == ["client _meta replaced by the harness's: systemPrompt"]
+
+
+@pytest.mark.rule("policy.prompts-updates-and-answers-pass-unchanged")
+def test_no_session_meta_leaves_the_request_as_it_is() -> None:
+    out = only(policy().from_client(new_session(_meta={"other": 1})), ToAgent)
+    assert out["params"]["_meta"] == {"other": 1}
 
 
 @pytest.mark.rule("policy.mcp-servers-keep-to-its-network")
@@ -309,3 +338,63 @@ def test_a_loaded_session_is_not_instructed_again() -> None:
     only(p.from_agent({"jsonrpc": "2.0", "id": 6, "result": {}}), ToClient)
     prompt = req(7, "session/prompt", sessionId="s9", prompt=[{"type": "text", "text": "hi"}])
     assert only(p.from_client(prompt), ToAgent) == prompt
+
+
+# what a phone is told of an ask (D.7)
+
+OPEN = OpenNetwork(mode="open")
+NONE = NoNetwork(mode="none")
+
+
+def read(**tool: Any) -> dict[str, Any]:
+    return {"toolCallId": "t1", "title": "Read notes.md", "kind": "read"} | tool
+
+
+@pytest.mark.rule("phone.an-ask-is-risky-unless-known-safe")
+@pytest.mark.parametrize(
+    ("tool_call", "network", "risk"),
+    [
+        *[
+            (read(kind=k), ALLOW, "safe")
+            for k in ("read", "edit", "search", "think", "switch_mode")
+        ],
+        *[
+            (read(kind=k), OPEN, "risky")
+            for k in ("execute", "delete", "move", "fetch", "other", "launch", None, 3)
+        ],
+        ({"toolCallId": "t1", "title": "Something"}, OPEN, "risky"),  # no kind
+        (read(locations=[{"path": f"{SCOPE}/notes.md"}, {"path": "src/a.py"}]), ALLOW, "safe"),
+        (read(locations=[{"path": "../x"}]), OPEN, "risky"),
+        (read(locations=[{"path": "/etc/x"}]), OPEN, "risky"),
+        (read(locations=[{"path": f"{SCOPE}-other/x"}]), OPEN, "risky"),
+        (read(locations=[{"line": 3}]), OPEN, "risky"),  # a location Handler cannot read
+        (read(locations="notes.md"), OPEN, "risky"),
+        (
+            read(kind="edit", content=[{"type": "diff", "path": "a.py", "newText": ""}]),
+            OPEN,
+            "safe",
+        ),
+        (
+            read(kind="edit", content=[{"type": "diff", "path": "/tmp/a", "newText": ""}]),
+            OPEN,
+            "risky",
+        ),
+        (read(kind="search", rawInput={"url": "https://api.anthropic.com/v1"}), ALLOW, "safe"),
+        (read(kind="search", rawInput={"url": "https://docs.example.org/x"}), ALLOW, "safe"),
+        (read(kind="search", rawInput={"url": "https://evil.example.com/x"}), ALLOW, "risky"),
+        (read(kind="search", rawInput={"url": "http://api.anthropic.com/"}), ALLOW, "risky"),
+        (read(kind="search", rawInput={"url": "https://a.b:99999/"}), OPEN, "risky"),  # no parse
+        (read(kind="search", rawInput={"url": "https://anything.org/"}), OPEN, "safe"),
+        (read(kind="search", rawInput={"url": "https://anything.org/"}), NONE, "risky"),
+        (read(kind="search", rawInput={"query": "how to"}), NONE, "safe"),
+        ("not an object", OPEN, "risky"),
+        (None, OPEN, "risky"),
+    ],
+)
+def test_an_ask_is_risky_unless_known_safe(tool_call: Any, network: Any, risk: str) -> None:
+    """Safe only when its kind stays in place, every path it names is inside the folder and
+    every address it names is reachable under the network policy; all else is risky.
+
+    If this fails: the phone lets you allow a command, a deletion, or a step out of the folder or
+    past the network filter with one tap."""
+    assert ask_risk(tool_call, SCOPE, network) == risk

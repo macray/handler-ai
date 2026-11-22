@@ -40,12 +40,14 @@ from handler_contracts import (
     AutomationAgentRun,
     AutomationAppended,
     AutomationCheck,
+    AutomationJobRun,
     AutomationLlmUsage,
     AutomationRun,
     AutomationView,
     SessionInput,
     SessionOutput,
     SessionSubject,
+    StartedByAutomation,
 )
 from handler_harness import catalog, images
 
@@ -63,7 +65,8 @@ from . import (
     service_router,
     transcript,
 )
-from .agents import AgentRecord, AgentRegistry
+from .agents import AgentRecord, AgentRegistry, RunsAs
+from .app_runs import AppRunError
 from .apps import AppError, AppStore
 from .inbox import Inbox, told_result
 from .projects import NamedAgentError, ProjectRegistry
@@ -165,6 +168,8 @@ class Automations:
         self.projects = projects
         self.apps = apps
         self.inbox = inbox
+        # told after each run or state saved (the web UI, D.30)
+        self.watchers: list[Callable[[], None]] = []
         self.queue: dict[tuple[str, str, str], Item] = {}  # in the order queued
         self.stopped: set[str] = set()  # sessions whose stop is to be checked
         self.running: Running | None = None
@@ -239,7 +244,9 @@ class Automations:
         return self.started_today.get((name, now().date().isoformat()), 0) >= DAILY_CAP
 
     def count_start(self, name: str) -> None:
-        key = (name, now().date().isoformat())
+        today = now().date().isoformat()
+        self.started_today = {k: n for k, n in self.started_today.items() if k[1] == today}
+        key = (name, today)
         self.started_today[key] = self.started_today.get(key, 0) + 1
 
     def check(self, session_ids: set[str]) -> list[Item]:
@@ -288,14 +295,14 @@ class Automations:
         """The session is one `only` names: its agent, its agent's project, by what their names
         were bound to (I.1)."""
         agents, projects, _ = self.watched(loaded)
-        agent = self.registry.get(rec.agent_id)
+        agent = self.registry.get(rec.agent_id) if rec.agent_id else None
         return (agents is None or rec.agent_id in agents) and (
             projects is None or (agent is not None and agent.project_id in projects)
         )
 
     def names(self, rec: SessionRecord) -> tuple[str | None, str | None]:
         """The session's agent's name and its project's, now."""
-        agent = self.registry.get(rec.agent_id)
+        agent = self.registry.get(rec.agent_id) if rec.agent_id else None
         if agent is None:
             return None, None
         project = self.projects.get(agent.project_id) if agent.project_id else None
@@ -311,6 +318,8 @@ class Automations:
             state = config.read_state(self.settings.state_dir, name)
             change(state)
             config.write_state(self.settings.state_dir, name, state)
+            for watcher in self.watchers:
+                watcher()
             return state
 
     def named_agent(self, run: AutomationAgentRun) -> AgentRecord:
@@ -356,8 +365,8 @@ class Automations:
         if only is None:
             return None, None, []
         state = config.read_state(self.settings.state_dir, loaded.name) if loaded.name else None
-        kept_agents = {n: v for n, v in (state.only_agents if state else {}).items()}
-        kept_projects = {n: v for n, v in (state.only_projects if state else {}).items()}
+        kept_agents = dict(state.only_agents) if state else {}  # copies: changed, then compared
+        kept_projects = dict(state.only_projects) if state else {}
         problems: list[str] = []
         agents = (
             None if only.agent is None else self._watched_agents(only.agent, kept_agents, problems)
@@ -432,30 +441,26 @@ class Automations:
             self.agent_input(agent, run)
         except AutomationError as e:
             found.append(str(e))
-        warnings: list[str] = []
         try:
             runs = save_rules.session_model(self.settings, agent, None)
         except save_rules.CheckError as e:
-            return [*found, f"agent {run.agent}'s model: {e}"], warnings
-        if runs.account is not None:
-            assert runs.harness is not None  # an account's harness, resolved
-            login = catalog.get(runs.harness).descriptor.login
-            assert login is not None  # an account's harness has one
-            read = f", read on {login.checked}" if login.checked else ", not read yet"
-            terms = f"{login.subscription} terms ({login.terms}{read})"
-            if login.unattended == "refused":
-                found.append(
-                    f"agent {run.agent} runs on account {runs.account}: unattended use of a "
-                    f"{login.subscription} subscription is refused by handler until it is clearly "
-                    f"allowed by the {terms}; give the agent a provider (an API key) first"
-                )
-            elif login.unattended == "check-terms":
-                warnings.append(
-                    f"Runs on your subscription (account {runs.account}). Check your "
-                    f"{login.subscription} subscription's terms: automated or unattended use may "
-                    f"not be allowed ({login.terms}). An API key (a provider) is recommended."
-                )
-        return found, warnings
+            return [*found, f"agent {run.agent}'s model: {e}"], []
+        refused, warnings = terms(runs, f"agent {run.agent}", "give the agent a provider")
+        return found + refused, warnings
+
+    def job_problems(self, run: AutomationJobRun) -> tuple[list[str], list[str]]:
+        """(problems, warnings) of a job's run (I.1): the app and its job, who runs it (rule
+        app-job.runs-as-its-who-works) and its subscription's terms (I.7: the job's Who works,
+        rule automation.unattended-only-where-the-terms-allow), its input."""
+        if found := self.apps.job_problems(run.app, run.job):
+            return found, []
+        job = self.apps.declared_jobs(run.app)[run.job]
+        if job.fields is not None and (bad := interfaces.errors(job.fields, run.input.fields)):
+            found.append(f"run.input: {'; '.join(bad)}")
+        runs = self.apps.job_runs_as(run.app, run.job)
+        what = f"job {run.job} of {run.app}"
+        refused, warnings = terms(runs, what, f"choose an API key for who works on {run.app}")
+        return found + refused, warnings
 
     def agent_input(
         self, agent: AgentRecord, run: AutomationAgentRun
@@ -483,6 +488,9 @@ class Automations:
         definition, warnings = loaded.definition, []
         if definition is not None and (run := definition.agent_run) is not None:
             more, warnings = self.agent_problems(loaded, run, pinned)
+            found += more
+        if definition is not None and (job := definition.job_run) is not None:
+            more, warnings = self.job_problems(job)
             found += more
         call = definition.app_call if definition is not None else None
         if call is not None and call.app not in self.apps.records:
@@ -550,6 +558,20 @@ class Automations:
                 )
             opens = f", which opens the app {definition.app}" if definition.app else ""
             found.append(f"Sends its result to your inbox{opens}.")
+        elif (job := definition.job_run) is not None:
+            found.append(
+                f"Runs the job {job.job} of the app {job.app} unattended, without asking you."
+            )
+            with contextlib.suppress(AppError, AppRunError, KeyError):
+                declared = self.apps.declared_jobs(job.app)[job.job]
+                runs = self.apps.job_runs_as(job.app, job.job)
+                reach = [f"{n} ({a})" for n, a in declared.files.items()]
+                model = " · ".join(
+                    x for x in (runs.harness, runs.account or runs.provider, runs.model) if x
+                )
+                where = f"the folders {', '.join(reach)}" if reach else "no folder of yours"
+                found.append(f"It reaches {where}, as the app declares, on {model}.")
+            found.append(f"Sends its result to your inbox, which opens the app {job.app}.")
         elif (call := definition.app_call) is not None:
             found.append(f"Calls {call.call} of the app {call.app}, as you.")
             found.append("Tells your inbox when a call fails.")
@@ -772,6 +794,8 @@ class Automations:
         tmp = folder / "run.json.tmp"
         tmp.write_text(record.model_dump_json(by_alias=True, exclude_none=True, indent=2))
         tmp.replace(folder / "run.json")
+        for watcher in self.watchers:
+            watcher()
 
     def try_run(self, name: str, session_id: str | None) -> AutomationRun:
         """I.8: now, on or off; on a stop's whole log; appends nothing."""
@@ -904,6 +928,8 @@ class Automations:
         assert definition is not None
         if (run := definition.agent_run) is not None:
             await self.execute_agent(loaded, run, running)
+        elif (job := definition.job_run) is not None:
+            await self.execute_job(loaded, job, running)
         elif (call := definition.app_call) is not None:
             loop = asyncio.get_running_loop()
             started = loop.time()
@@ -926,8 +952,7 @@ class Automations:
         self, loaded: config.Loaded, run: AutomationAgentRun, running: Running
     ) -> None:
         """A run of the agent (D.18), watched until its session stops; its result → the inbox."""
-        loop = asyncio.get_running_loop()
-        started = loop.time()
+        started = asyncio.get_running_loop().time()
         try:
             agent = self.find_agent(loaded, run)
             given, subject = self.agent_input(agent, run)
@@ -939,15 +964,41 @@ class Automations:
             self.end(running.record, "cancelled")
             return
         session = self.sessions.create(agent, runs, origin="automation", run=given, subject=subject)
-        running.record = running.record.model_copy(update={"agent_session_id": session.id})
+        await self.watch_run(session.id, agent, running, started)
+
+    async def execute_job(
+        self, loaded: config.Loaded, run: AutomationJobRun, running: Running
+    ) -> None:
+        """A run of an app's job (H.11), by its Who works, watched until its session stops; its
+        result → the inbox (the automation's message, not the app's)."""
+        started = asyncio.get_running_loop().time()
+        if running.cancelled:
+            self.end(running.record, "cancelled")
+            return
+        try:
+            by = StartedByAutomation(automation=loaded.name)
+            app_run = self.apps.job_run(run.app, run.job, run.input.fields, by)
+        except (AppError, AppRunError) as e:
+            self.end(running.record, "failed", error=f"app {run.app}: {e}")
+            return
+        job = self.sessions.jobs[app_run.session_id]
+        await self.watch_run(app_run.session_id, job.agent, running, started)
+
+    async def watch_run(
+        self, session_id: str, agent: AgentRecord, running: Running, started: float
+    ) -> None:
+        """A run's session watched until it stops: its result, or why it has none (D.18), the
+        hosts its filter refused that `agent` neither allows nor keeps blocked."""
+        loop = asyncio.get_running_loop()
+        running.record = running.record.model_copy(update={"agent_session_id": session_id})
         self.write_record(running.record)
         while True:
             await asyncio.sleep(SESSION_POLL)
-            rec = self.sessions.records.get(session.id)
+            rec = self.sessions.records.get(session_id)
             if rec is None:
                 self.end(running.record, "failed", error="its session was deleted")
                 return
-            busy = session.id in self.sessions.live or session.id in self.sessions.starting
+            busy = session_id in self.sessions.live or session_id in self.sessions.starting
             if rec.state in ("stopped", "failed") and not busy:
                 break
         output = SessionOutput.model_validate(rec.output) if rec.output else None
@@ -955,7 +1006,7 @@ class Automations:
         value: dict[str, Any] = output.value if output is not None and valid else {}
         # hosts its filter refused, neither allowed nor kept blocked (rule
         # automation.a-refused-host-is-reported): said in Handler's words, not the agent's guess
-        hosts = refusals.refused(self.sessions.event_log(session.id), agent)
+        hosts = refusals.refused(self.sessions.event_log(session_id), agent)
         said = refusals.said_about(hosts, rec.answer, value.get("summary")) if hosts else None
         running.record = running.record.model_copy(
             update={"ms": int((loop.time() - started) * 1000), "refused": hosts, "said": said}
@@ -1108,7 +1159,7 @@ class Automations:
     ) -> None:
         """A stop's run folder (I.3, I.4): its input is the session's part read."""
         given = self.copy_definition(loaded, record) / "input"
-        agent = self.registry.get(rec.agent_id)
+        agent = self.registry.get(rec.agent_id) if rec.agent_id else None
         agent_name, project_name = self.names(rec)
         stops = [e for e in events if e.get("kind") == "lifecycle" and e.get("event") == "stopped"]
         event = {
@@ -1142,7 +1193,10 @@ class Automations:
             ("Confinement", str(settings.get("confinement"))),
             ("Permissions", str(settings.get("permissions"))),
             ("Addons", ", ".join(u["addon"] for u in settings.get("addons") or []) or "none"),
-            ("Knowledge", ", ".join(settings.get("knowledge") or []) or "none"),
+            (
+                "Knowledge",
+                ", ".join(_notes_use(u) for u in settings.get("knowledge") or []) or "none",
+            ),
             ("Events", f"{record.seq_from} to {record.seq_to}"),
         ]
         files = {
@@ -1230,6 +1284,7 @@ class Automations:
         title = record.automation + (" (try)" if record.trial else "")
         definition = loaded.definition if loaded else None
         call = definition.app_call if definition else None
+        job = definition.job_run if definition else None
         agent = None
         if loaded is not None and run is not None:
             with contextlib.suppress(AutomationError):
@@ -1241,7 +1296,7 @@ class Automations:
             "agent_id": agent.id if agent else None,
             "refused": record.refused,
             "said": record.said,
-            "app": call.app if call else definition.app if definition else None,
+            "app": call.app if call else job.app if job else definition.app if definition else None,
             "person": "owner",
             "title": title,
             "run_id": record.id,
@@ -1256,7 +1311,7 @@ class Automations:
             self.inbox.add(**fields, **told)
         elif result is not None:
             self.inbox.add(**fields, **told_result(result))
-        elif record.state == "failed" and (run is not None or not record.trial):
+        elif record.state == "failed" and (run or job or not record.trial):
             self.inbox.add(**fields, status="failed", summary=record.error)
 
     def prune(self, name: str) -> None:
@@ -1296,3 +1351,34 @@ async def copy_log(proc: Any, path: Path, redact: Callable[[str], str]) -> None:
                 if written >= MAX_LOG:
                     f.write("\n… the log is cut at 1 MiB\n")
             f.flush()
+
+
+def _notes_use(use: dict[str, str]) -> str:
+    """A notes folder an agent gets, for a person: `me`, `contacts (read-write)`."""
+    return use["folder"] + (" (read-write)" if use.get("access") == "write" else "")
+
+
+def terms(runs: RunsAs, what: str, instead: str) -> tuple[list[str], list[str]]:
+    """(problems, warnings) of running `what` unattended on that model (I.7): an account whose
+    harness's login refuses unattended use is refused (`instead`: what to do), one whose terms
+    are to check is warned of (rule automation.unattended-only-where-the-terms-allow)."""
+    if runs.account is None:
+        return [], []
+    assert runs.harness is not None  # an account's harness, resolved
+    login = catalog.get(runs.harness).descriptor.login
+    assert login is not None  # an account's harness has one
+    read = f", read on {login.checked}" if login.checked else ", not read yet"
+    terms = f"{login.subscription} terms ({login.terms}{read})"
+    if login.unattended == "refused":
+        return [
+            f"{what} runs on account {runs.account}: unattended use of a "
+            f"{login.subscription} subscription is refused by handler until it is clearly "
+            f"allowed by the {terms}; {instead} (an API key) first"
+        ], []
+    if login.unattended == "check-terms":
+        return [], [
+            f"Runs on your subscription (account {runs.account}). Check your "
+            f"{login.subscription} subscription's terms: automated or unattended use may "
+            f"not be allowed ({login.terms}). An API key (a provider) is recommended."
+        ]
+    return [], []

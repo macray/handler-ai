@@ -6,7 +6,8 @@ Self-contained (the image has mitmproxy, not handler). In /cfg:
 - `egress.json` (`{"allow": [...], "blocked": [...], "enforcement": "enforce"|"log-only"|"open",
   "watched": "<turn>"|null, "version": n}`): read again whenever it changes (`set-egress`,
   `set-allow`, `set-blocked`, `set-watched`), looked at every SETTINGS_POLL; `blocked`, the hosts
-  the user kept blocked, only changes what a refusal says; `watched`, the turn someone watches
+  the user kept blocked: refused even when an `allow` entry covers them (in log-only, let through
+  as unlisted), their refusal saying it is the user's choice; `watched`, the turn someone watches
   the session in (null: nobody does): then the first request to a host neither allowed nor kept
   blocked is held up to HOLD seconds for the person's answer, once per host and turn (`held`
   event), and goes through only if the host becomes allowed meanwhile;
@@ -80,9 +81,10 @@ def listed(target: str, allow: list[str]) -> bool:
     return any(entry_pattern(e).fullmatch(target.lower()) for e in allow)
 
 
-def decide(target: str, allow: list[str], enforcement: str) -> str:
-    """'allowed', 'denied', or 'unlisted' (log only: let through, but enforcing would deny it)."""
-    if listed(target, allow):
+def decide(target: str, allow: list[str], blocked: list[str], enforcement: str) -> str:
+    """'allowed', 'denied', or 'unlisted' (log only: let through, but enforcing would deny it). A
+    host the user keeps blocked is never allowed, whatever entry of `allow` covers it."""
+    if listed(target, allow) and not listed(target, blocked):
         return "allowed"
     return "unlisted" if enforcement == "log-only" else "denied"
 
@@ -252,7 +254,7 @@ class Egress:
         allow, enforcement = self.settings()
         if enforcement == "open":
             return True
-        decision = decide(target, allow, enforcement)
+        decision = decide(target, allow, self._blocked, enforcement)
         self.event(decision=decision, host=target)
         return decision != "denied"
 
@@ -315,6 +317,7 @@ class Egress:
     # ── mitmproxy hooks ─────────────────────────────────────────────────
 
     def load(self, loader: Any) -> None:
+        answer_half_closed_requests()
         self.load_secrets()
 
     async def running(self) -> None:
@@ -343,10 +346,18 @@ class Egress:
     async def requestheaders(self, flow: Any) -> None:
         """A plain http:// request is judged here: its target is its host and port (mitmproxy has
         already made its first line relative in regular mode). One inside a TLS tunnel was judged
-        with the tunnel (`http_connect`)."""
+        with the tunnel (`http_connect`).
+
+        Its body is passed on as it comes when the filter has no secrets: a large upload would
+        take the filter's memory, as a download did (`responseheaders`). With secrets, it is held
+        whole, for `request` to look for their phantoms in it, on every host (the leak check): a
+        large upload from a sandbox with secrets still takes the filter's memory. A streamed
+        body is never looked into: there is no phantom to find."""
         target = _target(flow)
         if not flow.client_conn.tls and not await self.admit(target):
             _refuse(flow, self.refusal(target))
+        elif not self.injections:
+            flow.request.stream = True
         elif self.secret_host(target):
             flow.request.headers.pop("accept-encoding", None)  # bodies the masker can read
 
@@ -446,6 +457,37 @@ def _refuse(flow: Any, refused: Refusal) -> None:
 
     flow.response = http.Response.make(403, refused.body, {"Content-Type": "text/plain"})
     flow.response.reason = refused.reason
+
+
+def answer_half_closed_requests() -> None:
+    """A client that closes its sending side as soon as its plain http:// request is sent
+    (`shutdown(SHUT_WR)`: `nc -N`, some scripts) still gets the answer, then the connection
+    closed. mitmproxy (12.2.3, the image's) takes that half close, while the request is under
+    way, as the client leaving, and drops the request: the client got nothing. Its HTTP/1 client
+    side (`Http1Server`) is changed here: in `wait` (a request read, its answer not sent yet),
+    the half close is kept; once the answer is sent (`mark_done`), the connection is closed
+    instead of waiting for a next request that cannot come."""
+    # mitmproxy is only in the proxy image: handler's tests import the rest of this file
+    from mitmproxy.proxy.layers.http import _http1  # noqa: PLC0415  # ty: ignore[unresolved-import]
+
+    server = _http1.Http1Server  # the client's side of a connection
+    wait, mark_done = server.wait, server.mark_done
+
+    def wait_half_closed(self: Any, event: Any) -> Any:
+        closed = isinstance(event, _http1.events.ConnectionClosed)
+        if closed and event.connection.state & _http1.ConnectionState.CAN_WRITE:
+            self.half_closed = True  # it can still be answered
+            return
+        yield from wait(self, event)
+
+    def mark_done_half_closed(self: Any, **done: bool) -> Any:
+        yield from mark_done(self, **done)
+        if getattr(self, "half_closed", False) and self.state == self.read_headers:
+            yield _http1.commands.CloseConnection(self.conn)
+            self.state = self.done
+
+    server.wait = wait_half_closed
+    server.mark_done = mark_done_half_closed
 
 
 addons = [Egress()]

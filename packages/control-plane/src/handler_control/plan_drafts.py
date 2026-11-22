@@ -30,12 +30,11 @@ from . import session_files
 from .agents import AgentRecord
 from .files import write_private
 from .launcher import plan_drafts_root
-from .plans import TITLE, Source
+from .plans import MAX_BYTES, TITLE, Source
 from .projects import ProjectRegistry
 from .settings import Settings
 
 TEXT = "plan.md"
-MAX_BYTES = 256 * 1024  # as a plan file's
 
 
 class DraftError(Exception):
@@ -54,7 +53,7 @@ def builder_problems(agent: AgentRecord) -> list[str]:
     but its model's), and a network reaching only its model's sites: filtered, enforced, no host
     of its own (or none)."""
     name = agent.name or agent.id
-    if agent.app is not None or agent.chat:
+    if agent.chat:
         return [f"{name} is not one of Handler's helpers"]
     if agent.model_alone:
         return [f"{name} is the model alone: a plan builder reads the project, in a sandbox"]

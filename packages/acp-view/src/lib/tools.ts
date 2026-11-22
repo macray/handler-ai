@@ -151,3 +151,26 @@ export function turnSummary(entries: Entry[], ms?: number): string | null {
 export function askedAtStep(entries: Entry[], toolCallId: string): boolean {
   return entries.some((e) => e.kind === "tool" && e.id === toolCallId);
 }
+
+/** A permission's answers: Reject and Allow side by side, equal (the harness's own options
+ *  answering this time only, else the first of each side), then any others (remembered ones, a
+ *  plan's other ways to start) in the harness's order. */
+export function permissionAnswers<O extends { kind: string }>(options: O[]): { pair: O[]; more: O[] } {
+  const pick = (side: string) => options.find((o) => o.kind === `${side}_once`) ?? options.find((o) => o.kind.startsWith(side));
+  const pair = [pick("reject"), pick("allow")].filter((o): o is O => o !== undefined);
+  return { pair, more: options.filter((o) => !pair.includes(o)) };
+}
+
+/** Why the agent asks, in its own words, when the harness gives them (Claude Code: a command's
+ *  `description`); null otherwise, or when it only says the title again. */
+export function permissionWhy(tool: { title?: string | null; rawInput?: unknown }): string | null {
+  const raw = tool.rawInput;
+  const why = raw && typeof raw === "object" && "description" in raw ? (raw as { description: unknown }).description : null;
+  return typeof why === "string" && why.trim() && why.trim() !== tool.title?.trim() ? why.trim() : null;
+}
+
+/** A folder with `~` for the home (/home/<you>, /Users/<you>), else as it is ("~/code/blog");
+ *  the whole path goes in its tooltip (the web UI's homePath, which acp-view cannot import). */
+export function homeFolder(path: string): string {
+  return path.replace(/\/+$/, "").replace(/^\/(home|Users)\/[^/]+(?=\/|$)/, "~") || path;
+}

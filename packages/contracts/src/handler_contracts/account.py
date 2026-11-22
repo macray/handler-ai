@@ -1,5 +1,5 @@
 """Contract E — Account (`handler.account/v1`): a subscription a harness logs in with (Claude Pro, a
-ChatGPT plan). One file per account in `~/.config/handler-ai/accounts/<name>.toml`, written
+ChatGPT subscription). One file per account in `~/.config/handler-ai/accounts/<name>.toml`, written
 through the Control API (D.9) or by hand. Its login (its harness's `[login]`, contract B): a token
 login's `token` is a reference to the token the person gave (handler's secret store, or where they
 keep it); a file login's credential file is kept by handler, not in this file."""
@@ -18,9 +18,9 @@ class Account(StrictDocument):
     api_version: Literal["handler.account/v1"]
     harness: Annotated[str, Field(min_length=1)]
     description: str | None = None
-    # its subscription's plan, one of its harness's `login.plans` (e.g. "pro"): told to the
-    # harness, which cannot learn it from a token login
-    plan: Annotated[str, Field(min_length=1)] | None = None
+    # which subscription it is, one of its harness's `login.subscriptions` (e.g. "pro"): told to
+    # the harness, which cannot learn it from a token login
+    subscription: Annotated[str, Field(min_length=1)] | None = None
     # its harness may use the account's own connectors (claude.ai MCP servers), where it has
     # some (B.1 accountConnectors): they reach whatever the account connected
     connectors: bool = False

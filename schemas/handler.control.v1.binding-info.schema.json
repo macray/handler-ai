@@ -1,6 +1,45 @@
 {
   "$id": "urn:handler.control/v1/binding-info",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "BindingCheck": {
+      "description": "A connection's check (G.2, D.15): its tool's `connectionCheck`, run as an agent of it gets\nthe tool. Kept while handlerd runs, forgotten when the connection is saved again.",
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "output": {
+          "default": "",
+          "title": "Output",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "ok",
+        "at"
+      ],
+      "title": "BindingCheck",
+      "type": "object"
+    }
+  },
   "description": "A binding (G.2): never its secret references' targets, only the slot names.",
   "properties": {
     "name": {
@@ -74,6 +113,17 @@
       },
       "title": "Usedby",
       "type": "array"
+    },
+    "checked": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BindingCheck"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

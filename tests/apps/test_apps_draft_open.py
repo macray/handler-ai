@@ -12,7 +12,7 @@ from .conftest import AppClient, add_app, api, copy_fixture, requires_app_runtim
 pytestmark = requires_app_runtime
 
 
-@pytest.mark.rule("origin.opened-by-a-one-time-link", "draft.opened-on-copies")
+@pytest.mark.rule("app-origin.opened-by-a-one-time-link", "app-draft.opened-on-copies")
 def test_an_opened_draft_works_on_copies(daemon: Daemon, data_root: Path) -> None:
     assert add_app(daemon, copy_fixture("app", data_root)).status_code == 201
     r = api(daemon, "POST", "/v1/apps/counter/deploy")

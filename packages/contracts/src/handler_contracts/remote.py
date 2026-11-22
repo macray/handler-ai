@@ -6,7 +6,7 @@ Requests are JSON-RPC: each `…Params` model is a method's params, the model na
 result. Notifications from handler carry the model named with them.
 """
 
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -19,14 +19,37 @@ from .control import (
     AssistantRequest,
     DeviceScope,
     InboxMessage,
+    NudgeFill,
+    NudgeFillRequest,
+    NudgeSetting,
     SessionOrigin,
     SpeechRequest,
+    Timestamp,
     Transcription,
 )
 
 REMOTE_API_VERSION = "handler.remote/v1"
 
+SUMMARY_MAX = 200  # an ask's title, in characters (code points), as a device is shown it
+LAST_MAX = 120  # a session's last step, the same
+
+# ACP's tool call kinds (`ToolKind`): what an ask says it does
+ToolKind = Literal[
+    "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"
+]
+
 # ── what a device is shown ──────────────────────────────────────────────
+
+
+class SessionAsk(Document):
+    """The first permission request a shared session waits on you for (D.7)."""
+
+    tool_call_id: str  # its `toolCall.toolCallId`: a device answers this one only
+    summary: Annotated[str, Field(max_length=SUMMARY_MAX)] | None = None  # its title, one line
+    kind: ToolKind | None = None  # its kind when it is one of ACP's
+    # decided by handlerd (the scope and the network policy are its): `safe` only when it is known
+    # to stay in place, inside the folder and the network policy; anything else `risky`
+    risk: Literal["safe", "risky"]
 
 
 class SharedSession(Document):
@@ -39,11 +62,18 @@ class SharedSession(Document):
     project: str | None = None
     agent: str | None = None  # the agent's name, for an agent of a project
     origin: SessionOrigin
-    harness: str | None  # None: the model alone (D.18)
+    program: str | None  # the agent's program by its product name ("Claude Code"); None: the
+    # model alone (D.18)
     scope: str
     acp_session_id: str | None = None
     busy: bool
     pending_permissions: int
+    # when it came into its state: the ask's arrival while it waits on you, its turn's start
+    # while it works, its last turn's end when idle
+    since: Timestamp
+    # the agent's last step or sentence, one line: paths relative to its folder, secrets redacted
+    last: Annotated[str, Field(max_length=LAST_MAX)] | None = None
+    ask: SessionAsk | None = None  # absent: nothing pending, or a request with no tool call id
 
 
 class RemoteAgent(Document):
@@ -54,6 +84,10 @@ class RemoteAgent(Document):
     name: str
     description: str | None = None
     default: bool  # its project's default agent; in Chat, the one you talked to last
+    # an agent with a form (D.18: a brief, or a job when `job`): its fields' JSON Schema (an
+    # object with no properties when it asks nothing), started with them instead of a request
+    form: dict[str, Any] | None = None
+    job: bool = False  # it runs on its own and gives back a result (shown in Handler)
 
 
 class RemoteProject(Document):
@@ -93,14 +127,26 @@ class AgentList(Document):
 class StartSessionParams(Document):
     """`_handler/remote/start_session` → StartedSession: a new session of a `remoteStart` agent or
     of one you talk to in Chat, `prompt` sent as its first turn, shared with the devices once it
-    runs."""
+    runs. An agent with a form (`RemoteAgent.form`) is started with its `fields` instead, checked
+    as Handler's own start checks them (D.18)."""
 
     agent_id: str
     prompt: Annotated[str, Field(max_length=MAX_REQUEST)] | None = None
+    fields: dict[str, Any] | None = None
 
 
 class StartedSession(Document):
     session: str  # its id: the device attaches once it is listed
+
+
+class StartFailed(Document):
+    """The params of the notification `_handler/remote/start_failed`, to the device that started
+    the session: it did not start, so it is never shared (F.1, F.3)."""
+
+    session: str
+    error: str  # why, as the session says it
+    # its program's image is not built (F.1): prepared from the computer, it starts then
+    missing_image: str | None = None
 
 
 class SharedApps(Document):
@@ -120,6 +166,13 @@ class InboxList(Document):
     """`_handler/remote/inbox` → this: the inbox of the device's person (H.9, I.3)."""
 
     messages: list[InboxMessage]
+
+
+class InboxReadParams(Document):
+    """`_handler/remote/inbox_read` → InboxMessage: one of the device's person's messages marked
+    read, as the computer marks it (H.9, I.3)."""
+
+    id: str
 
 
 class AskParams(AssistantRequest):
@@ -162,6 +215,47 @@ class RemoteActionRun(ActionRun):
     """An action, done or under way (H.12)."""
 
 
+class ActParams(Document):
+    """`_handler/remote/act` → RemoteActionRun: an action done from the owner's device, its form
+    filled; from a nudge (H.17), which it makes done when it succeeds."""
+
+    app: str
+    action: str
+    fields: dict[str, Any] = {}
+    nudge: str | None = None
+
+
+class NudgeParams(Document):
+    """`_handler/remote/nudge_dismiss` → InboxMessage: a nudge of the device's person dismissed
+    (H.17)."""
+
+    id: str
+
+
+class NudgeSettingParams(Document):
+    """`_handler/remote/nudge_setting` → NudgeSettingAnswer: how often an app's nudge alerts the
+    owner (H.17)."""
+
+    app: str
+    nudge: str
+    setting: NudgeSetting
+
+
+class NudgeSettingAnswer(Document):
+    setting: NudgeSetting
+
+
+class NudgeFillParams(NudgeFillRequest):
+    """`_handler/remote/nudge_fill` → RemoteNudgeFill: what the owner said fills the form of the
+    nudge `id` (H.17), never sent."""
+
+    id: str
+
+
+class RemoteNudgeFill(NudgeFill):
+    """The nudge's form as what was said fills it (H.17)."""
+
+
 class PushKey(Document):
     """`_handler/remote/push_key` → this: handler's VAPID public key (H.10)."""
 
@@ -182,10 +276,18 @@ class WebPush(Document):
     keys: PushKeys
 
 
+PushKind = Literal["needs-you", "app-news"]
+"""What a push says it is about (H.10): a shared session needs you, or an app has news."""
+
+PUSH_KINDS: list[PushKind] = ["needs-you", "app-news"]
+
+
 class PushSubscribeParams(Document):
-    """`_handler/remote/push_subscribe` → PushSubscription. No subscription: push off."""
+    """`_handler/remote/push_subscribe` → PushSubscription. No subscription: push off. `kinds`:
+    what this device is pushed for, each a switch on it (both when not said)."""
 
     subscription: WebPush | None = None
+    kinds: list[PushKind] = Field(default_factory=lambda: list(PUSH_KINDS))
 
 
 class PushSubscription(Document):

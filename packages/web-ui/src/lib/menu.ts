@@ -1,6 +1,7 @@
 // The menu's rules: each pinned project shows one dot for its sessions, the most urgent state
-// winning; what an install's menu shows as it grows; the bell's three states; Pinned reordered
-// by dragging.
+// winning; why a place of the menu is empty; the bell's three states; Pinned reordered by
+// dragging. The menu holds every place from day one (E1): bell, Projects, Running, Chat, Apps,
+// Library, Pinned (once something is pinned), Settings; a place empty for want of a model says so.
 import type { SessionStatus } from "./sessions.svelte";
 
 /** A place's sessions, most urgent first; stopped and failed ones say nothing on the place. */
@@ -22,16 +23,14 @@ export function placeDot(statuses: SessionStatus[]): PlaceDot {
   };
 }
 
-/** What the menu holds beyond the bell, Projects, Pinned and Settings: Chat and Apps once a
- *  model is connected (an account or a provider ready), Library once a project exists. Hidden
- *  is never unreachable: each page still opens by its address. */
-export interface MenuUse {
-  projects: number;
-  modelReady: boolean;
-}
+/** Why a place of the menu (Running, Chat, Apps) has nothing in it: no model connected yet
+ *  (it says "Connect a model first", its Connect over the page), or nothing there yet (the
+ *  page's own empty state: Running's form, Chat's Assistant, Apps' empty launcher). Null while
+ *  the model access is not read yet. */
+export type EmptyFor = "no-model" | "nothing";
 
-export function menuShows(use: MenuUse): { chat: boolean; apps: boolean; library: boolean } {
-  return { chat: use.modelReady, apps: use.modelReady, library: use.projects > 0 };
+export function emptyFor(model: { known: boolean; ready: boolean }): EmptyFor | null {
+  return !model.known ? null : model.ready ? "nothing" : "no-model";
 }
 
 /** The bell: quiet, running (a green dot), or waiting (amber, with the count). */

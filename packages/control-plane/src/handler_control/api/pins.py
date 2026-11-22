@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from handler_contracts import Pin, Pins
 
 from .. import pins
-from .common import Context, ProblemError, dump, parse_body
+from .common import Context, dump, parse_body
 
 
 def add_pin_routes(app: FastAPI, ctx: Context) -> None:
@@ -19,17 +19,13 @@ def add_pin_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.put("/v1/pins", dependencies=authed)
     async def set_pins(request: Request) -> Response:
-        """The whole list: pin, unpin and reorder are one call; refused whole when one pin names
-        nothing, or the same twice."""
+        """The whole list: pin, unpin and reorder are one call. Kept without what names nothing
+        (a project deleted since the list was read, Chat) and each pin once: the list kept is
+        the answer."""
         body = parse_body(Pins, await request.body())
-        if unknown := [p for p in body.items if not exists(ctx, p)]:
-            raise ProblemError(
-                422, "nothing to pin", ", ".join(f"{p.kind} {p.id}" for p in unknown)
-            )
-        if len(set(body.items)) != len(body.items):
-            raise ProblemError(422, "pinned twice", "each project or app is pinned once")
-        pins.save(state, body.items)
-        return dump(body)
+        kept = [p for p in dict.fromkeys(body.items) if exists(ctx, p)]
+        pins.save(state, kept)
+        return dump(Pins(items=kept))
 
 
 def exists(ctx: Context, pin: Pin) -> bool:

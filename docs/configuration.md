@@ -16,6 +16,7 @@ unknown keys are errors, so a typo never goes unnoticed. What each thing is:
 | **Connection** | one set of a tool's settings and secrets, what an agent is given  | `~/.config/handler-ai/connections/<name>.toml` | Library → Tools → its name → Connect, `handler connection` |
 | **Skill** | instructions any agent can be given | `~/.config/handler-ai/skills/<name>/` | Library → Skills |
 | **Notes root** | where your [notes folders](notes.md) are | `~/.config/handler-ai/notes.toml` | Library → Notes |
+| **Schema** | one kind of document agents keep in your notes, found by its `$id` (`contacts@1`) | `~/.config/handler-ai/schemas/<$id>.schema.json` | Library → Schemas, `handler schema` |
 | **Toolbox** | the system every agent works in: Handler's base, the system packages you turn on, your own lines | `~/.config/handler-ai/toolbox/` (`toolbox.toml`, written by Handler; `custom.containerfile`, your lines); your own system packages in `~/.config/handler-ai/system-packages/<name>/` | Settings → Expert → Sandboxes → Under the hood, `handler toolbox` |
 | **Automation** | *when this happens, run that* | `~/.config/handler-ai/automations/<name>/`; on or off, and its runs, in `~/.local/state/handler-ai/automations/` | Library → Automations, `handler automation` ([guide](automations.md)) |
 | **Secrets** | tokens and keys you gave Handler | `~/.local/share/handler-ai/secrets.json` (only you can read it) | Settings → Expert → Secrets, `handler secret` |
@@ -24,12 +25,15 @@ unknown keys are errors, so a typo never goes unnoticed. What each thing is:
 | **Caches** | what toolchains keep between sessions (`~/.cargo`, `~/.npm`, …) | `~/.cache/handler-ai/` (shared) or each project's own | Settings → Expert → Caches (sizes, emptying, each project's choice) |
 
 No sandbox ever sees any of these, except the folders made for it: an agent's own folder, the
-notes folders and skills it is given, read-only.
+notes folders and skills it is given, read-only (a notes folder you give read-write aside).
 
 ## Elsewhere
 
 - The daemon's token (what the CLI and the web UI use to talk to it): `~/.config/handler-ai/token`.
 - Each session's log, replayed when you come back to it: `~/.local/state/handler-ai/sessions/`.
+- What you asked Ask, from anywhere, and how it ended ([Ask's history](ask.md#what-you-asked)):
+  `~/.local/state/handler-ai/asks.json`, the words only. What a voice key could not tell Handler:
+  `~/.local/state/handler-ai/listen.log`.
 - Each folder can be moved with an environment variable of the daemon: `HANDLER_CONFIG_DIR`,
   `HANDLER_STATE_DIR`, `HANDLER_DATA_DIR`, `HANDLER_CACHE_DIR`, `HANDLER_NOTES_DIR`, and within the
   configuration folder `HANDLER_ACCOUNTS_DIR`, `HANDLER_PROVIDERS_DIR`, `HANDLER_TOOLS_DIR`,
@@ -66,40 +70,13 @@ systemctl --user restart handler-ai
   Handler finds none.
 - The folders' variables above.
 
-## Upgrading from 0.2.0
+## Upgrading from 0.3
 
-0.3.0 calls tools, connections and notes by the same names everywhere (0.2.0's *addons*,
-*bindings* and *knowledge*), and Handler does not rename your files for you. Before you start
-0.3.0 for the first time, stop the daemon (`systemctl --user stop handler-ai`; on a Mac,
-`launchctl bootout gui/$(id -u)/ai.handler.handlerd`), update Handler, then, in
-`~/.config/handler-ai/`:
-
-1. **Tools**: rename the folder `addons/` to `tools/`, and in each tool's folder `addon.toml` to
-   `tool.toml`, with `apiVersion = "handler.tool/v1"`. Rename `addons.lock.toml` to
-   `tools.lock.toml`, and its tables `[addons.<name>]` to `[tools.<name>]`. A tool of your own
-   whose `Containerfile` installs into `/opt/addons/<name>` installs into `/opt/tools/<name>` now
-   ([writing one](tools.md#writing-one)).
-2. **Connections**: rename the folder `bindings/` to `connections/`. In each file: `apiVersion =
-   "handler.connection/v1"`, `tool = "…"` instead of `addon = "…"`, and `secret =
-   "connections/…"` instead of `secret = "bindings/…"`.
-3. **Secrets**: in the secret store, `~/.local/share/handler-ai/secrets.json`, the names
-   starting with `bindings/` start with `connections/`.
-4. **Notes**: rename `knowledge.toml` to `notes.toml`. Your notes were in `~/knowledge` (0.2.0's
-   default, with no `knowledge.toml`)? Rename that folder `~/notes`: Handler keeps it as your
-   notes root when it first starts (or, afterwards, Library → Notes → **Change** to its path).
-   Agents now find their notes folders at `/notes/<name>` instead of `/knowledge/<name>`: change
-   any instructions or skills naming the old path.
-5. **Environment variables** you set for the daemon: `HANDLER_ADDONS_DIR` is `HANDLER_TOOLS_DIR`,
-   `HANDLER_BINDINGS_DIR` is `HANDLER_CONNECTIONS_DIR`, `HANDLER_KNOWLEDGE_DIR` is
-   `HANDLER_NOTES_DIR` (then run `handler setup` again, [above](#the-daemons-environment)).
-
-Then `handler setup`, and rebuild each tool that brings a program: `handler image rebuild
-tool:NAME` (its image is named `handler-ai-tool-<name>` now). On the command line, `handler addon`
-is `handler tool`, `handler binding list` is `handler connection list`, `handler knowledge list`
-is `handler notes list`, `--addon NAME=CONFIGURATION` is `--tool NAME=CONNECTION` and
-`--knowledge` is `--notes`.
-
-The rest is done by Handler at its first start: your agents keep their tools and notes folders,
-and the toolbox's `toolbox.toml` is rewritten (Fedora, `podman` and `wl-clipboard` on, the caches
-you had added kept); lines you had added to the toolbox's `Containerfile` go in
-`~/.config/handler-ai/toolbox/custom.containerfile` now, by hand.
+0.4.0 does not read the files of 0.3: it stops at its start on files of an earlier version,
+saying they are not its own. Before you start 0.4.0 for the first time, stop the daemon
+(`systemctl --user stop handler-ai`; on a Mac, `launchctl bootout
+gui/$(id -u)/ai.handler.handlerd`), update Handler, move `~/.config/handler-ai/` and
+`~/.local/state/handler-ai/` aside, then run `handler setup` and set Handler up again. Your
+projects' folders and your notes are not touched; your notes are now in `~/notes` by default:
+if you kept them in `~/.local/share/handler-ai/notes`, move them to `~/notes`, or make that
+folder your notes root (Library → Notes → **Change**).

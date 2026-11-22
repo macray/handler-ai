@@ -13,6 +13,9 @@
       // serves it with a policy that reaches nothing: no fetch, no connection. The client posts the
       // app's page (inlined by handler); the app's backend calls (its api(), through
       // window.__handlerFetch) go back to the client, which carries them to handler, sealed.
+      // The page the app is opened at (its path and query: a nudge's `/log?day=…&nudge=<id>`, else
+      // "/") is window.__handlerPath, set before the app's scripts run: the frame is never
+      // navigated to it.
       (function () {
         var parent = window.parent;
         var pending = new Map();
@@ -49,7 +52,10 @@
               var empty = m.status === 204 || m.status === 205 || m.status === 304;
               p.resolve(new Response(empty ? null : m.body, { status: m.status, headers: m.headers }));
             }
-          } else if (m.type === "handler-app-load") load(m.html);
+          } else if (m.type === "handler-app-load") {
+            window.__handlerPath = typeof m.path === "string" ? m.path : "/";
+            load(m.html);
+          }
         });
 
         // Scripts parsed by DOMParser do not run: each is created again, so it does.

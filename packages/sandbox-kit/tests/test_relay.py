@@ -129,6 +129,7 @@ def relay_host(tmp_path: Path) -> Iterator[Path]:
         server.close()
 
 
+@pytest.mark.rule("sandbox.its-sockets-cross-as-declared")
 def test_the_host_side_joins_a_named_stream_to_its_target(relay_host: Path) -> None:
     """A connection says its target's name on its first line, then carries the stream.
     If this fails: nothing in an Apple container sandbox reaches its filter or handlerd."""
@@ -144,6 +145,7 @@ def test_the_host_side_joins_a_named_stream_to_its_target(relay_host: Path) -> N
         pytest.param(b"x" * (MAX_NAME + 1), id="name-too-long-without-its-end"),
     ],
 )
+@pytest.mark.rule("sandbox.its-sockets-cross-as-declared", "network.none-has-no-route")
 def test_the_host_side_ends_a_stream_it_cannot_serve_at_once(
     relay_host: Path, first_line: bytes
 ) -> None:
@@ -155,6 +157,7 @@ def test_the_host_side_ends_a_stream_it_cannot_serve_at_once(
         assert ended(c)
 
 
+@pytest.mark.rule("sandbox.its-host-sockets-are-the-user-s-only")
 def test_the_host_side_s_socket_is_the_user_s_only(tmp_path: Path) -> None:
     """Apple's runtime connects to it as the host user; nobody else may.
     If this fails: another user of the Mac reaches the sandbox's filter and handlerd's sockets."""
@@ -198,7 +201,9 @@ def test_a_client_of_a_served_socket_takes_a_parked_connection(
         assert client.recv(100) == b"200 ok"
 
 
-@pytest.mark.rule("sandbox.its-sockets-cross-as-declared")
+@pytest.mark.rule(
+    "sandbox.its-sockets-cross-as-declared", "sandbox.its-host-sockets-are-the-user-s-only"
+)
 def test_a_served_socket_is_the_user_s_only_and_goes_with_the_host_side(
     serving: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -280,6 +285,7 @@ def connect(port: int) -> socket.socket:
             time.sleep(0.05)
 
 
+@pytest.mark.rule("sandbox.relayed-streams-are-whole-and-independent")
 def test_a_stream_reaches_its_target_whole_and_ends_as_it_does(relayed: tuple[int, Path]) -> None:
     """1 MiB both ways (as the conformance suite's stdio line), then the end passed on.
     If this fails: large requests through the filter are cut, or connections never end."""
@@ -295,6 +301,7 @@ def test_a_stream_reaches_its_target_whole_and_ends_as_it_does(relayed: tuple[in
     assert bytes(received) == payload
 
 
+@pytest.mark.rule("sandbox.relayed-streams-are-whole-and-independent")
 def test_streams_are_independent(relayed: tuple[int, Path]) -> None:
     """Each connection is a connection of its own to the host.
     If this fails: one slow request (a model's long answer) blocks every other."""
@@ -338,6 +345,7 @@ def test_the_host_reaches_a_socket_the_sandbox_serves(relay_binary: Path, tmp_pa
         server.close()
 
 
+@pytest.mark.rule("sandbox.its-sockets-cross-as-declared")
 def test_a_name_the_host_does_not_serve_ends_at_once(relayed: tuple[int, Path]) -> None:
     """If this fails: a program in the sandbox hangs on a listener whose target is missing."""
     _, unknown = relayed
@@ -349,6 +357,7 @@ def test_a_name_the_host_does_not_serve_ends_at_once(relayed: tuple[int, Path]) 
 # --- handler-relay as the sandbox's command: exit, signals, user ---------------------------------
 
 
+@pytest.mark.rule("sandbox.stdio-is-the-agent-s-stream")
 def test_it_exits_with_its_command_s_code(relay_binary: Path) -> None:
     """If this fails: the sandbox's exit code (the harness's) is lost."""
     argv = [str(relay_binary), "--", "sh", "-c", "exit 7"]
@@ -387,6 +396,7 @@ def test_a_wrong_command_line_fails_before_running_anything(
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="--user is for a relay started as root")
+@pytest.mark.rule("sandbox.runs-as-the-host-user", "sandbox.hardened-by-default")
 def test_it_becomes_the_user_for_good(relay_binary: Path, tmp_path: Path) -> None:
     """--user: the command runs as that uid/gid, with no capability left nor any to gain, and
     the host's socket is given to the user.

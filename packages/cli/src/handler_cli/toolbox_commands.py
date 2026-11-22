@@ -28,7 +28,7 @@ from typing import Any
 
 from . import image_commands
 from .client import Daemon
-from .output import table
+from .output import table, when_at
 
 
 def add_parser(sub: Any) -> None:
@@ -84,7 +84,7 @@ def who(entries: list[str], agents: dict[str, str]) -> str:
 def show(d: Daemon) -> None:
     info = d.call("GET", "/v1/toolbox")
     agents = {a["id"]: a.get("name") or a["id"] for a in d.call("GET", "/v1/agents")}
-    built = (info.get("builtAt") or "")[:16].replace("T", " ")
+    built = when_at(info.get("builtAt"), "")
     print(f"toolbox: {info.get('distro') or '?'}, {'built ' + built if built else 'not built yet'}")
     print(f"yours:   {info['directory']}")
     if info.get("problem"):

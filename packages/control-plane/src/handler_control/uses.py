@@ -6,7 +6,7 @@ from them each time (nothing stored). A link is (user, used, how):
     a project     gives a skill or an addon to all its agents (each of them then uses it too)
     an automation runs an agent, runs when an agent's sessions stop, appends to notes of a
                   knowledge folder
-    an app        is given an agent for one of its needs
+    an app        runs its jobs on an account or a provider (its Who works, H.2)
     Handler       uses the agent given for one of its needs (the skill reviewer…, D.18)
 
 Uses of a thing are the links where it is the user; its used-by, where it is the used. Clients
@@ -68,11 +68,11 @@ class UseGraph:
                 found.append(Link(ref, thing("addon", use.addon), "gives it to all its agents"))
         found += self.automation_links()
         for app in self.apps.views():
-            ref = UseRef(kind="app", id=app.name, label=app.name, how="")
-            for need in app.agents:
-                if need.agent_id and (agent := self.projects.registry.get(need.agent_id)):
-                    how = f"needs it: {need.description or need.name}"
-                    found.append(Link(ref, self.agent_ref(agent), how))
+            ref = UseRef(kind="app", id=app.name, label=app.title or app.name, how="")
+            for who in {w for w in [app.who_works, *(j.who_works for j in app.jobs)] if w}:
+                kind, name = ("account", who.account) if who.account else ("provider", who.provider)
+                assert name is not None
+                found.append(Link(ref, thing(kind, name), "runs its jobs on it"))
         given = handler_needs.given(self.settings.state_dir)
         for need in handler_needs.load_all():
             agent_id = given.get(need.name)
@@ -101,7 +101,12 @@ class UseGraph:
         found = [Link(me, thing("skill", s), "picks it") for s in agent.skills]
         found += [Link(me, thing("skill", s), "given by its project") for s in agent.project_skills]
         reads = "puts it into each call" if agent.model_alone else "reads it"
-        found += [Link(me, thing("knowledge", k), reads) for k in agent.knowledge]
+        for use in agent.knowledge:
+            how = "writes it" if use.access == "write" else reads
+            found.append(Link(me, thing("knowledge", use.folder), how))
+        for schema in agent.schemas:
+            how = "writes it" if schema.access == "write" else "reads it"
+            found.append(Link(me, thing("schema", schema.schema_id), how))
         found += [Link(me, thing("addon", u.addon), "uses it") for u in agent.addons]
         given = "given by its project"
         found += [Link(me, thing("addon", u.addon), given) for u in agent.project_addons]

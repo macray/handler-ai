@@ -11,12 +11,12 @@ everything else it reaches.
 handler tool add playwright
 ```
 
-Or Library → Tools → Get more → playwright → Install. Then give it a connection: Library →
+Or Library → Tools → Community → playwright → Install. Then give it a connection: Library →
 Tools → playwright → *Connect*, name it `browser`, no setting needed, *Save*. Select the
 connection in the agent's settings, or:
 
 ```bash
-cd ~/code/my-theme && handler run claude-perso --tool playwright=browser
+cd ~/code/my-theme && handler run claude --tool playwright=browser
 ```
 
 ## Watch it
@@ -37,7 +37,7 @@ What limits an agent on a site is the **account it logs in with**, so never give
 session: create an account for it with only the rights it needs, log in with it once, and save
 that session as a secret of a second connection. Every session of the agent starts logged in,
 and nothing it does is saved back. The steps:
-[the tool's PROVISIONING.md](https://github.com/macray/handler-ai-registry/blob/main/tools/playwright/PROVISIONING.md).
+[the tool's CONNECT.md](https://github.com/macray/handler-ai-registry/blob/main/tools/playwright/CONNECT.md).
 
 ## See also
 

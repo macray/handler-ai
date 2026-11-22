@@ -3,60 +3,46 @@
   // or an ad-hoc session's, must be inside one. Absolute paths or `~/…`, kept as written; never
   // handler's own folders (the daemon refuses them, and says so). Each change is saved at once and
   // applies to new sessions; each folder says how many projects it holds (their names in its
-  // tooltip), or that it is missing. One is added in a dialog.
+  // tooltip), or that it is missing. One is added in a dialog (AddFolderDialog); one added over
+  // another page (the set-up's, lib/workfolders) shows here too.
+  import { ask } from "../lib/ask.svelte";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import Plus from "@lucide/svelte/icons/plus";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
-  import { Label } from "$lib/components/ui/label";
-  import Dialog from "./Dialog.svelte";
+  import AddFolderDialog from "./AddFolderDialog.svelte";
   import { api } from "../lib/api";
   import type { WorkFolderInfo } from "../lib/contracts.gen";
+  import { addFolder } from "../lib/workfolders.svelte";
 
   let folders = $state<WorkFolderInfo[]>([]);
-  let next = $state("");
   let adding = $state(false); // the dialog open
   let busy = $state(false);
   let error = $state<string | null>(null);
 
-  const valid = (path: string) => path.startsWith("/") || path === "~" || path.startsWith("~/");
+  $effect(() => {
+    void addFolder.changes;
+    api.folders().then(
+      (f) => (folders = f.folders),
+      (e: Error) => (error = e.message),
+    );
+  });
 
-  api.folders().then(
-    (f) => (folders = f.folders),
-    (e: Error) => (error = e.message),
-  );
-
-  async function save(roots: string[]): Promise<boolean> {
+  async function save(roots: string[]): Promise<void> {
     busy = true;
     error = null;
     try {
       folders = (await api.setFolders(roots)).folders;
-      return true;
     } catch (e) {
       error = (e as Error).message;
-      return false;
     } finally {
       busy = false;
     }
   }
 
-  async function add(): Promise<void> {
-    const path = next.trim().replace(/(.)\/+$/, "$1");
-    if (!path) return;
-    if (!valid(path)) {
-      error = "An absolute path, or one starting with ~/";
-      return;
-    }
-    if (await save([...folders.map((f) => f.root), path])) {
-      next = "";
-      adding = false;
-    }
-  }
-
-  function remove(folder: WorkFolderInfo): void {
-    const held = folder.projects?.length ? ` Its projects (${folder.projects.join(", ")}) can no longer start sessions.` : "";
-    if (held && !confirm(`Remove ${folder.root}?${held}`)) return;
+  async function remove(folder: WorkFolderInfo): Promise<void> {
+    const held = folder.projects?.length ? `Its projects (${folder.projects.join(", ")}) can no longer start sessions.` : "";
+    if (held && !(await ask({ title: `Remove ${folder.root}?`, detail: held, yes: "Remove", danger: true }))) return;
     void save(folders.filter((f) => f.root !== folder.root).map((f) => f.root));
   }
 </script>
@@ -69,7 +55,7 @@
     </p>
     <Button variant="outline" size="sm" onclick={() => ((adding = true), (error = null))} data-testid="work-folder-new"><Plus />Add a folder</Button>
   </div>
-  {#if error && !adding}<p class="text-sm text-danger" data-testid="work-folder-error">{error}</p>{/if}
+  {#if error}<p class="text-sm text-danger" data-testid="work-folder-error">{error}</p>{/if}
   <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
     {#each folders as f (f.root)}
       <li class="flex items-center gap-4 px-4 py-3.5">
@@ -99,18 +85,5 @@
     {/each}
   </ul>
 
-  <Dialog bind:open={adding} title="Add a folder" description="Where your code lives: agents may then work in any project inside it." testid="work-folder-dialog">
-    <form class="space-y-5" onsubmit={(e) => (e.preventDefault(), void add())}>
-      <div class="space-y-1.5">
-        <Label for="work-folder-input">Folder</Label>
-        <Input id="work-folder-input" class="font-mono text-sm" placeholder="~/code or /srv/projects" bind:value={next} data-testid="work-folder-input" />
-        <p class="text-xs text-muted-foreground">An absolute path, or one starting with <span class="font-mono">~/</span>. Never Handler's own folders.</p>
-      </div>
-      {#if error}<p class="text-danger" data-testid="work-folder-error">{error}</p>{/if}
-      <div class="flex justify-end gap-2 border-t pt-4">
-        <Button type="button" variant="ghost" size="sm" onclick={() => (adding = false)}>Cancel</Button>
-        <Button type="submit" size="sm" disabled={busy || !next.trim()} data-testid="work-folder-add">Add</Button>
-      </div>
-    </form>
-  </Dialog>
+  <AddFolderDialog bind:open={adding} onadded={(f) => (folders = f)} />
 </section>

@@ -30,7 +30,7 @@ from .. import (
     save_rules,
 )
 from ..agent_checks import CheckStore
-from ..agent_service import AgentService, AgentServiceError
+from ..agent_service import AgentService
 from ..agents import (
     AgentRecord,
     AgentRegistry,
@@ -42,9 +42,11 @@ from ..automations import Automations
 from ..builds import (
     BuildStore,
 )
+from ..connection_check import Checks
 from ..image_updates import ImageUpdater
 from ..improvements import ImprovementStore
 from ..inbox import Inbox
+from ..notes_history import NotesHistories
 from ..plan_drafts import PlanDrafts
 from ..plans import PlanStore
 from ..projects import ProjectRecord, ProjectRegistry, branch_of
@@ -102,8 +104,10 @@ class Context:
     agents: AgentService
     plans: PlanStore
     drafts: PlanDrafts
+    notes: NotesHistories
     ui_links: auth.UiLinks = field(default_factory=auth.UiLinks)
     reaches: Reaches = field(default_factory=Reaches)  # providers' last tests (D.12)
+    connection_checks: Checks = field(default_factory=Checks)  # connections' last (G.2)
 
     def require_auth(self, request: Request) -> None:
         """HTTP auth (invariant 5): allowed Origin (if any), then the bearer token or the web UI's
@@ -187,7 +191,7 @@ class Context:
             else:
                 resolved = launcher.agent_spec(self.settings, runs)
                 if r.network == "filtered":
-                    required = launcher.required_hosts(self.settings, resolved, r)
+                    required = launcher.required_hosts(self.settings, resolved, r.addon_uses)
         except (areas.AreaError, launcher.AgentStartError, ValueError) as e:
             problem = str(e)
         return AgentModel(**runs.model_dump(), problem=problem, required_hosts=required)
@@ -227,8 +231,6 @@ def check_problems() -> Iterator[None]:
         raise ProblemError(409, e.title, str(e)) from None
     except save_rules.CheckError as e:
         raise ProblemError(400, e.title, str(e)) from None
-    except AgentServiceError as e:
-        raise ProblemError(e.status, e.title, str(e)) from None
 
 
 @contextlib.contextmanager

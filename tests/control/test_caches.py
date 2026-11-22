@@ -40,6 +40,7 @@ def test_caches_with_their_folders_and_who_uses_them(daemon: Daemon) -> None:
     assert "no-caches" in info["off"]
 
 
+@pytest.mark.rule("cache.declared-ones-never-share-a-folder")
 def test_the_cache_list_is_written_to_the_toolbox(daemon: Daemon) -> None:
     path = daemon.config_dir / "toolbox" / "toolbox.toml"
     before = path.read_text()
@@ -105,7 +106,9 @@ def test_sizes_and_emptying_global_caches(daemon: Daemon) -> None:
 
 
 @pytest.mark.rule(
-    "cache.measured-and-emptied-whoever-wrote-it", "project.deleting-it-never-touches-its-folder"
+    "cache.measured-and-emptied-whoever-wrote-it",
+    "project.deleting-it-never-touches-its-folder",
+    "cache.a-deleted-project-s-are-freed",
 )
 @requires_podman
 def test_a_projects_own_caches_emptied_then_removed_with_it(daemon: Daemon) -> None:

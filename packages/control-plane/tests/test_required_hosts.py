@@ -64,7 +64,7 @@ def test_shown_hosts_are_the_sandbox_allow_list(tmp_path: Path) -> None:
         allow=["own.test:443"],
     )
     spec, _, base, _ = launcher.prepare(s, agent, local, "c1")
-    shown = launcher.required_hosts(s, launcher.agent_spec(s, local), agent)
+    shown = launcher.required_hosts(s, launcher.agent_spec(s, local), agent.addon_uses)
     assert base is not None and sorted(h.host for h in shown) == base
     assert isinstance(spec.network, FilteredNetwork)
     assert spec.network.allow == sorted({*base, "own.test:443"})
@@ -85,6 +85,7 @@ def test_a_session_reaches_only_its_models_hosts(tmp_path: Path) -> None:
     assert on_other == ["other.test:8080"]
 
 
+@pytest.mark.rule("image.a-launch-never-builds-one")
 def test_a_sandbox_needing_an_image_not_built_is_not_launched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -98,7 +99,8 @@ def test_a_sandbox_needing_an_image_not_built_is_not_launched(
     built = {spec.image}
     monkeypatch.setattr(launcher.runtime, "not_ready", lambda: None)
     monkeypatch.setattr(launcher.runtime, "missing_proxy", lambda _: False)
-    monkeypatch.setattr(launcher.runtime, "exists", lambda ref: ref in built)
+    # a launch asks the runtime now (runtime.inspect_now): an image found, or None
+    monkeypatch.setattr(launcher.runtime, "inspect_now", lambda ref: (ref in built) or None)
     with pytest.raises(launcher.ImageMissingError) as refused:
         launcher._require_images(spec, "codex")
     assert refused.value.target == "addon:tool"
@@ -112,9 +114,10 @@ def test_a_sandbox_needing_an_image_not_built_is_not_launched(
     monkeypatch.setattr(launcher.runtime, "missing_proxy", lambda _: True)
     with pytest.raises(launcher.ImageMissingError) as refused:
         launcher._require_images(spec, "codex")
-    assert str(refused.value) == launcher.NETWORK_FILTER_MISSING
+    assert refused.value.target == launcher.NETWORK_FILTER
 
 
+@pytest.mark.rule("runtime.a-stopped-engine-is-said-not-an-image-missing")
 def test_an_engine_that_cannot_run_is_said_not_an_image_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

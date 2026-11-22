@@ -100,7 +100,8 @@ def test_the_mcp_probe_must_start_with_the_sandbox_env_and_no_secret() -> None:
     probe = mcp_probe("/scope/.handler-mcp-probe")
     assert (probe.command, probe.args[-1]) == (
         "sh",
-        "env > /scope/.handler-mcp-probe; exec cat > /dev/null",
+        "env > /scope/.handler-mcp-probe.new && mv /scope/.handler-mcp-probe.new"
+        " /scope/.handler-mcp-probe; exec cat > /dev/null",
     )
     good = f"PATH=/usr/bin\n{MCP_PROBE_ENV}=m4rk\n"
     assert mcp_problems(good, "m4rk", "s3cr3t") == []
@@ -123,6 +124,7 @@ def test_the_check_gives_each_harness_a_credential_it_accepts() -> None:
     assert set(codex.provider_spec.endpoints) == {"responses"}
 
 
+@pytest.mark.rule("image.latest-is-the-last-that-passed")
 def test_daemon_restart_fails_running_builds(tmp_path: Path) -> None:
     store = BuildStore(settings(tmp_path), AgentRegistry(tmp_path))
     store._save(build("running"))
@@ -131,6 +133,7 @@ def test_daemon_restart_fails_running_builds(tmp_path: Path) -> None:
     assert found is not None and found.state == "failed" and found.error == "daemon restarted"
 
 
+@pytest.mark.rule("image.its-build-log-is-kept-and-read-whole")
 def test_log_is_read_in_whole_lines_from_an_offset(tmp_path: Path) -> None:
     store = BuildStore(settings(tmp_path), AgentRegistry(tmp_path))
     (store.dir / "b1.log").write_text("STEP 1/2: FROM x\nSTEP 2/2: RUN é")
@@ -141,6 +144,7 @@ def test_log_is_read_in_whole_lines_from_an_offset(tmp_path: Path) -> None:
     assert store.read_log(build("succeeded"), rest.next_offset).text == ""
 
 
+@pytest.mark.rule("image.its-build-log-is-kept-and-read-whole")
 def test_log_lines_lose_terminal_escapes(tmp_path: Path) -> None:
     store = BuildStore(settings(tmp_path), AgentRegistry(tmp_path))
     job = _Job(store, build())
@@ -157,10 +161,10 @@ def test_the_toolbox_check_runs_like_an_agent() -> None:
     assert isinstance(s.network, NoNetwork) and s.addons == []
 
 
-@pytest.mark.rule("tool.built-once-it-can-be")
+@pytest.mark.rule("tool.built-as-soon-as-its-needs-are-there")
 def test_an_addons_state_follows_its_builds(tmp_path: Path) -> None:
-    """G.5: preparing while a build making it runs (its own, or the toolbox it waits for);
-    failed when its last build failed; ready; else installed."""
+    """G.5: preparing while a build making it runs or is queued (its own, or the toolbox it
+    waits for); failed when its last build failed; ready; else installed."""
     store = BuildStore(settings(tmp_path), AgentRegistry(tmp_path))
     assert store.addon_state("tool", ready=False) == ("installed", None)
     assert store.addon_state("tool", ready=True) == ("ready", None)
@@ -177,6 +181,8 @@ def test_an_addons_state_follows_its_builds(tmp_path: Path) -> None:
     assert store.addon_state("tool", ready=False) == ("preparing", None)
     store.running = None
     assert store.addon_state("tool", ready=False)[0] == "failed"  # no toolbox build: waits
+    store.queued[cast(Any, object())] = "addon:tool"  # its build after the running one
+    assert store.addon_state("tool", ready=False) == ("preparing", None)
 
 
 class FakeImages:
@@ -327,5 +333,33 @@ def test_a_check_whose_sandbox_did_not_start_says_why(monkeypatch: pytest.Monkey
     logged: list[str] = []
     spec = cast(Any, None)
     with pytest.raises(image_check.ImageCheckError, match=f"its sandbox did not start: {reason}"):
-        asyncio.run(image_check._run_check(spec, logged.append))
+        asyncio.run(image_check.run_check(spec, logged.append))
     assert any(reason in line for line in logged)  # in the build's log too
+
+
+@pytest.mark.rule("runtime.an-image-verb-says-what-it-did")
+@pytest.mark.parametrize(
+    ("last", "said"),
+    [
+        (
+            "handler-sandbox-fake: the network filter's build failed: Rosetta is not installed",
+            "build network filter failed: the network filter's build failed: Rosetta is not "
+            "installed; see the log",
+        ),
+        ("something else at the end", "build network filter failed: exit code 1; see the log"),
+    ],
+)
+def test_a_failed_build_says_the_runtime_s_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, last: str, said: str
+) -> None:
+    """The build's failure, shown by setup, the waiting session and Settings, carries the
+    runtime's last line (its engine's reason); a runtime that gave none leaves its exit code."""
+    runtime = tmp_path / "handler-sandbox-fake"
+    runtime.write_text(f"#!/bin/sh\necho 'STEP 1/2: FROM x'\necho \"{last}\" >&2\nexit 1\n")
+    runtime.chmod(0o755)
+    job = _Job.__new__(_Job)
+    monkeypatch.setattr(job, "update", lambda **fields: None)
+    job.out = None
+    with pytest.raises(builds.BuildError) as raised:
+        asyncio.run(job.run_logged("build network filter", [str(runtime)]))
+    assert str(raised.value) == said

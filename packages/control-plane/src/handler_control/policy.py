@@ -23,6 +23,8 @@ of the client's computer, and gets through to a client only what Handler knows.
         client's; a client server with the same name is replaced
     P9  the first session/prompt of a session this connection started (session/new): the
         agent's instructions before its text (a daemon session does it itself, F.3)
+    P10 session/new|load|resume: add what its harness's adapter reads in `_meta` (what is
+        added to its system prompt), its keys over the client's
 """
 
 import itertools
@@ -30,8 +32,8 @@ import json
 import logging
 import posixpath
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from handler_contracts import (
     AGENT_NOTIFICATIONS,
@@ -109,6 +111,54 @@ def target_allowed(target: str, network: NetworkPolicy) -> bool:
     return False
 
 
+SAFE_KINDS = frozenset({"read", "edit", "search", "think", "switch_mode"})  # stay in place
+
+
+def ask_risk(tool_call: Any, scope: str, network: NetworkPolicy) -> Literal["safe", "risky"]:
+    """How risky allowing a permission request's tool call is (D.7): `safe` only when Handler can
+    tell it is (a kind that stays in place, every path it names inside the scope, every address
+    in its input reachable under the network policy); anything else, or what it cannot read,
+    `risky`."""
+    safe = (
+        isinstance(tool_call, dict)
+        and tool_call.get("kind") in SAFE_KINDS
+        and _paths_inside(tool_call, scope)
+        and _addresses_reachable(tool_call.get("rawInput"), network)
+    )
+    return "safe" if safe else "risky"
+
+
+def _paths_inside(tool_call: Message, scope: str) -> bool:
+    """Every path a tool call names (its locations, its diffs) is inside the scope; a relative
+    one is the scope's."""
+    locations, content = tool_call.get("locations") or [], tool_call.get("content") or []
+    if not isinstance(locations, list) or not isinstance(content, list):
+        return False
+    paths = [loc.get("path") if isinstance(loc, dict) else None for loc in locations]
+    paths += [c.get("path") for c in content if isinstance(c, dict) and c.get("type") == "diff"]
+    return all(
+        isinstance(path, str)
+        and bool(path)
+        and is_within(posixpath.normpath(posixpath.join(scope, path)), scope)
+        for path in paths
+    )
+
+
+def _addresses_reachable(raw_input: Any, network: NetworkPolicy) -> bool:
+    """Every http(s) URL among a tool call's input's top-level values is reachable under the
+    network policy; one that does not parse is not."""
+    values = raw_input.values() if isinstance(raw_input, dict) else ()
+    for value in values:
+        if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+            try:
+                target = egress_target(value)
+            except (KeyError, ValueError):
+                return False
+            if not target_allowed(target, network):
+                return False
+    return True
+
+
 @dataclass
 class _HeldSession:
     """A session/new response held back while P7 applies the session defaults."""
@@ -116,7 +166,6 @@ class _HeldSession:
     response: Message
     session_id: str
     queue: list[Message]  # injected requests still to send, in order
-    failures: list[str] = field(default_factory=list)
 
 
 class AcpPolicy:
@@ -149,7 +198,7 @@ class AcpPolicy:
             return [ToAgent(self._force_capabilities(m))]  # P1
         if is_request(m) and (method in SESSION_METHODS or has_cwd(m)):
             if method in SESSION_METHODS:
-                m = self._add_mcp_servers(m)  # P8
+                m = self._add_meta(self._add_mcp_servers(m))  # P8, P10
             if refusal := self.check_session_params(m):
                 return [ToClient(refusal)]  # P2 / P3
             if method in ("session/new", "session/load"):
@@ -177,6 +226,17 @@ class AcpPolicy:
             "fs": {"readTextFile": False, "writeTextFile": False},
             "terminal": False,
         }
+        return m | {"params": params}
+
+    def _add_meta(self, m: Message) -> Message:
+        platform = (self.defaults.meta if self.defaults else None) or {}
+        if not platform:
+            return m
+        params = dict(m.get("params") or {})
+        theirs = params.get("_meta")
+        if replaced := sorted(set(theirs) & set(platform)) if isinstance(theirs, dict) else []:
+            self.on_event(f"client _meta replaced by the harness's: {', '.join(replaced)}")
+        params["_meta"] = (theirs if isinstance(theirs, dict) else {}) | platform
         return m | {"params": params}
 
     def _add_mcp_servers(self, m: Message) -> Message:
@@ -274,19 +334,19 @@ class AcpPolicy:
         return [ToAgent({"jsonrpc": "2.0", "id": req_id, **request})]
 
     def _p7_progress(self, response: Message) -> list[Action]:
+        """The agent's answer to one of the defaults: the next one sent, or at the first failure,
+        the client's error instead of its session."""
         held = self._held.pop(response["id"])
         if "error" in response:
-            held.failures.append(str(response["error"].get("message", response["error"])))
-        if held.queue and not held.failures:
-            return self._p7_send_next(held)
-        if held.failures:
-            detail = "; ".join(held.failures)
+            detail = str(response["error"].get("message", response["error"]))
             self.on_event(f"session defaults failed for {held.session_id}: {detail}")
             reply = error_response(
                 held.response["id"], PolicyErrorCode.SESSION_DEFAULTS_FAILED, "P7",
                 f"session defaults could not be applied: {detail}",
             )  # fmt: skip
             return [ToClient(reply)]
+        if held.queue:
+            return self._p7_send_next(held)
         return [ToClient(self._patched(held.response))]
 
     def _patched(self, response: Message) -> Message:

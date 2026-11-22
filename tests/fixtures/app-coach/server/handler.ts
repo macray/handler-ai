@@ -1,5 +1,5 @@
-// What the backend may ask handler (the template's copy): notifications, runs of the agents the
-// person gave its needs, the folders they gave.
+// What the backend may ask handler (the template's copy): notifications, runs of its jobs, the
+// folders the person gave.
 
 /** The folders given for its files needs, by need: `files().tasks`. */
 export function files(): Record<string, string> {
@@ -14,7 +14,7 @@ export async function notify(title: string, opts: { body?: string; person?: stri
 
 export type Run = {
   id: string;
-  agent: string; // the need
+  job: string;
   sessionId: string;
   state: "waiting" | "running" | "succeeded" | "failed" | "cancelled";
   at: string;
@@ -22,18 +22,18 @@ export type Run = {
   error?: string;
 };
 
-/** Start a run of the agent the person gave one of its needs (`needs.agents.<agent>`), with its
- * form's fields. Only while answering the owner's request: pass that request, whose
- * X-HANDLER-Start header lets it start. Its result also goes to the person's inbox when it ends. */
-export async function runAgent(
+/** Start a run of one of its jobs (`[jobs.<job>]`), with its form's fields. Only while
+ * answering the owner's request: pass that request, whose X-HANDLER-Start header lets it start.
+ * Its result also goes to the person's inbox when it ends. */
+export async function runJob(
   request: Request,
-  agent: string,
+  job: string,
   fields: Record<string, unknown> = {},
 ): Promise<Run> {
   const start = request.headers.get("x-handler-start");
-  if (!start) throw new Error("runAgent: only while answering the owner's request");
-  const [status, answer] = await call("POST", "/runs", { agent, fields, start });
-  if (status !== 202) throw new Error(`runAgent: ${answer.error ?? status}`);
+  if (!start) throw new Error("runJob: only while answering the owner's request");
+  const [status, answer] = await call("POST", "/runs", { job, fields, start });
+  if (status !== 202) throw new Error(`runJob: ${answer.error ?? status}`);
   return answer as Run;
 }
 
@@ -53,7 +53,7 @@ export async function cancelRun(id: string): Promise<Run> {
 /** One request to handler's socket: its status and its JSON answer. */
 async function call(method: string, path: string, payload?: unknown): Promise<[number, Record<string, unknown>]> {
   const socket = process.env.HANDLER_APP_API;
-  if (!socket) throw new Error("add `notify = true` or [needs.agents.<name>] to app.toml");
+  if (!socket) throw new Error("add `notify = true` or [jobs.<name>] to app.toml");
   const res = await fetch(`http://handler${path}`, {
     method,
     unix: socket,

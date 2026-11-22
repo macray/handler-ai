@@ -7,7 +7,7 @@
   // A page's own header, at the top of the page (there is no top bar): where it sits (a crumb line,
   // "Projects ›"; none for a place of the menu), its title, then its sections as underline tabs
   // (grouped when they are, the Library's: each group's label above its tabs, a rule between
-  // groups; `tabsEnd` at the right of the tabs, the Library's Yours / Get more). The page's actions are its first
+  // groups). The page's actions are its first
   // line, under the title or the tabs, never next to the sections; rare ones in its ⋯ (`menu`, at
   // the top right). No paragraph under the title: `sub` is a line of facts (a project's folder).
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -22,7 +22,6 @@
     menu,
     actions,
     tabs,
-    tabsEnd,
     width = "max-w-6xl",
   }: {
     title: string;
@@ -32,7 +31,6 @@
     menu?: Snippet; // top right: the page's ⋯ (and its pin)
     actions?: Snippet; // the page's first line
     tabs?: PageTab[];
-    tabsEnd?: Snippet; // at the right of the tabs
     width?: string; // the page's column, so the header lines up with it
   } = $props();
 
@@ -89,7 +87,6 @@
             </div>
           {/each}
         </nav>
-        {#if tabsEnd}<div class="mb-2 ml-auto">{@render tabsEnd()}</div>{/if}
       </div>
     {/if}
   </div>

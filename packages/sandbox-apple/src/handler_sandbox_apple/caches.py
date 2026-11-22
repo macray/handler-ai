@@ -1,6 +1,7 @@
 """The `cache` verbs (contract A.9) on Apple container: the folders are the user's own on the Mac
 (no inner user ids: no `nested` here yet), so they are measured and emptied directly.
-`clear` is refused while a sandbox mounts the folder or one inside it."""
+`clear` is refused while a sandbox mounts the folder or one inside it, or an ended sandbox's
+additions to it are still to merge (its disk)."""
 
 import json
 import os
@@ -8,10 +9,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from handler_contracts import is_within
 from handler_sandbox_kit.launcher import MANAGED_LABEL, SANDBOX_LABEL
 
 from .container import container, containers, labels_of
-from .launch import PROG
+from .launch import CACHES_LABEL, PROG, disks
 
 
 def _fail(message: str) -> int:
@@ -37,13 +39,19 @@ def size(paths: list[Path]) -> int:
 
 def _in_use(path: Path) -> list[str]:
     """Managed sandboxes whose configuration names `path` or a folder inside it (the
-    inspect document's layout is not documented, its text is searched)."""
+    inspect document's layout is not documented, its text is searched), and ended ones whose
+    additions to it are still on their disk, to merge."""
     found = []
     for c in containers():
         name = labels_of(c).get(SANDBOX_LABEL, "")
         if labels_of(c).get(MANAGED_LABEL) != "1" or not name:
             continue
         if str(path) in container("inspect", name, check=False):
+            found.append(name)
+    for _, labels in disks():
+        sources = json.loads(labels.get(CACHES_LABEL, "[]") or "[]")
+        name = labels.get(SANDBOX_LABEL, "")
+        if name not in found and any(is_within(s, str(path)) for s in sources):
             found.append(name)
     return found
 

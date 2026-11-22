@@ -17,7 +17,7 @@ from ..plans.test_plans import PLAN, project
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
 from .browser import PW_IMAGE, image_present
-from .test_web_ui import choose_helper_account
+from .web_ui.ui import choose_helper_account
 
 pytestmark = [
     pytest.mark.skipif(not (WEB_UI / "index.html").is_file(), reason="web UI not built"),
@@ -86,7 +86,7 @@ def test_a_file_changed_after_reading_is_read_again(daemon: Daemon, page: Page) 
     expect(page.get_by_test_id("plan-approve")).to_be_enabled()
 
 
-@pytest.mark.rule("plan.its-agent-its-settings", "plan.started-by-you-only")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now", "plan.started-by-you-only")
 def test_the_review_chooses_its_runner_and_switches_it_to_auto_approve(
     daemon: Daemon, page: Page
 ) -> None:
@@ -108,7 +108,7 @@ def test_the_review_chooses_its_runner_and_switches_it_to_auto_approve(
     expect(page.get_by_test_id("plan-facts")).to_contain_text("2 of 2 steps done", timeout=30_000)
 
 
-@pytest.mark.rule("plan.its-agent-its-settings")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_a_plan_runner_is_created_from_the_review(daemon: Daemon, page: Page) -> None:
     folder, agent = project(daemon)  # names dev, which takes a form: no agent may run steps
     job = {"result": {"type": "object"}}
@@ -165,8 +165,8 @@ def test_a_plan_is_built_edited_approved_and_copied(daemon: Daemon, page: Page) 
     page.get_by_test_id("page-crumb").click()  # its project's Plans
     drafts = page.get_by_test_id("plan-draft")
     expect(drafts).to_have_count(2)  # the one approved stays, and its copy
-    page.once("dialog", lambda d: d.accept())
     drafts.first.get_by_test_id("plan-draft-throw").click()
+    page.get_by_test_id("ask-yes").click()
     expect(drafts).to_have_count(1)
     page.get_by_test_id("plans-finished").locator("summary").click()
     expect(page.get_by_test_id("plan-finished")).to_contain_text("two steps")  # its plan stays

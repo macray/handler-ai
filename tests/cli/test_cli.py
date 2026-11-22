@@ -246,6 +246,8 @@ def test_tools_connections_and_selection(daemon: Daemon) -> None:
     listed = handler(daemon, "connection", "list").stdout
     assert "store=dev.shop.example.com" in listed and "theme_token" in listed
     assert "unknown tool 'nope'" in listed
+    r = handler(daemon, "connection", "check", "broken")  # says why it cannot run, exits 1
+    assert r.returncode == 1 and "invalid connection" in r.stderr
 
     scope = daemon.make_scope()
     r = run(daemon, "fake", "--tool", "fake-shop=nope", cwd=scope)
@@ -328,7 +330,7 @@ def test_secret_set_list_rm(daemon: Daemon) -> None:
     assert handler(daemon, "secret", "rm", path).returncode != 0  # 404
 
 
-@pytest.mark.rule("provider.a-test-asks-from-where-a-sandbox-is")
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
 def test_a_local_provider_is_tested(daemon: Daemon) -> None:
     """`add` from a local server's template asks it what it serves; `test` says ready or why
     not, with the sentence on where it must listen; `list` shows the last test."""
@@ -357,6 +359,31 @@ def test_a_local_provider_is_tested(daemon: Daemon) -> None:
     r = handler(daemon, "provider", "add", "gone", "--from", "ollama", endpoint)
     assert r.returncode == 1 and "ollama: not reached" in r.stderr and "--model ID" in r.stderr
     assert handler(daemon, "provider", "rm", "served").returncode == 0
+
+
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
+def test_a_provider_that_redirects_to_https_is_told(daemon: Daemon) -> None:
+    """An endpoint whose server answers `http://` with a 308 to `https://`: `add` and `test` say
+    where it redirects, and give the `https://` endpoint to use instead."""
+    server = ModelsServer([{"id": "m"}], redirect=True)
+    endpoint = f"--endpoint=openai-chat={server.endpoint()}"
+    https = "https://127.0.0.1/v1"
+    try:
+        r = handler(daemon, "provider", "add", "moved", "--from", "ollama", endpoint)
+        assert r.returncode == 1 and "redirects to https://" in r.stderr
+        assert f"Use {https} as its endpoint" in r.stderr
+        assert f"--endpoint openai-chat={https}" in r.stderr
+        r = handler(
+            daemon, "provider", "add", "moved", "--from", "ollama", endpoint, "--model", "m"
+        )
+        assert r.returncode == 0, r.stderr
+        r = handler(daemon, "provider", "test", "moved")
+        assert r.returncode == 1 and "moved: not reached:" in r.stdout
+        assert f"Use {https} as its endpoint" in r.stdout
+        assert "Settings → Model access" in r.stdout and "providers/moved.toml" in r.stdout
+    finally:
+        server.close()
+    assert handler(daemon, "provider", "rm", "moved").returncode == 0
 
 
 def test_provider_from_a_template_and_areas(daemon: Daemon) -> None:
@@ -399,10 +426,10 @@ def test_account_add_import_rm(daemon: Daemon, tmp_path: Path) -> None:
     r = handler(daemon, "account", "import", "plus", str(auth))
     assert r.returncode == 0 and "plus: logged in" in r.stdout, r.stderr
     assert "plus" in handler(daemon, "account", "list").stdout
-    r = handler(daemon, "account", "add", "perso", "claude-code", "--plan", "max")
+    r = handler(daemon, "account", "add", "perso", "claude-code", "--subscription", "max")
     assert r.returncode == 0, r.stderr
     assert "run `claude setup-token`, then: handler account token perso" in r.stdout
-    assert "claude-code  max   not logged in" in handler(daemon, "account", "list").stdout
+    assert "claude-code  max           not logged in" in handler(daemon, "account", "list").stdout
     r = handler(daemon, "account", "login", "perso")
     assert r.returncode == 1 and "run `claude setup-token`" in r.stdout  # not run by handler
     r = subprocess.run(
@@ -416,6 +443,17 @@ def test_account_add_import_rm(daemon: Daemon, tmp_path: Path) -> None:
     )
     assert r.returncode == 0 and "perso: logged in" in r.stdout, r.stderr
     assert "token in handler, until 20" in handler(daemon, "account", "list").stdout  # a year
+    r = subprocess.run(  # a token refused: no account made
+        [HANDLER, "account", "add", "typo", "claude-code", "--token"],
+        input="not-a-token\n",
+        env=env(daemon),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert r.returncode == 1 and "created" not in r.stdout, r.stdout
+    assert "typo" not in handler(daemon, "account", "list").stdout
     kept = tmp_path / "token"
     kept.write_text("sk-ant-oat01-kept-by-me\n")
     r = handler(daemon, "account", "add", "pro", "claude-code", "--token-file", str(kept))
@@ -429,7 +467,11 @@ def test_account_add_import_rm(daemon: Daemon, tmp_path: Path) -> None:
     store = json.loads((daemon.data_dir / "secrets.json").read_text())
     assert "accounts/perso/token" not in store  # the pasted one is forgotten
     assert "token from a command" in handler(daemon, "account", "list").stdout
-    for name in ("plus", "perso", "pro"):
+    daemon.create_ad_hoc("plus", daemon.make_scope(), name="reviewer")
+    r = handler(daemon, "account", "rm", "plus")  # E1: it keeps its name, said
+    assert r.returncode == 0, r.stderr
+    assert "cannot start until given another account: reviewer" in r.stdout
+    for name in ("perso", "pro"):
         assert handler(daemon, "account", "rm", name).returncode == 0
 
 
@@ -470,7 +512,7 @@ def test_terminal_runs_the_harness_s_terminal_program(daemon: Daemon) -> None:
     assert r.returncode == 3, r.stdout + r.stderr
     # who it runs as, said before it starts: the harness's terminal cannot tell
     assert "handler: fake · account fake" in r.stderr
-    assert "subscription, plan not set in the account" in r.stderr
+    assert "subscription, which one not set in the account" in r.stderr
     assert "TERM=xterm-test" in r.stdout
     assert "args:--yolo --model big-model --resume x" in r.stdout
     assert "got:hello" in r.stdout

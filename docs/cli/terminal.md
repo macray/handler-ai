@@ -10,7 +10,8 @@ Run a harness's own terminal UI (Claude Code's, Codex's…) in a sandbox.
   (see the shell function below).
 
 Unlike [`run`](run.md), this is not a session: it is not kept by the daemon nor shown as a
-conversation in the web UI, and it ends when you exit. The web UI shows it to change its network.
+conversation in the web UI, and it ends when you exit. The web UI's **Running** shows it as a
+line ("Dev, in your terminal"), whose **Network** changes its network at once.
 
 ## Usage
 
@@ -68,7 +69,7 @@ running on your work code.
 ## Good to know
 
 - The first line it prints says which account or provider it runs on, and its subscription
-  (as the account says it: `--plan` of [`account add`](account.md)).
+  (as the account says it: `--subscription` of [`account add`](account.md)).
 - Restarting the daemon leaves it running.
 - An agent outside projects is shared with `run` and `acp`: the same folder gives the same agent
   and settings.

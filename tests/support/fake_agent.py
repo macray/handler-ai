@@ -15,6 +15,11 @@ a behaviour (the texts of every block are kept in the report's "prompt", an imag
     exit     exit immediately with status 3
     sleep    wait for session/cancel, then end the turn with stopReason "cancelled"
     permission  ask session/request_permission, report the chosen outcome
+    permission execute | permission read   the same, for a tool call of that kind ("Run npm
+             test", "Read notes.md"): a risky and a safe ask for the phone's preview
+    permission read ../outside.md   the same, a read of a file outside its folder (risky)
+    steps    a tool call "Read <its folder>/notes.md", then a message of several lines whose
+             last is "- All 42 tests pass" (a session's last line, D.7)
     leak     print the FAKE_TOKEN environment variable (secret redaction tests)
     batch    write a batch holding a message "hidden", and a line that is no JSON, then "ok"
     xss      reply with hostile markup (web UI sanitization tests)
@@ -51,6 +56,7 @@ state: dict[str, object] = {
     "options": {},
     "mcpServers": [],
     "display": os.environ.get("WAYLAND_DISPLAY"),
+    "myFlag": os.environ.get("MY_FLAG"),  # an agent's own variable (D.8)
     "prompt": [],
     "prompts": [],
     "session": f"s{os.getpid()}",  # a new one per process, the loaded one after session/load
@@ -218,6 +224,39 @@ def main() -> None:  # noqa: PLR0912, PLR0915 — one branch per ACP method
                 params = {"sessionId": sid(), "toolCall": tool, "options": options}
                 send({"id": "perm-1", "method": "session/request_permission", "params": params})
                 say(sid(), json.dumps(read()))
+            elif text in ("permission execute", "permission read"):
+                kind = text.split()[1]
+                title = "Run npm test" if kind == "execute" else "Read notes.md"
+                options = [
+                    {"optionId": "once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
+                    {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                ]
+                tool = {"toolCallId": "t2", "title": title, "kind": kind}
+                params = {"sessionId": sid(), "toolCall": tool, "options": options}
+                send({"id": "perm-2", "method": "session/request_permission", "params": params})
+                say(sid(), json.dumps(read()))
+            elif text == "permission read ../outside.md":
+                options = [
+                    {"optionId": "once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                ]
+                tool = {
+                    "toolCallId": "t3",
+                    "title": "Read ../outside.md",
+                    "kind": "read",
+                    "locations": [{"path": "../outside.md"}],
+                }
+                params = {"sessionId": sid(), "toolCall": tool, "options": options}
+                send({"id": "perm-3", "method": "session/request_permission", "params": params})
+                say(sid(), json.dumps(read()))
+            elif text == "steps":
+                title = f"Read {os.path.join(os.getcwd(), 'notes.md')}"
+                call = {"toolCallId": "r1", "title": title, "kind": "read", "status": "completed"}
+                update = {"sessionUpdate": "tool_call", **call}
+                send({"method": "session/update", "params": {"sessionId": sid(), "update": update}})
+                say(sid(), "Checked.\n\n## Result\n")
+                say(sid(), "- All 42 tests pass\n\n")
             elif text == "write":
                 with open("notes.md", "w") as f:
                     f.write("# plan\n")
@@ -225,6 +264,36 @@ def main() -> None:  # noqa: PLR0912, PLR0915 — one branch per ACP method
                 done = {"sessionUpdate": "tool_call", **tool, "status": "completed"}
                 send({"method": "session/update", "params": {"sessionId": sid(), "update": done}})
                 say(sid(), "written")
+            elif text == "edit":
+                # an edit as the Claude adapter reports it: the step before its input, its
+                # input's diff, its end, then the change as made (a diff per hunk, with the
+                # tool's whole response beside it)
+                path = os.path.join(os.getcwd(), "notes.md")
+                old, new = "# plan\nfirst\n", "# plan\nsecond\n"
+                with open(path, "w") as f:
+                    f.write(new)
+                call = {"toolCallId": "e1", "title": "Edit", "kind": "edit", "status": "pending"}
+                steps: list[dict[str, object]] = [
+                    {"sessionUpdate": "tool_call", **call, "content": [], "locations": []},
+                    {
+                        "title": f"Edit {path}",
+                        "content": [
+                            {"type": "diff", "path": path, "oldText": "first", "newText": "second"}
+                        ],
+                        "locations": [{"path": path}],
+                    },
+                    {"status": "completed", "rawOutput": f"The file {path} has been updated."},
+                    {
+                        "_meta": {"claudeCode": {"toolName": "Edit", "toolResponse": {}}},
+                        "content": [{"type": "diff", "path": path, "oldText": old, "newText": new}],
+                        "locations": [{"path": path, "line": 1}],
+                    },
+                ]
+                for step in steps:
+                    update = {"sessionUpdate": "tool_call_update", "toolCallId": "e1"} | step
+                    params = {"sessionId": sid(), "update": update}
+                    send({"method": "session/update", "params": params})
+                say(sid(), "edited")
             elif text == "usage":
                 usage = {"sessionUpdate": "usage_update", "used": 170_000, "size": 200_000}
                 send({"method": "session/update", "params": {"sessionId": sid(), "update": usage}})

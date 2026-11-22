@@ -2,11 +2,12 @@
   // Skills (D.17): the library, in ~/.config/handler-ai/skills. A skill is a folder (its SKILL.md,
   // scripts, references, assets), offered to every agent; a project may give it to all its agents.
   // The Library's Skills shelf: yours listed, each with who uses it and a link to its editor
-  // (SkillView; a broken one says so in amber, its page has the fix), or Get more (`more`), the
+  // (SkillView; a broken one says so in amber, its page has the fix), or Community (`more`), the
   // ways to make new ones: written there, with an agent (a session of a folderless agent with the skill-creator skill,
   // D.18: saved to the library from it), or imported from a zip archive (a `.skill` file) or a
   // URL (a repository's folder): an import writes the skill to the library, used by no agent yet,
   // then opens its page saying so, with what to do next (have it reviewed, choose who gets it).
+  import { ask } from "../lib/ask.svelte";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import FilePenLine from "@lucide/svelte/icons/file-pen-line";
   import ScrollText from "@lucide/svelte/icons/scroll-text";
@@ -25,7 +26,7 @@
   import { href, navigate } from "../lib/router.svelte";
   import LoadingCards from "./LoadingCards.svelte";
 
-  let { more = false }: { more?: boolean } = $props(); // Get more: the ways to make or import one
+  let { more = false }: { more?: boolean } = $props(); // Community: the ways to make or import one
 
   let skills = $state<SkillInfo[]>([]);
   let loaded = $state(false);
@@ -65,7 +66,7 @@
         skill = await attempt(false);
       } catch (e) {
         if (!(e instanceof ApiError && e.status === 409)) throw e;
-        if (!confirm(`The skill ${e.detail} exists: replace all its files with those of ${what}?`)) return;
+        if (!(await ask({ title: `The skill ${e.detail} exists: replace it?`, detail: `All its files are replaced with those of ${what}.`, yes: "Replace", danger: true }))) return;
         skill = await attempt(true);
         replaced = true;
       }

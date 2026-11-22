@@ -9,8 +9,9 @@
   import RefusedHosts from "../components/RefusedHosts.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import When from "../components/When.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
-  import { ended, formOf, missedSentence, onSchedule, RUN_STATE, usage } from "../lib/automations";
+  import { ended, formOf, missedSentence, onSchedule, RUN_STATE, runsWords, usage } from "../lib/automations";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Trash from "@lucide/svelte/icons/trash-2";
   import type { AutomationRun, AutomationView, Session } from "../lib/contracts.gen";
@@ -52,8 +53,9 @@
   $effect(() => {
     void load();
     void loadSessions().catch(() => {});
-    const timer = setInterval(load, 3000);
-    return () => clearInterval(timer);
+    const stop = onChange(["automations"], () => void load()); // its runs, its state
+    const timer = setInterval(load, 3000); // its files: edited in your editor too, not handlerd's to tell
+    return () => (stop(), clearInterval(timer));
   });
 
   async function act(action: () => Promise<unknown>): Promise<void> {
@@ -77,7 +79,7 @@
     error = null;
     try {
       await api.deleteAutomation(name);
-      navigate({ view: "automations" }, true);
+      navigate({ view: "library", shelf: "automations" }, true);
     } catch (e) {
       error = (e as Error).message;
       busy = false;
@@ -123,7 +125,7 @@
   }
 </script>
 
-<PageHeader width="max-w-4xl" title={name} parent={{ label: "Library › Automations", href: href({ view: "automations" }) }}>
+<PageHeader width="max-w-4xl" title={name} parent={{ label: "Library › Automations", href: href({ view: "library", shelf: "automations" }) }}>
   {#snippet meta()}
     {#if view}<StatusBadge status={view.enabled ? "on" : "off"} />{/if}
   {/snippet}
@@ -320,7 +322,7 @@
                   said={run.said}
                   completed={run.state === "succeeded"}
                   {busy}
-                  again="Allow and run again"
+                  again={{ agent: runsWords(view.definition) }}
                   onallow={(hosts) => act(async () => (trial = await api.tryAutomation(name, run.sessionId ?? undefined, hosts)))}
                   onkeep={(hosts) => act(() => decideHosts(agentId, hosts, "blocked"))}
                 />

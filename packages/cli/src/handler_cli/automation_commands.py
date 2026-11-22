@@ -24,11 +24,10 @@ import argparse
 import sys
 import time
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 
 from .client import ClientError, Daemon
-from .output import one_line, table
+from .output import one_line, table, when_at
 
 WATCH_INTERVAL = 0.5
 
@@ -84,6 +83,8 @@ def what(view: dict[str, Any], names: dict[str, str]) -> str:
     if "agent" in run:
         name = names.get(view.get("agentId") or "", run["agent"])
         return f"agent {name}" + (f" ({run['project']})" if run.get("project") else "")
+    if "job" in run:
+        return f"app {run['app']}, its job {run['job']}"
     return f"app {run['app']}"
 
 
@@ -91,7 +92,7 @@ def last_run(view: dict[str, Any]) -> str:
     run = view.get("lastRun")
     if not run:
         return "-"
-    return f"{run['state']} {run['createdAt'][:16].replace('T', ' ')}"
+    return f"{run['state']} {when_at(run['createdAt'])}"
 
 
 def list_automations(d: Daemon, _: argparse.Namespace) -> int:
@@ -134,11 +135,6 @@ def show(d: Daemon, args: argparse.Namespace) -> int:
         print(f"Next run: {when_at(v['nextAt'])}")
     print(f"Last run: {last_run(v)}")
     return 0
-
-
-def when_at(t: str) -> str:
-    """A time of the API (UTC) as the local time, to the minute."""
-    return datetime.fromisoformat(t).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def examples(d: Daemon, _: argparse.Namespace) -> int:

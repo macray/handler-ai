@@ -9,6 +9,7 @@ user-owned TOML in `~/.config/handler-ai/connections/<name>.toml`, like an accou
 """
 
 import tomllib
+from collections.abc import Iterable
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
@@ -21,7 +22,7 @@ from .common import (
     SecretRef,
     StrictDocument,
 )
-from .harness import Caches, Command, ImageRepository, NonEmpty
+from .harness import Command, FolderCaches, ImageRepository, NonEmpty
 from .sandbox import CA_ENV
 
 ADDON_API_VERSION = "handler.tool/v1"
@@ -37,9 +38,16 @@ BindingName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")]
 SlotName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]
 CommandName = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")]
 
-# Env vars the platform owns: a tool may not set them (PATH is extended through `bin/`; the CA
-# variables point at the roots the sandbox trusts when its proxy gives secrets, A.3).
+# Env vars the platform owns: a tool may not set them, in any case (PATH is extended through
+# `bin/`; the proxy's are set in both cases, and programs read either; the CA variables point at
+# the roots the sandbox trusts when its proxy gives secrets, A.3).
 RESERVED_ENV = frozenset({"PATH", "HOME", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}) | CA_ENV
+
+
+def reserved_among(names: Iterable[str], reserved: frozenset[str]) -> list[str]:
+    """The names that are one of `reserved` whatever their case (`http_proxy`, `Path`), sorted."""
+    upper = {r.upper() for r in reserved}
+    return sorted({n for n in names if n.upper() in upper})
 
 
 class AddonSlot(Document):
@@ -73,13 +81,15 @@ class AddonManifest(Document):
     image: ImageRepository | None = None  # None: a tool without programs (skills, env, egress)
     commands: list[CommandName] = []  # exactly what the image's bin/ provides (checked at build)
     check: Annotated[list[NonEmpty], Field(min_length=1)] | None = None  # run by a rebuild (G.4)
+    # run after a connection is saved, as an agent of it gets the tool (G.2): it works or not
+    connection_check: Annotated[list[NonEmpty], Field(min_length=1)] | None = None
     env: EnvMap | None = None
     settings: dict[SlotName, AddonSlot] = {}
     secret_slots: dict[SlotName, AddonSecretSlot] = {}
     egress: list[EgressEntry] = []
     mcp: AddonMcp | None = None
     needs: list[Command] = []  # what it runs from the toolbox (B.6), checked at its build (G.4)
-    caches: Caches = []  # what its tools write, kept between sessions of its agents (D.8)
+    caches: FolderCaches = []  # what its tools write, kept between sessions of its agents (D.8)
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -98,7 +108,7 @@ class AddonManifest(Document):
             *(s.env for s in self.settings.values()),
             *(s.env for s in self.secret_slots.values()),
         ]
-        if reserved := sorted(set(names) & RESERVED_ENV):
+        if reserved := reserved_among(names, RESERVED_ENV):
             raise ValueError(f"env vars owned by the platform: {', '.join(reserved)}")
         if len(set(names)) != len(names):
             raise ValueError("an env var is set twice (env, settings and secretSlots must differ)")
@@ -109,6 +119,15 @@ class AddonManifest(Document):
                 raise ValueError(f"secret {name}: 'hosts' are for the proxy, not 'env' delivery")
             if outside := sorted(set(slot.hosts or []) - set(self.egress)):
                 raise ValueError(f"secret {name}: hosts not in 'egress': {', '.join(outside)}")
+        return self
+
+    @model_validator(mode="after")
+    def _its_connection_check(self) -> Self:
+        if self.connection_check:
+            if not self.has_slots:
+                raise ValueError("'connectionCheck' is for a tool with settings or secrets")
+            if self.connection_check[0] not in self.commands:
+                raise ValueError("'connectionCheck' must start with one of the tool's 'commands'")
         return self
 
     def secret_hosts(self, slot: str) -> list[str] | None:

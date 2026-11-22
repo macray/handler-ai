@@ -3,10 +3,14 @@
   // release to send, slide away to cancel; written down on the host, D.25), the host's router
   // picks which of your apps does it and runs it; the answer here, an agent's read again until it
   // ends (and pushed to your inbox), read aloud as Settings → Voice says. A question back is
-  // answered in the same box. Today's asks stay on this phone; below, what you can ask.
+  // answered in the same box. Today's asks stay on this phone, read as a short conversation (the
+  // latest last, over the mic and the box, where the thumb is); before the first, what you can
+  // ask, as chips (a tap fills the box).
   import { app } from "../lib/app.svelte";
   import type { AskAnswer, AskTurn } from "../lib/remote.gen";
   import { canRecord, readAloud, record, type Recording } from "../lib/voice";
+  import ListHeader from "./ListHeader.svelte";
+  import Offline from "./Offline.svelte";
 
   type Entry = { said: string; at: string; answer?: AskAnswer; error?: string; spoken?: boolean };
 
@@ -21,6 +25,22 @@
   let hearing = $state(false);
   let now = $state(Date.now());
   const listens = $derived(app.voice.listens && canRecord());
+  let page = $state<HTMLElement | null>(null);
+  let box = $state<HTMLTextAreaElement | null>(null);
+  // the conversation reads down: the latest at the bottom, scrolled to (entries hold it first)
+  const turns = $derived([...entries].reverse());
+
+  $effect(() => {
+    void turns.length;
+    void turns[turns.length - 1]?.answer;
+    if (page) page.scrollTop = page.scrollHeight;
+  });
+
+  /** A chip of what you can ask: the box filled with its app's name, for the rest to be said. */
+  function fill(name: string): void {
+    words = `${name}: `;
+    box?.focus();
+  }
 
   $effect(() => {
     if (!recording) return;
@@ -91,7 +111,7 @@
     const spoken = heard !== undefined;
     entries = [{ said, at, spoken }, ...entries];
     try {
-      const answer = await app.ask(turns);
+      const answer = await app.ask(turns, spoken);
       entries[0] = { said, at, answer, spoken };
       pending = answer.kind === "needs" ? [...turns, { who: "handler", text: answer.question ?? answer.summary }] : [];
       speak(entries[0]);
@@ -120,102 +140,313 @@
   }
 </script>
 
-<header class="top"><h1>Ask</h1></header>
-<main class="page" data-testid="ask-screen">
-  <form class="box" onsubmit={send}>
-    <textarea bind:value={words} rows="2" placeholder={pending.length ? "Your answer…" : "Ask anything your apps do…"} aria-label="what you want" data-testid="ask-input"></textarea>
-    <div class="row">
-      {#if recording}
-        <span class="hint rec">● {Math.floor((now - recording.started) / 1000)}s · release to send · slide away to cancel</span>
-      {:else}
-        <span class="hint">{hearing ? "Writing down what you said…" : pending.length ? "It asked you something" : listens ? "Hold the microphone to speak" : "Type what you want"}</span>
-      {/if}
-      {#if listens}
-        <button
-          type="button"
-          class="mic"
-          class:on={recording}
-          aria-label="hold to speak"
-          disabled={busy || hearing}
-          onpointerdown={hold}
-          onpointerup={release}
-          onpointerleave={slideAway}
-          onpointercancel={slideAway}
-          oncontextmenu={(e) => e.preventDefault()}
-          data-testid="ask-mic"
-          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            ><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></svg
-          ></button
-        >
-      {/if}
-      <button type="submit" class="send" disabled={busy || !words.trim()} data-testid="ask-send">{busy ? "…" : "Ask"}</button>
-    </div>
-  </form>
+<!-- the icons: the microphone (said by voice, the button), the terminal (a chat about it) -->
+{#snippet mic()}
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+{/snippet}
 
-  {#each entries as e (e.at)}
+<ListHeader title="Ask" />
+<main class="page" bind:this={page} data-testid="ask-screen">
+  <Offline />
+  <div class="push" aria-hidden="true"></div>
+  {#if !entries.length && app.askOptions.length}
+    <section class="can">
+      <h2>What you can ask</h2>
+      <div class="chips">
+        {#each app.askOptions as o (`${o.app}/${o.action}`)}
+          <button type="button" class="chip" onclick={() => fill(o.app)}><b>{o.app}</b> {o.description}</button>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  {#each turns as e (e.at)}
     {@const a = e.answer}
     <section class="turn" data-testid="ask-entry">
-      {#if e.said}<p class="said">{#if e.spoken}<svg class="heard" aria-label="heard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-            ><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></svg
-          >{/if}{e.said}</p>{/if}
+      {#if e.said}<p class="said">{#if e.spoken}<span class="heard" role="img" aria-label="heard">{@render mic()}</span>{/if}<span>{e.said}</span></p>{/if}
       {#if e.error}
-        <p class="error">{e.error}</p>
+        <div class="ans"><p class="error">{e.error}</p></div>
       {:else if !a}
-        <p class="hint">Finding which app does it…</p>
+        <div class="ans"><p class="run"><span class="spin" aria-hidden="true"></span>Finding which app does it…</p></div>
       {:else if a.kind === "pick"}
-        <p class="pick">{a.app} · {app.askOptions.find((o) => o.app === a.app && o.action === a.action)?.description ?? a.action}</p>
-        {#if a.run?.state === "succeeded" && a.run.result}
-          <p class="answer {a.run.result.status}" data-testid="ask-answer">{a.run.result.summary}</p>
-        {:else if a.run?.state === "failed"}
-          <p class="answer failed">{a.run.error ?? "It failed."}</p>
-        {:else}
-          <p class="answer hint">On it: its agent is working. Its answer comes here, and to your inbox.</p>
-        {/if}
+        <div class="ans">
+          <p class="by"><b>{a.app}</b> · {app.askOptions.find((o) => o.app === a.app && o.action === a.action)?.description ?? a.action}</p>
+          {#if a.run?.state === "succeeded" && a.run.result}
+            <p data-testid="ask-answer"><span class="mark {a.run.result.status}" aria-hidden="true">{a.run.result.status === "ok" ? "✓" : a.run.result.status === "failed" ? "✕" : "!"}</span> {a.run.result.summary}</p>
+          {:else if a.run?.state === "failed"}
+            <p><span class="mark failed" aria-hidden="true">✕</span> {a.run.error ?? "It failed."}</p>
+          {:else}
+            <p class="run"><span class="spin" aria-hidden="true"></span>On it: its job is running. Its answer comes here, and to your Inbox.</p>
+          {/if}
+        </div>
       {:else if a.kind === "needs"}
-        <p class="answer" data-testid="ask-question">{a.question ?? a.summary}</p>
+        <div class="ans q">
+          {#if a.app}<p class="by"><b>{a.app}</b>{#if a.action} · {app.askOptions.find((o) => o.app === a.app && o.action === a.action)?.description ?? a.action}{/if}</p>{/if}
+          <p data-testid="ask-question">{a.question ?? a.summary}</p>
+        </div>
       {:else}
-        <p class="answer">{a.summary}</p>
-        {#if app.chats.length}
-          <button type="button" class="chat" onclick={() => app.compose(true, e.said)} data-testid="ask-chat">Start a chat about it</button>
-        {/if}
+        <div class="ans">
+          <p class="by">no app does this</p>
+          <p>{a.summary}</p>
+          {#if app.chats.length || app.agents.length}
+            <!-- New session with what was said in it: on Chat, else a project's agent allowed from the phone -->
+            <button type="button" class="chat" onclick={() => app.compose(true, e.said)} data-testid="ask-chat">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></svg>Start a chat about it
+            </button>
+          {/if}
+        </div>
       {/if}
     </section>
   {/each}
-
-  {#if app.askOptions.length}
-    <section>
-      <h2>What you can ask</h2>
-      <ul class="card">
-        {#each app.askOptions as o (`${o.app}/${o.action}`)}<li><b>{o.app}</b> {o.description}</li>{/each}
-      </ul>
-    </section>
-  {/if}
 </main>
 
+{#if listens}
+  <div class="bigmic">
+    <button
+      type="button"
+      class="mic"
+      class:on={recording}
+      aria-label="hold to speak"
+      disabled={busy || hearing}
+      onpointerdown={hold}
+      onpointerup={release}
+      onpointerleave={slideAway}
+      onpointercancel={slideAway}
+      oncontextmenu={(e) => e.preventDefault()}
+      data-testid="ask-mic">{@render mic()}</button
+    >
+    {#if !entries.length || hearing}<span class="hint">{hearing ? "writing down what you said…" : "hold to speak"}</span>{/if}
+  </div>
+{/if}
+<form class="box" onsubmit={send}>
+  <textarea
+    bind:this={box}
+    bind:value={words}
+    rows="1"
+    placeholder={pending.length ? "Your answer…" : "Ask anything your apps do…"}
+    aria-label="what you want"
+    data-testid="ask-input"
+  ></textarea>
+  <button type="submit" class="send" class:on={words.trim() && !busy} disabled={busy || !words.trim()} data-testid="ask-send"
+    >{busy ? "…" : pending.length ? "Send" : "Ask"}</button
+  >
+</form>
+
+{#if recording}
+  <!-- the screen dimmed while recording; the mic stays above it, under the thumb -->
+  <div class="dim" role="status">
+    <span class="rec">● {Math.floor((now - recording.started) / 1000)}s · release to send · slide away to cancel</span>
+  </div>
+{/if}
+
 <style>
-  .top {
-    padding: max(0.75rem, env(safe-area-inset-top)) 1rem 0.25rem;
-  }
-  .top h1 {
-    font-size: 1.25rem;
-    font-weight: 650;
-  }
   .page {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 0.75rem 0.75rem max(1rem, env(safe-area-inset-bottom));
+    padding: 0.25rem 0.75rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.6rem;
   }
-  .box {
+  .push {
+    flex: 1; /* the conversation sits at the bottom, over the mic */
+  }
+  h2 {
+    font: 600 10.5px/1.4 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+    margin: 0 0.15rem 0.5rem;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    padding: 6px 11px;
     border: 1px solid var(--border);
     border-radius: 16px;
     background: var(--card);
-    padding: 0.6rem 0.6rem 0.5rem 0.8rem;
+    font-size: 12.5px;
+    color: var(--muted-foreground);
+    text-align: left;
+  }
+  .chip b {
+    font: 600 12px var(--mono);
+    color: var(--foreground);
+    margin-right: 2px;
+  }
+  .turn {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  /* what you said: an orange bubble on the right */
+  .said {
+    align-self: flex-end;
+    max-width: 86%;
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+    padding: 8px 12px;
+    border-radius: 14px 14px 4px 14px;
+    background: var(--accent-soft);
+    color: var(--accent-soft-foreground);
+    border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+    font-size: 0.92em;
+    overflow-wrap: anywhere;
+  }
+  .heard {
+    flex: none;
+    display: inline-grid;
+    margin-top: 3px;
+    color: var(--primary);
+  }
+  .heard :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+  /* its answer: which app took it in small mono, then what it said */
+  .ans {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    font-size: 0.92em;
+  }
+  .ans.q {
+    background: color-mix(in srgb, var(--warn-bar) 10%, var(--card));
+    border-color: color-mix(in srgb, var(--warn-bar) 28%, var(--card));
+  }
+  .by {
+    font: 600 11px/1.4 var(--mono);
+    color: var(--muted-foreground);
+  }
+  .by b {
+    color: var(--foreground);
+    font-weight: 600;
+  }
+  .mark.ok {
+    color: var(--ok);
+  }
+  .mark.attention {
+    color: var(--warn);
+    font-weight: 700;
+  }
+  .mark.failed {
+    color: var(--danger);
+  }
+  .run {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--muted-foreground);
+  }
+  .spin {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--ok);
+    animation: turn 0.9s linear infinite;
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .chat {
+    align-self: stretch;
+    margin-top: 8px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 10px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+  }
+  .chat svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .error {
+    color: var(--danger);
+  }
+  /* the big mic, over the box: hold to speak, release to send, slide away to cancel */
+  .bigmic {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 10px;
+  }
+  .mic {
+    position: relative;
+    z-index: 2; /* above the dimmed screen while recording */
+    width: 64px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--primary) 60%, transparent);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: transform var(--dur-1) var(--ease);
+  }
+  .mic :global(svg) {
+    width: 26px;
+    height: 26px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .mic.on {
+    transform: scale(1.2);
+    box-shadow:
+      0 0 0 14px color-mix(in srgb, var(--primary) 25%, transparent),
+      0 0 0 30px color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+  .hint {
+    font: 11.5px var(--mono);
+    color: var(--muted-foreground);
+  }
+  /* the box: one line, its button on the right */
+  .box {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0.75rem 0.6rem;
+    padding: 8px 8px 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--card);
   }
   textarea {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
+    max-height: 6.5em;
+    field-sizing: content;
     font: inherit;
     border: 0;
     background: transparent;
@@ -223,119 +454,39 @@
     resize: none;
     outline: none;
   }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-  .hint {
-    flex: 1;
-    font-size: 0.85em;
-    color: var(--muted-foreground);
-  }
   .send {
-    padding: 0.5rem 1rem;
-    border-radius: 999px;
+    flex: none;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 12px;
+    background: var(--muted);
+    color: var(--muted-foreground);
     font-weight: 600;
+  }
+  .send.on {
     background: var(--primary);
     color: var(--primary-foreground);
   }
-  .send:disabled {
-    opacity: 0.5;
-  }
-  .mic {
-    width: 44px;
-    height: 44px;
-    border-radius: 999px;
-    display: grid;
-    place-items: center;
-    border: 1px solid var(--border);
-    color: var(--muted-foreground);
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-  .mic svg {
-    width: 20px;
-    height: 20px;
-  }
-  .mic.on {
-    background: var(--danger);
-    border-color: var(--danger);
-    color: #fff;
-    box-shadow: 0 0 0 10px color-mix(in oklab, var(--danger) 18%, transparent);
+  .dim {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 1.5rem calc(env(safe-area-inset-bottom) + 250px);
+    background: rgb(28 26 23 / 0.86);
+    pointer-events: none; /* the mic keeps the touch: release sends, sliding away cancels */
+    animation: fade var(--dur-1) var(--ease) backwards;
   }
   .rec {
-    color: var(--danger);
-    font-family: ui-monospace, monospace;
+    font: 12px/1.5 var(--mono);
+    color: #fff;
+    text-align: center;
   }
-  .heard {
-    width: 0.85em;
-    height: 0.85em;
-    margin-right: 0.35rem;
-    vertical-align: -0.05em;
-    color: var(--muted-foreground);
-  }
-  .turn {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .said {
-    font-weight: 600;
-  }
-  .pick {
-    font-size: 0.85em;
-    color: var(--muted-foreground);
-  }
-  .answer {
-    padding: 0.6rem 0.8rem;
-    border-radius: 14px;
-    background: var(--muted);
-    border-left: 3px solid var(--border);
-  }
-  .answer.ok {
-    border-left-color: var(--ok);
-  }
-  .answer.attention {
-    border-left-color: var(--warn);
-  }
-  .answer.failed {
-    border-left-color: var(--danger);
-  }
-  .chat {
-    align-self: flex-start;
-    padding: 0.45rem 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--card);
-    font-size: 0.9em;
-    font-weight: 500;
-  }
-  .error {
-    color: var(--danger);
-    font-size: 0.9em;
-  }
-  h2 {
-    font-size: 0.8em;
-    font-weight: 600;
-    color: var(--muted-foreground);
-    margin-bottom: 0.4rem;
-  }
-  .card {
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--card);
-    font-size: 0.9em;
-  }
-  .card li {
-    padding: 0.55rem 0.9rem;
-  }
-  .card li + li {
-    border-top: 1px solid var(--border);
-  }
-  .card b {
-    font-weight: 600;
-    margin-right: 0.35rem;
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
   }
 </style>

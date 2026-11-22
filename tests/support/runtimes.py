@@ -187,6 +187,11 @@ class Apple:
 
     def leftovers(self, name: str) -> list[str]:
         found = [n for n in json.dumps(self._containers()).split('"') if n.startswith(name)]
+        volumes = subprocess.run(
+            ["container", "volume", "list", "--format", "json"],
+            capture_output=True, text=True, check=False,
+        ).stdout  # fmt: skip
+        found += [n for n in volumes.split('"') if n.startswith(name)]  # its disk
         base = os.environ.get("XDG_RUNTIME_DIR") or str(Path.home() / ".local" / "state")
         if (Path(base) / "handler-ai" / "sandboxes" / name).exists():
             found.append("instance dir")

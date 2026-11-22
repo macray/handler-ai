@@ -1,8 +1,9 @@
 """H.12, H.13 and D.24 with Handler's own Planner, in a real sandbox: installed from Handler's
-copy, given its folder and its agent (set up from its definition on the fake harness), deployed (its own
-tests run), then asked: by its code (calendar.md written, a clash said, at once), by its agent (a
-run, whose result is the action's), and through Ask (the router on the model alone, a stub
-provider playing it). Planner is the private registry's: opt-in, HANDLER_TEST_REGISTRY."""
+copy, given its folder and who works on its job (the fake harness), deployed (its own tests run),
+then asked: by its code (calendar.md written, a clash said, at once), by its job `planner` (a run,
+whose result is the action's), and through Ask (the router on the model alone, a stub provider
+playing it). Planner is the private registry's: opt-in, HANDLER_TEST_REGISTRY. (Planner made with
+an agents need, before its job: refused, its app.toml invalid, until its next version.)"""
 
 import json
 import time
@@ -61,12 +62,12 @@ def daemon(data_root: Path, stub: StubLlm) -> Iterator[Daemon]:
 
 @pytest.fixture(scope="module")
 def folder(daemon: Daemon) -> Path:
-    return daemon.make_scope() / "my-planner"  # in the work folders, its agent's: made when given
+    return daemon.make_scope() / "my-planner"  # in the work folders: made when given
 
 
 @pytest.fixture(scope="module")
 def installed(daemon: Daemon, folder: Path) -> dict[str, Any]:
-    """Planner from Handler's source (D.26), given a new folder and its agent, deployed."""
+    """Planner from Handler's source (D.26), given a new folder and who works, deployed."""
     api(daemon, "GET", "/v1/sources")  # the official source read
     r = api(daemon, "POST", "/v1/sources/official/apps/planner")
     assert r.status_code == 201, r.text
@@ -74,41 +75,28 @@ def installed(daemon: Daemon, folder: Path) -> dict[str, Any]:
     assert app["fromSource"] == "official"
     r = api(daemon, "PUT", "/v1/apps/planner/files/tasks", {"path": str(folder), "create": True})
     assert r.status_code == 200, r.text
-    (need,) = r.json()["agents"]
-    definition = need["definition"]
-    body = {
-        "name": definition["agentName"],
-        "model": {"account": "fake"},
-        "permissions": definition["permissions"],
-        "interface": definition["interface"],
-        "origin": need["origin"],
-        "app": need["origin"]["name"],
-        "scope": str(folder),
-    }
-    agent = api(daemon, "POST", "/v1/agents", body)
-    assert agent.status_code == 201, agent.text
-    r = api(daemon, "PUT", "/v1/apps/planner/agents/planner", {"agentId": agent.json()["id"]})
+    r = api(daemon, "PUT", "/v1/apps/planner/who-works", {"program": "fake", "account": "fake"})
     assert r.status_code == 200, r.text
     r = api(daemon, "POST", "/v1/apps/planner/deploy")
     assert r.status_code == 200, api(daemon, "GET", "/v1/apps/planner/log").json()["text"]
     return r.json()
 
 
-@pytest.mark.rule("action.done-by-its-code-or-its-agent")
+@pytest.mark.rule("action.done-by-its-code-or-its-job")
 def test_its_actions_are_listed_with_their_forms(installed: dict[str, Any]) -> None:
     actions = {a["name"]: a for a in installed["actions"]}
     assert {n: a["by"] for n, a in actions.items()} == {
         "add": "code",
         "todo": "code",
         "planned": "code",
-        "plan": "agent",
+        "plan": "job",
     }
     assert actions["add"]["fields"]["required"] == ["what", "day"]
-    assert "request" in actions["plan"]["fields"]["properties"]  # its agent's form
+    assert "request" in actions["plan"]["fields"]["properties"]  # its job's form
     assert actions["add"]["examples"][0] == "Tomorrow I call the bank at 10"
 
 
-@pytest.mark.rule("action.done-by-its-code-or-its-agent")
+@pytest.mark.rule("action.done-by-its-code-or-its-job")
 def test_an_ask_done_by_its_code(daemon: Daemon, installed: dict[str, Any], folder: Path) -> None:
     add = {"fields": {"what": "Dentist", "day": "2026-10-21", "time": "11:00"}}
     r = api(daemon, "POST", "/v1/apps/planner/actions/add", add)
@@ -117,22 +105,23 @@ def test_an_ask_done_by_its_code(daemon: Daemon, installed: dict[str, Any], fold
         "status": "ok",
         "summary": "Added Wednesday 21 October at 11:00: Dentist.",
         "data": r.json()["result"]["data"],
+        "open": "/?line=2026-10-21%2Fdentist",  # the page showing it (H.12), Ask's Open
     }
     add = {"fields": {"what": "Call the bank", "day": "2026-10-21", "time": "11:00"}}
     clash = api(daemon, "POST", "/v1/apps/planner/actions/add", add).json()
     assert (clash["state"], clash["result"]["status"]) == ("succeeded", "attention")
     assert clash["result"]["summary"].endswith("It clashes with Dentist at 11:00.")
-    assert "- [ ] 11:00 Dentist" in (folder / "calendar.md").read_text()
+    assert "- 11:00 Dentist" in (folder / "calendar.md").read_text()  # an event: no checkbox
 
     bad = api(daemon, "POST", "/v1/apps/planner/actions/add", {"fields": {"what": "x"}})
     assert bad.status_code == 400 and "day" in bad.json()["detail"]
     assert api(daemon, "POST", "/v1/apps/planner/actions/nope", {}).status_code == 404
 
 
-@pytest.mark.rule("action.done-by-its-code-or-its-agent")
-def test_an_ask_done_by_its_agent(daemon: Daemon, installed: dict[str, Any]) -> None:
+@pytest.mark.rule("action.done-by-its-code-or-its-job")
+def test_an_ask_done_by_its_job(daemon: Daemon, installed: dict[str, Any]) -> None:
     answer = {"status": "attention", "summary": "The bank first, then the dentist."}
-    fields = {"request": "Plan my day.", "fake": "valid", "answer": answer}  # the fake agent's
+    fields = {"request": "Plan my day.", "fake": "valid", "answer": answer}  # the fake harness's
     r = api(daemon, "POST", "/v1/apps/planner/actions/plan", {"fields": fields})
     assert r.status_code == 200, r.text
     run = r.json()
@@ -144,49 +133,56 @@ def test_an_ask_done_by_its_agent(daemon: Daemon, installed: dict[str, Any]) -> 
     assert run["state"] == "succeeded", run.get("error")
     assert run["result"] == answer | {"data": answer}
     session = api(daemon, "GET", f"/v1/sessions/{run['sessionId']}").json()
-    assert (session["origin"], session["app"]) == ("app", "planner")
+    assert (session["origin"], session["app"], session["job"]) == ("app", "planner", "planner")
 
 
-@pytest.mark.rule("router.the-one-you-gave")
+@pytest.mark.rule("ask.its-router-is-the-agent-you-gave")
 def test_ask_without_a_router(daemon: Daemon, installed: dict[str, Any]) -> None:
     said = {"turns": [{"who": "you", "text": "Tomorrow I call the bank at 10"}]}
     r = api(daemon, "POST", "/v1/ask", said)
     assert r.status_code == 409 and "Ask router" in r.json()["detail"]
 
 
-@pytest.mark.rule(
-    "ask.only-the-actions-offered",
-    "ask.a-pick-runs-at-once-as-the-owner",
-    "ask.none-leads-to-chat",
-    "router.one-run-per-ask",
-)
-def test_ask_routes_to_an_ask_and_runs_it(
-    daemon: Daemon, installed: dict[str, Any], stub: StubLlm, folder: Path
-) -> None:
-    router = {
+@pytest.fixture
+def router(daemon: Daemon) -> Iterator[str]:
+    """Ask's router set up as the person does (D.18), on the stub provider: its agent made from
+    the need's definition, then given; deleted after the test, Ask has none again. Its id."""
+    definition = {
         "name": "Ask router",
         "modelAlone": True,
         "model": {"provider": "stub"},
         "instructions": (ROUTER / "instructions.md").read_text(),
         "interface": json.loads((ROUTER / "interface.json").read_text()),
     }
-    agent = api(daemon, "POST", "/v1/agents", router)
+    agent = api(daemon, "POST", "/v1/agents", definition)
     assert agent.status_code == 201, agent.text
-    given = api(daemon, "PUT", "/v1/handler-needs/ask-router", {"agentId": agent.json()["id"]})
+    agent_id = agent.json()["id"]
+    given = api(daemon, "PUT", "/v1/handler-needs/ask-router", {"agentId": agent_id})
     assert given.status_code == 200, given.text
+    yield agent_id
+    assert api(daemon, "DELETE", f"/v1/agents/{agent_id}").status_code == 204
 
+
+@pytest.mark.rule(
+    "ask.only-the-actions-offered",
+    "ask.a-pick-runs-at-once-as-the-owner",
+    "ask.none-leads-to-chat",
+    "ask.each-ask-is-one-router-run",
+)
+def test_ask_routes_to_an_ask_and_runs_it(
+    daemon: Daemon, installed: dict[str, Any], router: str, stub: StubLlm, folder: Path
+) -> None:
     said = {"turns": [{"who": "you", "text": "Tomorrow I call the bank at 10"}]}
     answer = api(daemon, "POST", "/v1/ask", said | {"timezone": "Europe/Paris"}).json()
     assert (answer["kind"], answer["app"], answer["action"]) == ("pick", "planner", "add"), answer
     assert answer["why"] == "a call on a day"
-    assert (
-        answer["run"]["result"]["summary"] == "Added Thursday 22 October at 10:00: Call the bank."
-    )
+    summary = answer["run"]["result"]["summary"]  # a clash said after it: the phone's ran first
+    assert summary.startswith("Added Thursday 22 October at 10:00: Call the bank."), summary
     assert "- [ ] 10:00 Call the bank" in (folder / "calendar.md").read_text()
     prompt = json.dumps(stub.requests[-1]["messages"])
     assert "action `add`" in prompt and "Europe/Paris" in prompt  # what it read
     run = api(daemon, "GET", f"/v1/sessions/{answer['routerRun']}").json()
-    assert (run["origin"], run["agentId"]) == ("ask", agent.json()["id"])
+    assert (run["origin"], run["agentId"]) == ("ask", router)
 
     said = {"turns": [{"who": "you", "text": "Book a table at Chez Paul"}]}
     none = api(daemon, "POST", "/v1/ask", said).json()
@@ -196,10 +192,16 @@ def test_ask_routes_to_an_ask_and_runs_it(
         ("planner", "plan"),
     }
 
-    assert api(daemon, "PUT", "/v1/apps/planner/askable", {"askable": False}).is_success
+    # an action you take out of Ask is not offered to it; all of them out: nothing is
+    assert api(daemon, "PUT", "/v1/apps/planner/ask", {"notInAsk": ["add"]}).is_success
+    one_out = api(daemon, "POST", "/v1/ask", said).json()
+    offered = {(o["app"], o["action"]) for o in one_out["actions"]}
+    assert ("planner", "plan") in offered and ("planner", "add") not in offered
+    actions = [a["name"] for a in api(daemon, "GET", "/v1/apps/planner").json()["actions"]]
+    assert api(daemon, "PUT", "/v1/apps/planner/ask", {"notInAsk": actions}).is_success
     off = api(daemon, "POST", "/v1/ask", said).json()
     assert off["kind"] == "none" and off["actions"] == []  # nothing offered to Ask
-    assert api(daemon, "PUT", "/v1/apps/planner/askable", {"askable": True}).is_success
+    assert api(daemon, "PUT", "/v1/apps/planner/ask", {"notInAsk": []}).is_success
 
 
 @pytest.fixture(scope="module")
@@ -209,7 +211,7 @@ def gateway() -> Iterator[Gateway]:
 
 @pytest.mark.rule("ask.the-owner-s-devices-only")
 def test_ask_from_the_owner_s_phone(
-    daemon: Daemon, installed: dict[str, Any], gateway: Gateway
+    daemon: Daemon, installed: dict[str, Any], router: str, gateway: Gateway
 ) -> None:
     """D.24 on the device channel (D.7): the owner's phone lists what can be asked and asks (the
     host polls for it, nothing else being shared); a family member's phone cannot Ask."""

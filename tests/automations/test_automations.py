@@ -93,10 +93,10 @@ def agent(daemon: Daemon) -> dict[str, Any]:
 @pytest.mark.rule(
     "automation.a-folder-of-yours",
     "automation.says-what-it-does",
-    "stop.each-part-read-once",
-    "runner.keeps-its-runs",
+    "automation.a-stop-reads-each-part-once",
+    "automation.keeps-its-last-50-runs",
     "script.no-network-no-secret",
-    "append.only-what-it-declares-once-it-succeeded",
+    "script.appends-to-notes-only-what-it-declares-after-success",
     "llm.only-the-models-it-names",
 )
 def test_a_stop_runs_it_and_appends_once(
@@ -141,7 +141,7 @@ def test_a_stop_runs_it_and_appends_once(
         assert [r["id"] for r in linked] == [run["id"]]
 
 
-@pytest.mark.rule("script.reads-its-part-redacted")
+@pytest.mark.rule("script.reads-its-conversation-part-without-secrets")
 def test_the_store_secrets_are_redacted_from_the_input(
     daemon: Daemon, agent: dict[str, Any]
 ) -> None:
@@ -158,7 +158,7 @@ def test_the_store_secrets_are_redacted_from_the_input(
         assert SECRET_IN_LOG not in text and "«redacted»" in text, file
 
 
-@pytest.mark.rule("automation.off-until-you-turn-it-on", "stop.each-part-read-once")
+@pytest.mark.rule("automation.off-until-you-turn-it-on", "automation.a-stop-reads-each-part-once")
 def test_only_conversations_past_since_and_not_deleted_fire(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -186,7 +186,9 @@ def test_only_conversations_past_since_and_not_deleted_fire(
     assert not (knowledge / "handler" / "since.md").exists()
 
 
-@pytest.mark.rule("stop.each-part-read-once", "script.reads-its-part-redacted")
+@pytest.mark.rule(
+    "automation.a-stop-reads-each-part-once", "script.reads-its-conversation-part-without-secrets"
+)
 def test_resumed_then_stopped_reads_only_the_new_part(
     daemon: Daemon, agent: dict[str, Any]
 ) -> None:
@@ -201,7 +203,10 @@ def test_resumed_then_stopped_reads_only_the_new_part(
     assert "again" in given and "hello" not in given
 
 
-@pytest.mark.rule("append.only-what-it-declares-once-it-succeeded", "try.now-on-or-off")
+@pytest.mark.rule(
+    "script.appends-to-notes-only-what-it-declares-after-success",
+    "automation.try-runs-it-now-even-off",
+)
 def test_a_try_appends_nothing_and_shows_what_it_would(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -258,7 +263,9 @@ def test_problems_and_errors(daemon: Daemon) -> None:
         assert c.get("/v1/automations/probs/runs/a_0000000000000000").status_code == 404
 
 
-@pytest.mark.rule("script.no-network-no-secret", "append.only-what-it-declares-once-it-succeeded")
+@pytest.mark.rule(
+    "script.no-network-no-secret", "script.appends-to-notes-only-what-it-declares-after-success"
+)
 def test_a_failing_script_appends_nothing_and_moves_on(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -270,7 +277,10 @@ def test_a_failing_script_appends_nothing_and_moves_on(
     assert not (knowledge / "handler" / "fails.md").exists()
 
 
-@pytest.mark.rule("stop.at-least-once", "append.only-what-it-declares-once-it-succeeded")
+@pytest.mark.rule(
+    "automation.stops-missed-are-read-at-start",
+    "script.appends-to-notes-only-what-it-declares-after-success",
+)
 def test_a_run_cut_by_handlerd_stopping_runs_again(
     daemon: Daemon, agent: dict[str, Any], knowledge: Path
 ) -> None:
@@ -354,10 +364,10 @@ def reviewer(daemon: Daemon, name: str, account: str = "fake") -> dict[str, Any]
 
 @pytest.mark.rule(
     "automation.says-what-it-does",
-    "runner.keeps-its-runs",
-    "try.now-on-or-off",
-    "agent-run.a-run-of-the-job",
-    "inbox.what-it-is-told",
+    "automation.keeps-its-last-50-runs",
+    "automation.try-runs-it-now-even-off",
+    "automation.a-job-s-run-succeeds-only-with-a-valid-result",
+    "inbox.told-by-handlerd-alone",
     "inbox.keeps-the-last-200",
 )
 def test_an_agent_run_s_result_goes_to_the_inbox(daemon: Daemon) -> None:
@@ -396,7 +406,9 @@ def test_an_agent_run_s_result_goes_to_the_inbox(daemon: Daemon) -> None:
         assert [r["id"] for r in linked] == [run["id"]]
 
 
-@pytest.mark.rule("agent-run.a-run-of-the-job", "inbox.what-it-is-told")
+@pytest.mark.rule(
+    "automation.a-job-s-run-succeeds-only-with-a-valid-result", "inbox.told-by-handlerd-alone"
+)
 def test_an_agent_run_without_a_result_is_a_failure_in_the_inbox(daemon: Daemon) -> None:
     reviewer(daemon, "quiet-reviewer")
     write(daemon, "quiet", 'when = { every = "1h" }\nrun = { agent = "quiet-reviewer" }\n')
@@ -491,7 +503,9 @@ def test_one_made_from_a_definition_is_checked_written_and_turned_on(daemon: Dae
     assert 'when = {every = "2h"}' in toml
 
 
-@pytest.mark.rule("schedule.the-latest-slot-once", "script.reads-its-part-redacted")
+@pytest.mark.rule(
+    "schedule.the-latest-slot-once", "script.reads-its-conversation-part-without-secrets"
+)
 def test_a_schedule_runs_its_latest_slot_once(daemon: Daemon) -> None:
     folder = write(
         daemon, "hourly", 'when = { every = "1h" }\nrun = "cat $HANDLER_INPUT/event.json"\n'
@@ -513,7 +527,7 @@ def test_a_schedule_runs_its_latest_slot_once(daemon: Daemon) -> None:
     assert datetime.fromisoformat(view["nextAt"]) == since + timedelta(hours=4)
 
 
-@pytest.mark.rule("stop.a-run-never-fires")
+@pytest.mark.rule("automation.a-run-starts-no-automation")
 def test_a_job_s_run_ending_starts_no_automation_a_brief_s_session_does(
     daemon: Daemon, stub: StubLlm
 ) -> None:
@@ -546,7 +560,7 @@ def test_a_job_s_run_ending_starts_no_automation_a_brief_s_session_does(
     assert all(r["sessionId"] != ran["id"] for r in runs(daemon, "no-loops"))
 
 
-@pytest.mark.rule("automation.a-refused-host-is-reported", "inbox.what-it-is-told")
+@pytest.mark.rule("automation.a-refused-host-is-reported", "inbox.told-by-handlerd-alone")
 def test_a_run_with_a_host_refused_says_so_and_runs_again_once_allowed(daemon: Daemon) -> None:
     """A run that completed with a host refused says so, in one message; one that failed has
     Handler's reason, not the agent's guess; *Allow and run again* allows it, then runs."""

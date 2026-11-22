@@ -2,11 +2,14 @@
   // Settings → Sandboxes (D.2, D.4, A.8): where agents run (the runtime in use and its version,
   // Ready, Change: the runtimes installed, each with Handler's check of this computer, amber when
   // switching would give less; what switching needs), a problem on this computer one row with its
-  // fix; Updates (automatic, Update now, each program's version and when it was built; one whose
+  // fix, no memory and CPU limits a neutral fact with its Why folded (E1); Updates (automatic,
+  // Update now, each program's version and when it was built; one whose
   // update failed its check is held back, See why opens that build); Under the hood, folded: the
   // images (the network filter, the agent programs, the tools that bring programs; each built or
   // updated here) and the toolbox (ToolboxSettings). A build's progress and log show above the
-  // updates while it runs or after it failed; the log is shown as text, never as markup.
+  // updates while it runs or after it failed; the log is shown as text, never as markup. One
+  // started from here (an image's Build or Update, the toolbox's, Update now, See why) is brought
+  // into view: those buttons are below it, the panel would open out of sight.
   import When from "./When.svelte";
   import Box from "@lucide/svelte/icons/box";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -18,14 +21,18 @@
   import { Button } from "$lib/components/ui/button";
   import * as NativeSelect from "$lib/components/ui/native-select";
   import { Skeleton } from "$lib/components/ui/skeleton";
+  import { tick } from "svelte";
   import { api } from "../lib/api";
-  import type { AddonInfo, Build, HarnessInfo, ImageUpdates, NetworkFilterInfo, SandboxRuntime, ToolboxInfo } from "../lib/contracts.gen";
+  import type { AddonInfo, Build, HarnessImage, HarnessInfo, ImageUpdates, NetworkFilterInfo, SandboxRuntime, ToolboxInfo } from "../lib/contracts.gen";
   import { runtime } from "../lib/runtime.svelte";
   import Popover from "./Popover.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import ToolboxSettings from "./ToolboxSettings.svelte";
 
   let harnesses = $state<HarnessInfo[]>([]);
+  let images = $state<HarnessImage[]>([]); // the harnesses' images (D.4)
+  // each harness with its image's state
+  const programs = $derived(harnesses.map((h) => ({ ...h, ...images.find((i) => i.name === h.name) })));
   let addons = $state<AddonInfo[]>([]); // those with an image (the others have nothing to build)
   let toolbox = $state<ToolboxInfo | null>(null);
   let networkFilter = $state<NetworkFilterInfo | null>(null);
@@ -35,6 +42,7 @@
   let error = $state<string | null>(null);
   let busy = $state(false); // a request of ours is in flight
   let logElement = $state<HTMLPreElement | null>(null);
+  let panelElement = $state<HTMLDivElement | null>(null);
   let offset = 0;
   const host = $derived(runtime.check); // what the container runtime finds missing (A.8)
   let updates = $state<ImageUpdates | null>(null); // automatic updates (D.4)
@@ -44,22 +52,32 @@
 
   const running = $derived(build?.state === "running");
 
+  // Loads may overlap (a change made here, a build that ended) and end in any order: only the
+  // latest one shows, never an older one that ends after it with what was before.
+  let latestLoad = 0;
+
   async function load(): Promise<void> {
+    const mine = ++latestLoad;
     try {
-      let all: AddonInfo[];
       // each installed runtime's own check may take a while: apart, not holding the rest
       api.runtimes().then(
-        (list) => (runtimes = list),
+        (list) => {
+          if (mine === latestLoad) runtimes = list;
+        },
         (e: Error) => (error = e.message),
       );
-      [harnesses, toolbox, networkFilter, all, updates, builds] = await Promise.all([
+      const results = await Promise.all([
         api.harnesses(),
+        api.harnessImages(),
         api.toolbox(),
         api.networkFilter(),
         api.addons(),
         api.imageUpdates(),
         api.builds(),
       ]);
+      if (mine !== latestLoad) return;
+      let all: AddonInfo[];
+      [harnesses, images, toolbox, networkFilter, all, updates, builds] = results;
       addons = all.filter((a) => a.image && !a.error);
     } catch (e) {
       error = (e as Error).message;
@@ -89,11 +107,17 @@
     );
   });
 
-  function show(b: Build): void {
+  // `reveal`: asked from here, the panel scrolled into view (only if out of it) and focused
+  function show(b: Build, reveal = false): void {
     build = b;
     log = "";
     offset = 0;
     void poll();
+    if (reveal) void tick().then(() => {
+      const still = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+      panelElement?.scrollIntoView({ block: "nearest", behavior: still ? "smooth" : "auto" });
+      panelElement?.focus({ preventScroll: true });
+    });
   }
 
   async function poll(): Promise<void> {
@@ -141,7 +165,7 @@
   }
 
   function rebuild(target: string, update = false): Promise<void> {
-    return act(async () => show(await api.rebuild(target, update)));
+    return act(async () => show(await api.rebuild(target, update), true));
   }
 
   function setSchedule(schedule: string): Promise<void> {
@@ -154,7 +178,7 @@
     return act(async () => {
       updates = await api.runImageUpdates();
       const list = (builds = await api.builds());
-      if (list[0]?.state === "running") show(list[0]);
+      if (list[0]?.state === "running") show(list[0], true);
     });
   }
 
@@ -171,18 +195,23 @@
     const WORDS: Record<string, string> = { nested: "containers", privileged: "privileged", display: "window" };
     return lacks.length ? `no ${lacks.map((a) => WORDS[a] ?? a).join(", ")} sandboxes` : null;
   }
-  const problems = $derived(host?.items.filter((i) => !i.ok) ?? []);
+  // what this computer lacks: memory and CPU limits are a fact of the machine (E1: neutral, its
+  // why folded), the rest a problem with its fix
+  const LIMITS = "memory and CPU limits";
+  const noLimits = $derived(host?.items.find((i) => i.name === LIMITS && !i.ok && !i.required));
+  const problems = $derived(host?.items.filter((i) => !i.ok && i !== noLimits) ?? []);
+  let limitsWhy = $state(false);
   // what an update covers: the network filter and the images already built (D.4)
   type Update = { target: string; name: string; version: string; at?: string | null };
   const updated = $derived<Update[]>([
-    ...harnesses.filter((h) => h.imagePresent).map((h) => ({ target: h.name, name: h.product, version: short(h.version), at: h.builtAt })),
+    ...programs.filter((h) => h.imagePresent).map((h) => ({ target: h.name, name: h.product, version: short(h.version), at: h.builtAt })),
     ...(networkFilter?.imagePresent ? [{ target: "network-filter", name: "Network filter", version: "", at: networkFilter.builtAt }] : []),
     ...addons.filter((a) => a.imagePresent).map((a) => ({ target: `addon:${a.name}`, name: a.name, version: a.version ?? "", at: a.builtAt })),
   ]);
   const heldBack = (target: string) => updates?.lastFailed?.includes(target) ?? false;
   const failedBuild = (target: string) => builds.find((b) => b.state === "failed" && (b.target === target || b.harnesses?.includes(target) || b.addons?.includes(target.replace(/^addon:/, ""))));
-  const notBuilt = $derived(harnesses.filter((h) => !h.imagePresent).length + addons.filter((a) => !a.imagePresent).length + (networkFilter && !networkFilter.imagePresent ? 1 : 0) + (toolbox && !toolbox.imagePresent ? 1 : 0));
-  const imageCount = $derived(harnesses.filter((h) => h.imagePresent).length + addons.filter((a) => a.imagePresent).length + (networkFilter?.imagePresent ? 1 : 0));
+  const notBuilt = $derived(programs.filter((h) => !h.imagePresent).length + addons.filter((a) => !a.imagePresent).length + (networkFilter && !networkFilter.imagePresent ? 1 : 0) + (toolbox && !toolbox.imagePresent ? 1 : 0));
+  const imageCount = $derived(programs.filter((h) => h.imagePresent).length + addons.filter((a) => a.imagePresent).length + (networkFilter?.imagePresent ? 1 : 0));
 
   function cancel(): Promise<void> {
     return act(async () => {
@@ -281,6 +310,26 @@
         </Popover>
       {/if}
     </li>
+    {#if noLimits}
+      <li class="px-4 py-3.5" data-testid="runtime-limits">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span class="w-36 shrink-0 font-medium">Memory and CPU limits</span>
+          <span class="min-w-0 flex-1 text-muted-foreground"
+            >Not available on this computer ·
+            <button type="button" class="text-link hover:underline" aria-expanded={limitsWhy} onclick={() => (limitsWhy = !limitsWhy)} data-testid="runtime-limits-why">Why</button></span
+          >
+        </div>
+        {#if limitsWhy}
+          <div class="mt-3 flex flex-wrap items-start gap-x-4 gap-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground" data-testid="runtime-limits-detail">
+            <p class="min-w-0 flex-1 basis-64 space-y-1">
+              <span class="block">Agents still run sandboxed; one could use all of this computer's memory.</span>
+              <span class="block font-mono [overflow-wrap:anywhere]">{noLimits.detail}</span>
+            </p>
+            <Button size="sm" variant="ghost" onclick={() => runtime.refresh()} data-testid="runtime-recheck"><RefreshCw />Check again</Button>
+          </div>
+        {/if}
+      </li>
+    {/if}
     {#each problems as item (item.name)}
       <li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 {item.required ? 'bg-danger/5' : 'bg-warn/5'}" data-testid="runtime-problem">
         <span class="flex w-36 shrink-0 items-center gap-2 font-medium {item.required ? 'text-danger' : 'text-warn'}"><TriangleAlert class="size-4 shrink-0" />{item.name}</span>
@@ -291,7 +340,14 @@
   </ul>
 
   {#if build}
-    <div class="enter space-y-3 rounded-[10px] border bg-card p-4 shadow-panel" data-testid="build-panel">
+    <div
+      bind:this={panelElement}
+      tabindex="-1"
+      role="region"
+      aria-label="Build of {build.target}"
+      class="enter scroll-mt-4 space-y-3 rounded-[10px] border bg-card p-4 shadow-panel outline-none"
+      data-testid="build-panel"
+    >
       <div class="flex flex-wrap items-center gap-2 text-sm">
         <span class="font-medium">Building {build.target}</span>
         <span data-testid="build-state"><StatusBadge status={build.state} /></span>
@@ -348,7 +404,7 @@
                 >
               {/if}
               <span class="ml-auto text-xs text-muted-foreground">{#if u.at}<When at={u.at} />{/if}</span>
-              {#if failed}<Button size="sm" variant="ghost" class="text-primary" onclick={() => show(failed)} data-testid="update-see-why">See why</Button>{/if}
+              {#if failed}<Button size="sm" variant="ghost" class="text-primary" onclick={() => show(failed, true)} data-testid="update-see-why">See why</Button>{/if}
             </li>
           {/each}
         </ul>
@@ -389,7 +445,7 @@
           <div class="space-y-2">{#each { length: 3 }, i (i)}<Skeleton class="h-14 w-full rounded-[10px]" role="status" aria-label="Loading" data-testid="loading" />{/each}</div>
         {:else}
           <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
-            {#each harnesses as h (h.name)}
+            {#each programs as h (h.name)}
               {@render image({
                 testid: "harness-image-row",
                 versionTestid: "harness-version",

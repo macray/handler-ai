@@ -65,7 +65,7 @@ class ImageCheckError(RuntimeError):
 
 
 @contextlib.contextmanager
-def _scratch_scope(settings: Settings, prefix: str) -> Iterator[str]:
+def scratch_scope(settings: Settings, prefix: str) -> Iterator[str]:
     """An empty folder for a check's sandbox to work in, checked, removed afterwards."""
     base = settings.state_dir / "image-check"
     base.mkdir(parents=True, exist_ok=True)
@@ -80,7 +80,7 @@ def _scratch_scope(settings: Settings, prefix: str) -> Iterator[str]:
 
 async def check(settings: Settings, harness: catalog.Harness, image: str, log: Log) -> None:
     descriptor = harness.descriptor
-    with _scratch_scope(settings, f"{descriptor.name}-") as scope:
+    with scratch_scope(settings, f"{descriptor.name}-") as scope:
         await _check_session(descriptor, image, scope, log)
 
 
@@ -162,11 +162,14 @@ async def _check_session(descriptor: HarnessDescriptor, image: str, checked: str
 
 
 def mcp_probe(path: str) -> StdioMcpServer:
-    """A stdio MCP server that writes the environment it was started with to `path`, then
-    waits, reading what the harness sends without answering or echoing it (a request echoed back
-    reads as one from the server: Vibe logs it as invalid). The check only needs it started."""
+    """A stdio MCP server that writes the environment it was started with to `path` (written
+    aside, then moved: whole once there), then waits, reading what the harness sends without
+    answering or echoing it (a request echoed back reads as one from the server: Vibe logs it as
+    invalid). The check only needs it started."""
     return StdioMcpServer(
-        name="handler-check-probe", command="sh", args=["-c", f"env > {path}; exec cat > /dev/null"]
+        name="handler-check-probe",
+        command="sh",
+        args=["-c", f"env > {path}.new && mv {path}.new {path}; exec cat > /dev/null"],
     )
 
 
@@ -186,11 +189,10 @@ def mcp_problems(dump: str | None, marker: str, secret: str) -> list[str]:
 
 
 async def _wait_for(path: str, timeout: float) -> None:
-    """Until `path` exists and stopped growing, or `timeout`."""
+    """Until `path` exists, or `timeout`."""
     deadline = asyncio.get_running_loop().time() + timeout
     while not os.path.exists(path) and asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.5)
-    await asyncio.sleep(0.5)  # `env >` may still be writing
 
 
 def _read(path: str) -> str | None:
@@ -270,7 +272,7 @@ async def check_addon(
     addon on PATH. Returns the version line."""
     manifest = addon.manifest
     target = manifest.mount_target
-    with _scratch_scope(settings, f"addon-{manifest.name}-") as scope:
+    with scratch_scope(settings, f"addon-{manifest.name}-") as scope:
 
         async def run(script: str, *args: str, on_path: bool = False) -> tuple[int, str]:
             spec = compose.addon_check_spec(
@@ -282,7 +284,7 @@ async def check_addon(
                 argv=["sh", "-c", f"exec 2>&1\n{script}", "sh", *args],
                 path=manifest.bin_dir if on_path else None,
             )
-            return await _run_check(spec, log)
+            return await run_check(spec, log)
 
         log(f"check: its folder mounted at {target} in {toolbox} (no network, as agents get it)")
         code, listing = await run(f'ls -1A "{target}/bin"')
@@ -325,14 +327,14 @@ async def check_addon(
 async def _in_toolbox(settings: Settings, toolbox: str, script: str, log: Log) -> tuple[int, str]:
     """`script` run by `sh -eu` in the toolbox alone, as agents get it: its exit code and what it
     printed (stderr included)."""
-    with _scratch_scope(settings, "toolbox-") as scope:
+    with scratch_scope(settings, "toolbox-") as scope:
         spec = compose.toolbox_check_spec(
             name=f"handler-check-{uuid.uuid4().hex[:8]}",
             toolbox=toolbox,
             scope=scope,
             argv=["sh", "-euc", f"exec 2>&1\n{script}"],
         )
-        return await _run_check(spec, log)
+        return await run_check(spec, log)
 
 
 async def check_system_packages(
@@ -362,7 +364,7 @@ async def toolbox_commands(
     return found
 
 
-async def _run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:
+async def run_check(spec: SandboxSpec, log: Log) -> tuple[int, str]:
     """One check command in its sandbox: its exit code and what it printed. The sandbox's own
     lines (stderr) go to the log. A sandbox that did not start (A.1: refused, invalid, its setup
     failed) is said as such, its launcher's reason with it, not as the command's failure."""

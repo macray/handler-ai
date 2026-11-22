@@ -323,7 +323,7 @@
       </div>
     {:else}
       <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-muted-foreground">
-        Your library has no skill yet: write or import one in <a class="text-link hover:underline" href={href({ view: "skills" })}>Skills</a>.
+        Your library has no skill yet: write or import one in <a class="text-link hover:underline" href={href({ view: "library", shelf: "skills" })}>Skills</a>.
       </p>
     {/if}
     <div class="mt-4 flex justify-end">

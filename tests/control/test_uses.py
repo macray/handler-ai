@@ -1,7 +1,6 @@
 """D.22 conformance: what uses what, on a real handlerd: an agent's skills (its own and its
 project's), knowledge, connection and model access, each seen from both ends."""
 
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +24,9 @@ def pairs(refs: list[dict[str, Any]]) -> set[tuple[str, str]]:
 
 @pytest.mark.rule("uses.computed-not-kept", "uses.seen-from-both-ends")
 def test_what_an_agent_uses_and_what_uses_it(daemon: Daemon) -> None:
-    root = Path(tempfile.mkdtemp(prefix="knowledge-"))
-    (root / "acme").mkdir()
+    root = Path(daemon.env["HANDLER_NOTES_DIR"])  # its own notes root
+    (root / "acme").mkdir(parents=True, exist_ok=True)
     with daemon.http() as c:
-        c.put("/v1/knowledge/root", json={"root": str(root)}).raise_for_status()
         for name in ("own-skill", "shared-skill"):
             c.post("/v1/skills", json={"content": SKILL.format(name=name)}).raise_for_status()
         r = c.post(
@@ -42,7 +40,7 @@ def test_what_an_agent_uses_and_what_uses_it(daemon: Daemon) -> None:
                         "name": "dev",
                         "model": {"account": "fake"},
                         "skills": ["own-skill"],
-                        "knowledge": ["acme"],
+                        "knowledge": [{"folder": "acme"}],
                         "addons": [{"addon": "fake-browser", "binding": "browser"}],
                     }
                 ],

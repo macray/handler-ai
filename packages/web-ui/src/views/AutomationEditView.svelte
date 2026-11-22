@@ -12,11 +12,13 @@
   import * as NativeSelect from "$lib/components/ui/native-select";
   import PageHeader from "../components/PageHeader.svelte";
   import RunFields from "../components/RunFields.svelte";
+  import ScheduleFields from "../components/ScheduleFields.svelte";
   import When from "../components/When.svelte";
   import { accessLabel } from "../lib/access";
   import { exactTime } from "../lib/agents";
   import { api } from "../lib/api";
-  import { DAYS, formOf, howOften, SCHEDULE_PRESETS, scheduleOf, scheduleProblem, suggestName, WEEKDAYS, type Day, type ScheduleForm } from "../lib/automations";
+  import { appTitle } from "../lib/apps";
+  import { DAYS, formOf, howOften, SCHEDULE_PRESETS, scheduleOf, scheduleProblem, suggestName, type Day, type ScheduleForm } from "../lib/automations";
   import type { Agent, App, Automation, AutomationCheck, AutomationView, Project } from "../lib/contracts.gen";
   import { GROUP, SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
   import { USE_LABEL, useOfAgent } from "../lib/interface";
@@ -34,7 +36,7 @@
   let error = $state<string | null>(null);
 
   let on = $state<"time" | "stop">("time");
-  let every = $state({ n: 1, unit: "h" as "m" | "h" });
+  let every = $state({ n: 1, unit: "h" as "m" | "h" | "d" });
   let at = $state({ at: "08:30", days: [...DAYS] as Day[] });
   let timeKind = $state<"every" | "at">("at");
   let stopProject = $state(""); // "": any project's session (and those outside projects)
@@ -60,7 +62,7 @@
     Promise.all([api.agents(), api.projects(), api.apps(), editing ? api.automation(editing) : null]).then(
       ([a, p, x, current]) => {
         agents = a.filter((ag) => ag.interface?.result);
-        others = a.filter((ag) => ag.projectId && !ag.interface?.result && !ag.app);
+        others = a.filter((ag) => ag.projectId && !ag.interface?.result);
         projectList = p;
         apps = x;
         if (current) fill(current);
@@ -212,19 +214,11 @@
     return !!schedule && JSON.stringify(scheduleOf(form)) === JSON.stringify(scheduleOf(schedule));
   }
 
-  function toggleDay(d: Day): void {
-    at.days = at.days.includes(d) ? at.days.filter((x) => x !== d) : DAYS.filter((x) => x === d || at.days.includes(x));
-  }
-
-  const DAY_LABEL: Record<Day, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
-  const CHIP = "cursor-pointer rounded-md border px-2.5 py-1 text-sm transition-colors";
-  const CHIP_ON = "border-primary bg-primary text-primary-foreground";
-  const CHIP_OFF = "bg-card text-muted-foreground hover:text-foreground";
 </script>
 
 <PageHeader width="max-w-3xl"
   title={editing ? `Change ${editing}` : "New automation"}
-  parent={editing ? { label: editing, href: href({ view: "automation", name: editing }) } : { label: "Library › Automations", href: href({ view: "automations" }) }}
+  parent={editing ? { label: editing, href: href({ view: "automation", name: editing }) } : { label: "Library › Automations", href: href({ view: "library", shelf: "automations" }) }}
 />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-3xl space-y-10 px-8 py-10">
@@ -247,37 +241,7 @@
           {/each}
         </div>
         <div class="space-y-3 rounded-lg border bg-card p-4">
-          <div class="inline-flex rounded-lg border bg-muted p-0.5" role="radiogroup" aria-label="schedule">
-            {#each [{ v: "at", label: "At a time of day" }, { v: "every", label: "Every…" }] as o (o.v)}
-              <button type="button" role="radio" aria-checked={timeKind === o.v} class="{SEGMENT} {timeKind === o.v ? SEGMENT_ON : SEGMENT_OFF}" onclick={() => (timeKind = o.v as "at" | "every")} data-testid={`schedule-${o.v}`}>
-                {o.label}
-              </button>
-            {/each}
-          </div>
-          {#if timeKind === "every"}
-            <div class="flex items-center gap-2">
-              <Label for="every-n" class="font-normal">Every</Label>
-              <Input id="every-n" type="number" min="1" class="h-9 w-24" bind:value={every.n} data-testid="schedule-every-n" />
-              <NativeSelect.Root bind:value={every.unit} class="w-32" aria-label="unit" data-testid="schedule-every-unit">
-                <NativeSelect.Option value="m">minutes</NativeSelect.Option>
-                <NativeSelect.Option value="h">hours</NativeSelect.Option>
-              </NativeSelect.Root>
-            </div>
-            <p class="text-xs text-muted-foreground">Counted from when you turn it on: at least every 5 minutes.</p>
-          {:else}
-            <div class="flex flex-wrap items-center gap-2">
-              <Label for="at-time" class="font-normal">At</Label>
-              <Input id="at-time" type="time" class="h-9 w-32" bind:value={at.at} data-testid="schedule-at" />
-              <span class="text-sm text-muted-foreground">your local time, on</span>
-            </div>
-            <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="days" data-testid="schedule-days">
-              {#each DAYS as d (d)}
-                <button type="button" aria-pressed={at.days.includes(d)} class="{CHIP} {at.days.includes(d) ? CHIP_ON : CHIP_OFF}" onclick={() => toggleDay(d)}>{DAY_LABEL[d]}</button>
-              {/each}
-              <Button type="button" variant="ghost" size="sm" onclick={() => (at.days = [...WEEKDAYS])}>Weekdays</Button>
-              <Button type="button" variant="ghost" size="sm" onclick={() => (at.days = [...DAYS])}>Every day</Button>
-            </div>
-          {/if}
+          <ScheduleFields bind:timeKind bind:every bind:at everyHint="Counted from when you turn it on: at least every 5 minutes." />
           {#if scheduleWrong}
             <p class="text-xs text-danger">{scheduleWrong}</p>
           {:else if schedule}
@@ -353,7 +317,7 @@
               {/if}
             </div>
             <p class="text-sm" data-testid="new-automation-model">
-              Runs on <strong>{accessLabel(agent.model)}</strong>, its model (the one its sessions start with too).
+              Who works: <strong>{accessLabel(agent.model)}</strong>, as in its sessions.
               <a class="text-link hover:underline" href={agent.projectId ? href({ view: "edit-agent", project: agent.projectId, id: agent.id }) : href({ view: "edit-ad-hoc", id: agent.id })}>Change it</a>
             </p>
             {#if apps.length || opens}
@@ -361,7 +325,7 @@
                 <Label for="run-opens">Its results open</Label>
                 <NativeSelect.Root id="run-opens" bind:value={opens} class="w-full" data-testid="new-automation-opens">
                   <NativeSelect.Option value="">No app: its run's page</NativeSelect.Option>
-                  {#each apps as a (a.name)}<NativeSelect.Option value={a.name}>the app {a.name}</NativeSelect.Option>{/each}
+                  {#each apps as a (a.name)}<NativeSelect.Option value={a.name}>the app {appTitle(a)}</NativeSelect.Option>{/each}
                 </NativeSelect.Root>
                 <p class="text-xs text-muted-foreground">
                   Each result in your inbox gets a button that opens this app, on the computer and on your phone: the app where you act on what the agent said (a planner for a calendar agent).
@@ -389,7 +353,7 @@
       {/if}
       <p class="text-xs text-muted-foreground">
         A script of your own (in a sandbox without network, adding to a note): start from an example in
-        <a class="text-link hover:underline" href={href({ view: "library", shelf: "automations", more: true })}>Library → Automations → Get more</a>.
+        <a class="text-link hover:underline" href={href({ view: "library", shelf: "automations", more: true })}>Library → Automations → Community</a>.
       </p>
     </section>
 
@@ -454,7 +418,7 @@
       {:else}
         <Button disabled={busy || !ready || !!check?.problems?.length} onclick={() => create(true)} data-testid="new-automation-create-on">Create and turn on</Button>
         <Button variant="outline" disabled={busy || !ready} onclick={() => create(false)} data-testid="new-automation-create-off">Create, off</Button>
-        <Button variant="ghost" href={href({ view: "automations" })}>Cancel</Button>
+        <Button variant="ghost" href={href({ view: "library", shelf: "automations" })}>Cancel</Button>
         <p class="text-xs text-muted-foreground">
           {check?.problems?.length ? "With problems it can only be created off." : "Turning it on is your approval of what it will do, above."}
         </p>

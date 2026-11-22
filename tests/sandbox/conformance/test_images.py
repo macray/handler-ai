@@ -15,7 +15,7 @@ import pytest
 from handler_contracts import ImageInfo, ProxyImage
 
 from ...support.runtimes import Runtime
-from ..conftest import CURL_IMAGE, popen, spec
+from ..conftest import CURL_IMAGE, own_image, popen, spec
 
 Image = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -67,7 +67,7 @@ def test_a_build_step_reads_a_folder_of_its_context_left_out_of_the_image(
     (tmp_path / "pkg" / "f").write_text("from the context\n")
     (tmp_path / "Containerfile").write_text(
         f"FROM {CURL_IMAGE}\nUSER root\n"
-        "RUN --mount=type=bind,source=pkg,target=/run/pkg cp /run/pkg/f /seen\n"
+        "RUN --mount=type=bind,source=pkg,target=/run/pkg cp /run/pkg/f /seen\n" + own_image()
     )
     result = image("build", str(tmp_path), "--id-file", str(tmp_path / "iid"))
     assert result.returncode == 0, result.stderr
@@ -85,6 +85,9 @@ def test_a_failed_build_exits_1(image: Image, tmp_path: Path) -> None:
     result = image("build", str(tmp_path), "--id-file", str(tmp_path / "iid"))
     assert result.returncode == 1
     assert not (tmp_path / "iid").exists()
+    # its last line: what failed, with the engine's reason (the file it could not copy)
+    last = result.stderr.strip().splitlines()[-1]
+    assert last.startswith("handler-sandbox-") and "build failed" in last and "missing" in last
 
 
 @pytest.mark.rule("runtime.an-image-verb-says-what-it-did")
@@ -150,7 +153,7 @@ def test_an_image_built_on_another_outlives_it(image: Image, built: str, tmp_pat
 def test_remove_refuses_an_image_a_sandbox_runs_from(
     runtime: Runtime, image: Image, scope: Path, tmp_path: Path
 ) -> None:
-    (tmp_path / "Containerfile").write_text(f"FROM {CURL_IMAGE}\nLABEL in-use=yes\n")
+    (tmp_path / "Containerfile").write_text(f"FROM {CURL_IMAGE}\nLABEL in-use=yes\n" + own_image())
     id_file = tmp_path / "iid"
     assert image("build", str(tmp_path), "--id-file", str(id_file)).returncode == 0
     in_use = id_file.read_text().strip()

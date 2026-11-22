@@ -25,10 +25,12 @@ set `UV_PROJECT_ENVIRONMENT` to a separate location (also `HANDLER_VENV_PY312`, 
 
 ```bash
 uv sync
-./scripts/ci.sh                               # full local CI: schemas, ruff, ty, web apps, gateway, pytest on default Python and 3.12
+./scripts/ci.sh                               # full local CI, in tiers that stop at the first failure (its header)
+./scripts/ci.sh --fast                        # its checks and unit tests alone (~30 s)
+./scripts/ci.sh tests/sessions tests/x.py::t  # those, then these tests only: while working, not the CI
 uv run ruff check . && uv run ruff format --check .
 uv run ty check                               # type check (warnings are errors)
-uv run pytest -n auto --dist loadfile         # every test, in parallel (as ci.sh)
+uv run pytest -n auto --dist loadgroup        # every test, in parallel (as ci.sh; conftest.py's groups)
 uv run pytest tests/control/test_api.py::test_name   # single test
 uv run pytest packages/control-plane/tests    # one package's unit tests
 HANDLER_TEST_OFFLINE=1 uv run pytest tests/sandbox  # skip network-dependent tests
@@ -47,11 +49,23 @@ tests are opt-in via `HANDLER_TEST_CLAUDE_CONFIG_DIR` (+ `_JSON`), `HANDLER_TEST
 `HANDLER_TEST_OPENAI_API_KEY`, `HANDLER_TEST_SHOPIFY_STORE` + `HANDLER_TEST_SHOPIFY_THEME_TOKEN`. The tests
 read a made-up source (`tests/fixtures/source/`) as the official one; those of Handler's real registry items
 are opt-in via `HANDLER_TEST_REGISTRY` (a checkout of a registry; Planner and shopify are in the
-private one only, and their tests skip on a registry without them). When running
+private one only, and their tests skip on a registry without them); `tests/apps/test_registry_apps.py`
+then installs, deploys, asks, runs and uninstalls every app of the registry given. When running
 as root (dev container with nested rootful podman), `tests/support/dev_env.py` drops keep-id and runs
 sandboxes as uid 1000 with scopes under `/var/tmp/handler-tests`.
 
-The full suite takes ~25 s on 24 cores. A test may take 120 s (pyproject's `timeout`; those
+`ci.sh` runs in three tiers, each stopping the run when it fails: the checks (seconds), the unit
+tests with the web apps and the docs (~25 s), then every other test, on the default Python and
+3.12 at once (a few minutes on 24 cores with the harness images built; less where they skip). A
+second run's tests wait for the first's (a lock in `.git/handler-ci/`): two at once overload
+the machine and fail tests that nothing is wrong with. A test that fails runs again alone: if it
+passes then, it is **flaky**: the run passes, says so, and the flake ledger
+(`.git/handler-ci/flaky.tsv`) keeps it; a test named there again is to fix, not to rerun.
+Property tests (Hypothesis) run fixed examples (profile "ci", the same on every run); once a day,
+`ci.sh` also searches with many more ("explore", `HYPOTHESIS_PROFILE=explore uv run pytest -m
+property`): a bug it finds was there before the change at hand.
+
+A test may take 120 s (pyproject's `timeout`; those
 pulling or building images, running real harnesses or a browser: `dev_env.IMAGE_TIMEOUT`); a
 "Timeout" failure prints the stack where it hung. Inside a Handler sandbox (an agent's: only an HTTP
 proxy out, nested podman, no harness images) ~80 tests skip, expectedly: those needing built

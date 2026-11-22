@@ -10,6 +10,7 @@
             "agent",
             "skill",
             "knowledge",
+            "schema",
             "addon",
             "account",
             "provider",

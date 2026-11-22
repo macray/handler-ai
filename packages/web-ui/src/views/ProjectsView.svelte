@@ -5,20 +5,15 @@
   // what its sessions do only when they do something, when it was last used, its pin (D.28: only
   // the first project is pinned by itself; the outline only on hover). One waiting for you is
   // amber, and its Open session goes to the session waiting longest: the row and the session are
-  // two ways in. With no project yet (no header: the first run's title is the page's), the first
-  // steps side by side, the next one marked: connect a model, say where your code is, a new
-  // project. Under the projects, Agents outside projects: one row, the place of the agents of no
+  // two ways in. With no project yet (no header: the first run's title is the page's), the
+  // set-up's steps side by side, large (SetupSteps; the menu's card hides here). Under the projects, Agents outside projects: one row, the place of the agents of no
   // project (but Chat's and apps'), counted, never listed; always there.
-  import Check from "@lucide/svelte/icons/check";
   import Folder from "@lucide/svelte/icons/folder";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import PinOff from "@lucide/svelte/icons/pin-off";
   import PinButton from "../components/PinButton.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import Search from "@lucide/svelte/icons/search";
-  import ShieldCheck from "@lucide/svelte/icons/shield-check";
-  import Smartphone from "@lucide/svelte/icons/smartphone";
-  import Workflow from "@lucide/svelte/icons/workflow";
   import type { Snippet } from "svelte";
   import { areas } from "../lib/areas.svelte";
   import AreaTag from "../components/AreaTag.svelte";
@@ -26,9 +21,11 @@
   import { Input } from "$lib/components/ui/input";
   import MenuButton from "../components/MenuButton.svelte";
   import PageHeader from "../components/PageHeader.svelte";
-  import { ago, exactTime } from "../lib/agents";
+  import SetupSteps from "../components/SetupSteps.svelte";
+  import { exactTime, lastSession } from "../lib/agents";
   import { api } from "../lib/api";
   import type { Agent, Project } from "../lib/contracts.gen";
+  import { firstRun } from "../lib/firstrun.svelte";
   import { byName, matches, projects, shortFolder } from "../lib/projects.svelte";
   import { pins } from "../lib/pins.svelte";
   import { href } from "../lib/router.svelte";
@@ -36,11 +33,6 @@
 
   const NO_AREA = ""; // the area filter's value for projects without one
 
-  let ready = $state<string[]>([]); // accounts and providers ready to use (logged in, key set)
-  let unready = $state(0); // those there are but cannot be used yet (not logged in, no key)
-  let accessLoaded = $state(false);
-  let roots = $state<string[]>([]); // the work folders, as written
-  let existing = $state(0); // how many of them exist
   let outside = $state<Agent[]>([]); // the agents of no project, most recently used first
   let error = $state<string | null>(null);
   let query = $state("");
@@ -48,7 +40,7 @@
   let unpinned = $state<Project | null>(null); // just taken off the menu: the toast offers Undo
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const loaded = $derived(projects.loaded && accessLoaded);
+  const loaded = $derived(projects.loaded);
   // the areas the projects are in, and "No area" when some are in one and some in none
   const usedAreas = $derived([...new Set(projects.list.flatMap((p) => (p.area ? [p.area] : [])))].sort());
   const filters = $derived(
@@ -56,30 +48,10 @@
   );
   const inArea = (p: Project, a: string | null) => a === null || (p.area ?? NO_AREA) === a;
   const listed = $derived(byName(projects.list).filter((p) => inArea(p, area) && matches(p, query)));
-  // the steps: done ones say what is ready, the first one not done is the next
-  const steps = $derived({ model: ready.length > 0, folders: existing > 0 });
-  const next = $derived(!steps.model ? "model" : !steps.folders ? "folders" : "project");
-
   $effect(() => {
     void projects.refresh();
-    Promise.all([api.accounts(), api.providers()]).then(
-      ([a, p]) => {
-        const all = [...a, ...p];
-        ready = all.filter((x) => x.status === "ready").map((x) => x.name);
-        unready = all.filter((x) => x.status === "incomplete").length;
-        accessLoaded = true;
-      },
-      (e: Error) => (error = e.message),
-    );
     api.agents().then(
-      (all) => (outside = all.filter((a) => !a.projectId && !a.app && !a.chat).sort((a, b) => (b.lastUsedAt ?? b.createdAt).localeCompare(a.lastUsedAt ?? a.createdAt))),
-      (e: Error) => (error = e.message),
-    );
-    api.folders().then(
-      (f) => {
-        roots = f.folders.map((x) => x.root);
-        existing = f.folders.filter((x) => x.exists).length;
-      },
+      (all) => (outside = all.filter((a) => !a.projectId && !a.chat).sort((a, b) => (b.lastUsedAt ?? b.createdAt).localeCompare(a.lastUsedAt ?? a.createdAt))),
       (e: Error) => (error = e.message),
     );
     return () => clearTimeout(toastTimer);
@@ -107,7 +79,7 @@
   const outsideIds = $derived(new Set(outside.map((a) => a.id)));
   const outsideActivity = $derived(
     activityOf(
-      sessions.list.filter((s) => !s.info.projectId && outsideIds.has(s.info.agentId)),
+      sessions.list.filter((s) => !s.info.projectId && !!s.info.agentId && outsideIds.has(s.info.agentId)),
       outside.reduce((n, a) => n + a.connections.length, 0),
     ),
   );
@@ -118,13 +90,6 @@
       ? `${outside.length === 1 ? "1 agent" : `${outside.length} agents`}${fromCommandLine ? ` · ${fromCommandLine} from the command line` : ""}`
       : "No agent yet",
   );
-
-  /** A step's card: the next one ringed, the last one flat (an outline, no lift) until it is
-   *  next; its text stays readable: it says why it waits. */
-  function card(id: "model" | "folders" | "project"): string {
-    const look = next === id ? "shadow-panel ring-2 ring-primary" : id === "project" ? "ring-1 ring-border ring-inset" : "shadow-panel";
-    return `flex min-h-56 flex-col gap-2.5 rounded-xl bg-card p-4.5 ${look}`;
-  }
 
   /** Taken off the menu: the toast offers Undo for a while. */
   function wasUnpinned(p: Project): void {
@@ -180,16 +145,6 @@
   </div>
 {/snippet}
 
-{#snippet step(id: "model" | "folders" | "project", n: number, done: boolean)}
-  <span
-    class="grid size-6.5 place-items-center rounded-full font-mono text-xs {done
-      ? 'bg-ok text-white'
-      : next === id
-        ? 'bg-primary text-primary-foreground'
-        : 'text-muted-foreground ring-[1.5px] ring-border ring-inset'}">{#if done}<Check class="size-3.5" />{:else}{n}{/if}</span
-  >
-{/snippet}
-
 {#if !(loaded && projects.list.length === 0)}
   <!-- one column, Apps' width; its controls one line, staying with the title -->
   <PageHeader title="Projects" width="max-w-[944px]">
@@ -217,7 +172,7 @@
 {/if}
 <div class="flex-1 overflow-y-auto">
   {#if loaded && projects.list.length === 0}
-    <!-- the first run: three steps side by side, the next one ringed and the only primary button -->
+    <!-- the first run: the set-up's steps, large -->
     <section class="mx-auto w-full max-w-4xl space-y-8 px-8 py-14" data-testid="get-started">
       <div class="space-y-2">
         <div class="-mt-10 mb-4 md:hidden"><MenuButton /></div>
@@ -226,58 +181,8 @@
           A project is a folder and the agents you work on it with. Each agent runs in its own sandbox and sees only that folder.
         </p>
       </div>
-      {#if error}<p class="text-sm text-danger">{error}</p>{/if}
-      <div class="h-1 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-        <div class="h-full bg-ok transition-[width] duration-(--dur-3) ease-(--ease)" style="width: {(Number(steps.model) + Number(steps.folders)) * 33.3}%"></div>
-      </div>
-      <ol class="grid gap-3.5 sm:grid-cols-3">
-        <li class={card("model")} data-testid="step-model">
-          {@render step("model", 1, steps.model)}
-          <h2 class="text-[0.9375rem] font-semibold">Connect a model</h2>
-          <p class="text-sm text-muted-foreground">An API key, a local model, or your own subscription for your own use.</p>
-          {#if steps.model}
-            <p class="mt-auto flex items-center gap-1.5 text-xs text-ok"><Check class="size-3.5" /><span class="font-mono">{ready.join(", ")}</span> ready</p>
-          {:else}
-            {#if unready}<p class="text-xs text-warn">Not ready yet: log in to your account, or set your provider's key.</p>{/if}
-            <Button class="mt-auto self-start" size="sm" href={href({ view: "settings", section: "models" })}>{unready ? "Finish connecting" : "Connect a model"}</Button>
-          {/if}
-        </li>
-        <li class={card("folders")} data-testid="step-folders">
-          {@render step("folders", 2, steps.folders)}
-          <h2 class="text-[0.9375rem] font-semibold">Say where your code is</h2>
-          <p class="text-sm text-muted-foreground">
-            Agents only work inside these folders{#if roots.length && !existing}. None of them exists yet{/if}:
-          </p>
-          <!-- a path breaks only after a / or a comma, never inside a name -->
-          <p class="font-mono text-xs text-foreground">
-            {#each (roots.join(", ") || "…").split(/(?<=[/,])/) as part, i (i)}<span class="whitespace-nowrap">{part}</span><wbr />{/each}
-          </p>
-          {#if steps.folders}
-            <p class="mt-auto flex items-center gap-1.5 text-xs text-ok"><Check class="size-3.5" />{existing === 1 ? "It exists" : `${existing} exist`}</p>
-          {:else}
-            <Button class="mt-auto self-start" size="sm" variant={next === "folders" ? "default" : "outline"} href={href({ view: "settings", section: "folders" })}>Choose a folder</Button>
-          {/if}
-        </li>
-        <li class={card("project")} data-testid="step-project">
-          {@render step("project", 3, false)}
-          <h2 class="text-[0.9375rem] font-semibold">New project</h2>
-          <p class="text-sm text-muted-foreground">It becomes a project with a first agent. Then type your first request on its page.</p>
-          {#if !steps.model}<p class="text-xs text-muted-foreground">Connect a model first.</p>{/if}
-          <Button
-            class="mt-auto self-start"
-            size="sm"
-            variant={next === "project" ? "default" : "outline"}
-            href={href({ view: "edit-project" })}
-            disabled={!steps.model}
-            data-testid="get-started-project"><Plus />New project</Button
-          >
-        </li>
-      </ol>
-      <div class="grid gap-6 text-sm text-muted-foreground sm:grid-cols-3">
-        <p><span class="mb-1 flex items-center gap-2 font-semibold text-foreground"><ShieldCheck class="size-4" />Sandboxed</span>Each session runs in a container that reaches only its folder and the hosts you allow.</p>
-        <p><span class="mb-1 flex items-center gap-2 font-semibold text-foreground"><Smartphone class="size-4" />Follow from anywhere</span>Pair your phone to answer an agent that needs you.</p>
-        <p><span class="mb-1 flex items-center gap-2 font-semibold text-foreground"><Workflow class="size-4" />On its own</span>Later: agents that run at a time you set, or when a session stops.</p>
-      </div>
+      {#if error ?? firstRun.error}<p class="text-sm text-danger">{error ?? firstRun.error}</p>{/if}
+      <SetupSteps large />
     </section>
   {:else}
     <div class="mx-auto w-full max-w-[944px] space-y-4 px-8 pt-5 pb-8">
@@ -313,9 +218,9 @@
                 {/snippet}
                 {#snippet end()}
                   <span
-                    class="w-24 shrink-0 text-right text-xs {s?.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}"
+                    class="w-44 shrink-0 text-right text-xs whitespace-nowrap {s?.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}"
                     title={p.lastUsedAt ? exactTime(p.lastUsedAt) : undefined}
-                    data-testid="project-last-used">{ago(p.lastUsedAt)}</span
+                    data-testid="project-last-used">{lastSession(p.lastUsedAt)}</span
                   >
                   <!-- the filled pin always; the outline one on hover or focus -->
                   <span class={pins.has("project", p.id) ? "" : "opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"}>

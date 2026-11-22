@@ -10,20 +10,36 @@ handler source refresh [ID]         read it again (all of them without ID)
 handler source rm ID                remove one you added (what you installed from it stays)
 
 Install what one offers with `handler app add NAME --from ID`, `handler tool add NAME --from ID`
-or `handler project import-agents NAME --from ID` (ID: "official" for Handler's).
+or `handler project import-agents NAME --from ID` (ID: "official" for Handler's; its URL works
+too).
 """
 
 import argparse
 import sys
 from typing import Any
 
-from .client import Daemon
-from .output import table
+from .client import ClientError, Daemon
+from .output import table, when_at
 
 TRUST = (
     "Handler does not check what is in a source you add: what you install from it runs on this "
     "computer, within what its install page shows. Add only a source you trust."
 )
+
+
+def source_id(d: Daemon, given: str) -> str:
+    """The id of a source you have, given its id or its URL (a trailing / or .git aside); else
+    which sources you have, and how to add one."""
+    sources = d.call("GET", "/v1/sources", timeout=120)
+
+    def same(url: str) -> str:
+        return url.strip().rstrip("/").removesuffix(".git")
+
+    for s in sources:
+        if given == s["id"] or same(given) == same(s["url"]):
+            return str(s["id"])
+    have = ", ".join(f"{s['id']} ({s['url']})" for s in sources) or "none"
+    raise ClientError(f"no source {given}\nyour sources: {have}\nadd it: handler source add <url>")
 
 
 def add_parser(sub: Any) -> None:
@@ -66,11 +82,7 @@ def dispatch(args: argparse.Namespace) -> int:
 def show(sources: list[dict[str, Any]]) -> None:
     for source in sources:
         who = "Handler's" if source.get("official") else "added by you"
-        read = (
-            f"read {source['fetchedAt'][:16].replace('T', ' ')}"
-            if source.get("fetchedAt")
-            else "never read"
-        )
+        read = f"read {when_at(source['fetchedAt'])}" if source.get("fetchedAt") else "never read"
         print(f"{source['id']} · {source['url']} · {who} · {read}")
         if source.get("error"):
             print(f"  error: {source['error']}")

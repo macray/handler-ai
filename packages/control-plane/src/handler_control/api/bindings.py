@@ -1,22 +1,28 @@
-"""Binding routes: list, create, replace, delete (G.2, D.15)."""
+"""Binding routes: list, create, replace, delete, check (G.2, D.15)."""
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
 
 from handler_contracts import (
+    BindingCheck,
     BindingInfo,
     BindingRequest,
     StoreSecret,
 )
+from handler_harness import images
 
 from .. import (
     bindings,
+    connection_check,
     secrets,
 )
+from .catalog import addon_info
 from .common import Context, ProblemError, dump, log, parse_body
 
 
-def binding_info(b: bindings.LoadedBinding, used_by: list[str]) -> BindingInfo:
+def binding_info(
+    b: bindings.LoadedBinding, used_by: list[str], checked: BindingCheck | None = None
+) -> BindingInfo:
     """Slot names only: secret references can name files or commands, clients don't need them."""
     if b.binding is None:
         return BindingInfo(name=b.name, error=b.error, used_by=used_by)
@@ -30,6 +36,7 @@ def binding_info(b: bindings.LoadedBinding, used_by: list[str]) -> BindingInfo:
         hand_written=sorted(s for s, ref in bound.items() if not isinstance(ref, StoreSecret)),
         error=b.error,
         used_by=used_by,
+        checked=checked,
     )
 
 
@@ -56,10 +63,12 @@ def add_binding_routes(app: FastAPI, ctx: Context) -> None:
     settings = ctx.settings
     store = secrets.SecretStore(settings.data_dir)
 
+    checks = ctx.connection_checks
+
     def infos() -> list[BindingInfo]:
         users = binding_users(ctx)
         loaded = bindings.load_all(settings.bindings_dir)
-        return [binding_info(b, users.get(b.name, [])) for b in loaded]
+        return [binding_info(b, users.get(b.name, []), checks.last.get(b.name)) for b in loaded]
 
     def existing(name: str) -> bindings.LoadedBinding:
         loaded = bindings.get(settings.bindings_dir, name)
@@ -80,6 +89,7 @@ def add_binding_routes(app: FastAPI, ctx: Context) -> None:
             bindings.save(settings.bindings_dir, store, body, None)
         except bindings.BindingError as e:
             raise ProblemError(422, "invalid connection", str(e)) from None
+        checks.forget(body.name)
         log.info("connection %s created (%s)", body.name, body.addon)
         return dump(next(b for b in infos() if b.name == body.name), status=201)
 
@@ -97,6 +107,7 @@ def add_binding_routes(app: FastAPI, ctx: Context) -> None:
             bindings.save(settings.bindings_dir, store, body, old)
         except bindings.BindingError as e:
             raise ProblemError(422, "invalid connection", str(e)) from None
+        checks.forget(name, body.name)  # what it was checked with changed
         log.info("connection %s saved", body.name)
         return dump(next(b for b in infos() if b.name == body.name))
 
@@ -107,5 +118,31 @@ def add_binding_routes(app: FastAPI, ctx: Context) -> None:
         if users := binding_users(ctx).get(name):
             raise ProblemError(409, "connection in use", ", ".join(users))
         bindings.delete(settings.bindings_dir, store, name)
+        checks.forget(name)
         log.info("connection %s deleted", name)
         return Response(status_code=204)
+
+    @app.post("/v1/bindings/{name}/check", dependencies=authed)
+    async def check_binding(name: str) -> Response:
+        """Its tool's connection check, run as an agent of it gets the tool (G.2): 200 with
+        whether it works (a check that fails is an answer, never an error); 409 when it cannot
+        run: the connection invalid, its tool without a check or not ready."""
+        return dump(await run_check(ctx, store, existing(name)))
+
+
+async def run_check(
+    ctx: Context, store: secrets.SecretStore, loaded: bindings.LoadedBinding
+) -> BindingCheck:
+    if loaded.error or loaded.binding is None:
+        raise ProblemError(409, "invalid connection", loaded.error or loaded.name)
+    tool = addon_info(ctx.settings, ctx.builds, loaded.binding.tool)
+    if not tool.connection_check:
+        raise ProblemError(409, "no connection check", f"tool {tool.name} has none")
+    if tool.state != "ready":
+        detail = tool.state_detail or f"tool {tool.name} is {tool.state}"
+        raise ProblemError(409, "tool not ready", detail)
+    toolbox = images.ref(images.TOOLBOX, images.LATEST)
+    result = await connection_check.check(ctx.settings, store, tool.name, loaded.name, toolbox)
+    ctx.connection_checks.keep(loaded.name, result)
+    log.info("connection %s checked: %s", loaded.name, "works" if result.ok else result.error)
+    return result

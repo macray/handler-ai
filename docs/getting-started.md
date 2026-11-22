@@ -18,8 +18,8 @@ handler setup   # in a new terminal: handlerd as a user service, checks this mac
 
 `install.sh` installs uv if you do not have it, then Handler with it; if you already use uv:
 `uv tool install handler-ai` (or `pipx install handler-ai`). To update: `uv tool upgrade handler-ai`
-(from 0.2.0, a few files are renamed by hand first: [upgrading from
-0.2.0](configuration.md#upgrading-from-020)).
+(from 0.3, start with empty settings first: [upgrading from
+0.3](configuration.md#upgrading-from-03)).
 `handler setup` says what the machine lacks and can run again at any time. It builds
 the network filter first (it checks where agents connect and adds your secrets to their requests:
 a minute or two; handlerd builds it by itself when it is missing), then the images: it asks which agent
@@ -52,8 +52,12 @@ Docker Desktop and OrbStack have it; some distributions package it apart (on Arc
 
 On macOS 26 with Apple silicon, agents run with Apple's `container` (each sandbox a virtual
 machine of its own); install it from [its releases](https://github.com/apple/container/releases)
-before `handler setup`. When Docker Desktop or OrbStack runs, setup offers both before the first
-build, Apple's first: Enter keeps it, `docker` switches (`handler setup --runtime NAME` chooses
+before `handler setup`, and install Handler with the same `install.sh` line as above. Its image
+builder needs Rosetta, which a new Mac does not have yet:
+`softwareupdate --install-rosetta --agree-to-license` (setup says so when it is missing). A
+Mac that is itself a virtual machine (in UTM, Parallels, tart, or some cloud Macs) cannot run
+agents: it cannot start the virtual machines they run in. When Docker Desktop or OrbStack
+runs, setup offers both before the first build, Apple's first: Enter keeps it, `docker` switches (`handler setup --runtime NAME` chooses
 without asking; Docker needs its buildx plugin, above). On macOS 15 or an Intel Mac, use Docker
 Desktop or OrbStack. What does not work there yet: [known
 limitations](known-limitations.md#linux-and-wsl-2-macos-experimental).
@@ -101,8 +105,8 @@ key instead.
 
 2. **Give it to Handler**: open the web UI (`handler ui`), Settings → Model access → *Connect a model*
    (once you have one: *Connect a subscription*, at the top of the page) → *Claude Pro or Max*.
-   Handler suggests a name for the account (`claude`; change it, e.g. `claude-perso`: your agents
-   refer to it by this name) and choose its plan (`pro` or `max`: Claude Code cannot read it from
+   Handler suggests a name for the account, `claude` (your agents and commands refer to it by this
+   name; the commands on these pages use `claude`), and choose its subscription (`pro` or `max`: Claude Code cannot read it from
    the token). Under its steps, the command to run (`claude setup-token`, with *Copy*), paste the
    token, then *Connect*. The account's line gets a green dot (its *Edit* says
    "Logged in · token kept by Handler · until …").
@@ -110,13 +114,13 @@ key instead.
    Rather keep the token yourself? Under the token's field, open *Keep it elsewhere* and choose
    where Handler reads it each time an agent starts: an *Environment variable* of handlerd (its
    service's environment, not your shell's), a *File* (its first line), or a *Command* that prints
-   it, e.g. `pass show claude-perso`. Handler then keeps only where the token is, not the token.
+   it, e.g. `pass show claude`. Handler then keeps only where the token is, not the token.
 
    From the terminal instead:
 
    ```bash
-   handler account add claude-perso claude-code --plan max --token  # asks for the token (hidden)
-   handler account add claude-pro claude-code --plan pro --token-command 'pass show claude-pro'
+   handler account add claude claude-code --subscription max --token  # asks for the token (hidden)
+   handler account add claude-pro claude-code --subscription pro --token-command 'pass show claude-pro'
    handler account list
    ```
 
@@ -126,7 +130,7 @@ create an agent with more than one account, the form asks which.
 
 **After a year** the account warns a month before the token expires ("make a new one"): run
 `claude setup-token` again, then on the account's line *Connect again* (or `handler account token
-claude-perso`). *Edit* → *Forget login* removes it from Handler.
+claude`). *Edit* → *Forget login* removes it from Handler.
 
 **Your own use only**: a subscription is for you. What you share with others (an app, a
 family member's phone) runs on a provider (an API key) or a local model.
@@ -140,14 +144,18 @@ handler ui              # opens the web UI and signs this browser in (then a boo
 1. **Connect a model**: Settings → Model access. Claude Pro or Max: see §2. ChatGPT or Mistral:
    pick it, keep or change its name, *Connect*, and a terminal window opens with the harness's own login. Or pick a
    provider (Anthropic API, OpenAI, OpenRouter, a local llama.cpp or Ollama) and give its key.
-   One is enough.
+   One is enough. The menu shows every place from the first day (Projects, Running, Chat, Apps,
+   Library, Settings): until a model is connected, Running, Chat and Apps say *Connect a model
+   first*, and their *Connect…* opens the same forms over the page you are on.
 
    **A model server on this computer** must listen where sandboxes reach it, not only on
    `127.0.0.1`: start llama-server with `llama-server --host 0.0.0.0 --jinja` (its own port,
    8080), Ollama with `OLLAMA_HOST=0.0.0.0`. In its form, *Test* asks the server for its models
    from where a sandbox would: it fills the models, and their context when the server says it
    (llama-server, vLLM). It is *ready* once it answered; *not reached* says why
-   (`handler provider test NAME` from a terminal). When a session's model stops answering (a
+   (`handler provider test NAME` from a terminal). An endpoint that redirects (`http://` to
+   `https://`) is not reached, since agents are not redirected: the form offers *Use* with the
+   `https://` endpoint. When a session's model stops answering (a
    filtered agent's: three calls that could not connect in a turn, or 15 seconds after the
    first), Handler says so in the conversation: "The model at host.containers.internal:8080 does
    not answer (connection refused). Is the server listening on 0.0.0.0?", with a link to test it.
@@ -161,10 +169,10 @@ handler ui              # opens the web UI and signs this browser in (then a boo
    *Runs containers*, *Windows on my screen*, *Privileged*. What weakens its sandbox shows
    amber, and saving it asks you to confirm.
 3. **Ask**: type a request in the box on the project's page and press Enter. Under the request,
-   chips say who works and what it may do: the program and what it runs on (your account or
-   API key, and the model): another one picked there is for this session only, and *Make … the
+   chips say who works and what it may do: who works (your account or API key, the program and
+   the model): another one picked there is for this session only, and *Make … the
    default* saves it to the agent; its tools; its network (more bars, safer), and an amber chip
-   for each setting that weakens its sandbox. The session opens. Its network
+   for each setting that weakens its sandbox. The session opens in **Running**. Its network
    panel shows each host the agent reaches, and offers the blocked ones one click each to allow.
    When a project needs many hosts, *Learn the sites it needs* lets everything through and marks what would be
    blocked; *Allow N hosts and block the rest* then allows them all and enforces again. It applies
@@ -172,14 +180,22 @@ handler ui              # opens the web UI and signs this browser in (then a boo
    how full the agent's context is (`85% · 170k / 200k` tokens), when its harness tells it
    (Claude Code, Mistral Vibe and pi do); it stays when you resume the session.
 
-The agent keeps running when you close the tab. The **bell** at the top of the menu counts what
+The agent keeps running when you close the tab. **Running**, in the menu (with how many run),
+shows every running session of every project at once, each in its own pane: answer a question
+right in its pane, click one to type in it, or show it alone (**One**, its title a list to
+switch to another). The project chips show one project's; **⋯ → Hide from All running** puts a
+session aside without ending it (it comes back while it needs you); **Grid** or **Columns**, and
+full screen (the menu folded), are kept by your browser. **+** starts a new session there:
+choose the project, the agent and (if you like) another model, then **Start**, and type your
+first message in its pane. The **bell** at the top of the menu counts what
 waits for you in every project and app: a session asking you something (*Allow* or *No* right in
 its list), a run or a plan that failed; its list shows what runs too, and the browser tab's title
 says the count, `(1) Handler`. A pinned project's dot says what its sessions do, and the
 project's page lists them (its **Sessions** tab, its agents as tabs above the box; its
 **Plans**, **Automations** and **Settings** are the other tabs, and its **⋯** exports its agents or
-adds some from a file): open one, or Resume a stopped one (it goes on where it was). A
-session's header holds its buttons (its files, its sandbox and network, the phone, End…).
+adds some from a file): open one, or Resume a stopped one (it goes on where it was): it opens
+in Running. A session shown alone holds its buttons in its header (its files, its sandbox and
+network, the phone, End…).
 
 **Work and personal apart.** In Settings → Expert → Areas, make one area per side of your life (for
 example *Work* and *Personal*), each with its colour. Give each project its area, and say for
@@ -194,10 +210,11 @@ code. A project without an area can use any account or provider.
 
 The folder decides the project: in a project's folder (or below), `handler run` and `handler terminal`
 use that project's agents (`handler run reviewer`: the agent named reviewer; `handler run
-claude-perso`: its default agent on that account, for this session). An account not made for the project's area
+claude`: its default agent on that account, for this session). An account not made for the project's area
 (Settings → Expert → Areas)
 is refused, so a work account never works on a personal repository (`--anyway` runs it there
-anyway, outside the project, once you type `yes`). Elsewhere, name an account or a provider: Handler makes an **ad-hoc
+anyway, outside the project, once you type `yes`). Elsewhere, name an account or a provider (no
+name: the only one ready; with several, it lists them and starts nothing): Handler makes an **ad-hoc
 agent** for that folder (one
 per folder and `--name`: the next `handler run` there finds it again, with any account). An option
 that differs from the agent's settings is saved to it once you say yes, never ignored.
@@ -205,7 +222,7 @@ that differs from the agent's settings is saved to it once you say yes, never ig
 ```bash
 cd ~/code/my-app && handler run                                  # the project's default agent
 cd ~/code/my-app && handler run reviewer -p "review the last commit" # another agent of the project
-cd ~/code/scratch && handler run claude-perso -p "what does this do?" # ad-hoc: this folder, no project
+cd ~/code/scratch && handler run claude -p "what does this do?" # ad-hoc: this folder, no project
 handler session list && handler attach s_…                         # sessions; back to one
 ```
 
@@ -218,7 +235,7 @@ agent gets (not a session: the web UI shows it to change its network, not its co
 restarting Handler leaves it running. To keep typing `claude`, add to your shell:
 
 ```bash
-claude() { handler terminal claude-perso -- "$@"; }  # claude, claude --resume
+claude() { handler terminal claude -- "$@"; }  # claude, claude --resume
 ```
 
 `HANDLER_ACP_CLIENT='toad acp "{bridge}"'` uses another ACP client than the built-in one (`{bridge}`:
@@ -232,12 +249,12 @@ The agent runs in the sandbox; Zed only sees ACP. In `~/.config/zed/settings.jso
 ```json
 {
   "agent_servers": {
-    "handler · claude-perso": {
+    "handler · claude": {
       "type": "custom",
       "command": "/home/you/.local/bin/handler",
       "args": [
         "acp",
-        "claude-perso"
+        "claude"
       ]
     }
   }
@@ -255,7 +272,7 @@ All in the agent's form (its project's page → the agent's tab → Edit).
 
 **Tools**: programs, the skills that explain them and the hosts they need, for one kind of system,
 without growing the toolbox image. Installed from a [source](sources.md) (Handler's, or one you added),
-a folder or an archive (Library → Tools → Get more, or `handler tool add`); each shows what it brings (hosts,
+a folder or an archive (Library → Tools → Community, or `handler tool add`); each shows what it brings (hosts,
 secrets,
 commands, MCP server, image, what it adds to the toolbox) before you install it. An agent gets an
 tool by its name, or, when it asks for settings and secrets, through one of its
@@ -264,11 +281,11 @@ project can give tools to all its agents. Writing one: [`tools.md`](tools.md).
 
 ```bash
 handler tool add github                                 # see what it brings, install it
-cd ~/code/my-app && handler run claude-perso --tool github=github-agent
+cd ~/code/my-app && handler run claude --tool github=github-agent
 ```
 
 Its connection `github-agent` is made in Library → Tools → github → *Connect*: that name and a
-token of the account the agent works as (its `PROVISIONING.md` says which), then *Save*.
+token of the account the agent works as (its `CONNECT.md` says which), then *Save*.
 
 **A web browser**: the `playwright` tool (Playwright MCP, Chromium). Headless by default; with **Windows on my
 screen** (`--display`) the window opens on your Wayland
@@ -277,7 +294,7 @@ desktop, the sandbox getting nothing else of it but the clipboard. See
 
 ```bash
 handler tool add playwright    # then Library → Tools → playwright → Connect: name it browser, Save
-cd ~/code/my-theme && handler run claude-perso --tool playwright=browser --display
+cd ~/code/my-theme && handler run claude --tool playwright=browser --display
 ```
 
 **Skills**: folders with a `SKILL.md` (the Agent Skills format every harness reads), in
@@ -289,19 +306,22 @@ reviews (*Review with…* the built-in skill reviewer) and *Edit with an agent* 
 creator).
 
 **Notes** (notes folders): notes an agent reads, folders under the notes root (Library →
-Notes, `~/.local/share/handler-ai/notes` until you **Change** it, made by Handler), mounted
-read-only at `/notes/<name>`; each agent's settings pick its folders. A skill can teach it
+Notes, `~/notes` until you **Change** it, made by Handler), mounted
+read-only at `/notes/<name>` (read-write when you choose); each agent's settings pick its
+folders. A skill can teach it
 how to read them. See [notes folders](notes.md).
 
 ```bash
 handler notes list                                   # the folders that can be selected
-cd ~/code/my-theme && handler run claude-perso --notes me --notes projects/my-theme
+cd ~/code/my-theme && handler run claude --notes me --notes projects/my-theme
 ```
 
 **Containers**: an agent may run containers itself (**Runs containers**,
 `--containers`), with the toolbox's engine (Podman, or Docker: `handler toolbox add docker`, each
 such sandbox starting its own rootless Docker), which keeps the capabilities it needs in that
-sandbox only; as a last resort
+sandbox only. With Podman, the images it pulls are kept for its next sessions (a cache, like
+`~/.npm`); the containers a session ran are removed once it has ended, by the next session that
+runs Podman. As a last resort
 an agent can run `privileged`. Widening what an agent may do is confirmed, and the web UI flags
 every agent that is not strictly confined.
 

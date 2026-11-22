@@ -111,7 +111,7 @@
     },
     "CacheDeclaration": {
       "additionalProperties": false,
-      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`).",
+      "description": "A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;\nwhat it holds, in people's words (shown first): a short name, then after \": \" more if\nneeded (\"Tool caches: uv and pip packages\u2026\"); whether it is a general folder any tool\nwrites to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on\nPATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write\n(most), or a container engine's images (`images`), which a runtime may give as a store of\nthe sandbox's own and the images' downloads shared (contract A.9).",
       "properties": {
         "target": {
           "title": "Target",
@@ -139,6 +139,15 @@
           ],
           "default": null,
           "title": "Bin"
+        },
+        "kind": {
+          "default": "folder",
+          "enum": [
+            "folder",
+            "images"
+          ],
+          "title": "Kind",
+          "type": "string"
         }
       },
       "required": [
@@ -210,6 +219,23 @@
       ],
       "default": null,
       "title": "Check"
+    },
+    "connectionCheck": {
+      "anyOf": [
+        {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Connectioncheck"
     },
     "env": {
       "anyOf": [

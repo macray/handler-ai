@@ -81,3 +81,11 @@ export function recentLines(events: readonly EgressEvent[], blocked: readonly st
   });
   return lines.slice(-count).reverse();
 }
+
+/** A refused run's *Allow* button, in one name (E8): "Allow api.x.com for Dev, run again from
+ *  step 2"; two hosts by name, more counted; no agent known, no "for"; no step (an automation's
+ *  run), "run again". */
+export function allowAgain(hosts: string[], agent?: string | null, step?: number | null): string {
+  const what = hosts.length <= 2 ? hosts.join(" and ") : `${hosts.length} hosts`;
+  return `Allow ${what}${agent ? ` for ${agent}` : ""}, run again${step ? ` from step ${step}` : ""}`;
+}

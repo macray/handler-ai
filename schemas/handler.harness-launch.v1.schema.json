@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "CacheFolder": {
-      "description": "A host folder kept between sandboxes, read-write, created if missing; its size and its\nclearing through the `cache` verbs (A.9). `path`, its folder of commands, on PATH after the\nimage's (B.6: `~/.cargo/bin`).",
+      "description": "A host folder kept between sandboxes, read-write, created if missing; its size and its\nclearing through the `cache` verbs (A.9). `path`, its folder of commands, on PATH after the\nimage's (B.6: `~/.cargo/bin`). Its kind (B.6): a container engine's images may be given as a\nstore of the sandbox's own with their downloads shared (Apple container, A.9); elsewhere it\nis a folder like the others.",
       "properties": {
         "source": {
           "title": "Source",
@@ -24,6 +24,15 @@
           ],
           "default": null,
           "title": "Path"
+        },
+        "kind": {
+          "default": "folder",
+          "enum": [
+            "folder",
+            "images"
+          ],
+          "title": "Kind",
+          "type": "string"
         }
       },
       "required": [
@@ -83,7 +92,7 @@
       "type": "object"
     },
     "HostFolder": {
-      "description": "A host folder at `target`; what the sandbox writes there (`writable`) is on the host.",
+      "description": "A host folder, or a file, at `target`; what the sandbox writes there (`writable`) is on the\nhost.",
       "properties": {
         "source": {
           "title": "Source",
@@ -183,7 +192,7 @@
       "type": "object"
     },
     "SessionDefaults": {
-      "description": "Applied by the control plane to every session: MCP servers added to `session/new`,\n`session/load` and `session/resume` (P8); mode and options right after `session/new` (P7).",
+      "description": "Applied by the control plane to every session: MCP servers and the harness's `_meta`\nadded to `session/new`, `session/load` and `session/resume` (P8, P10); mode and options right\nafter `session/new` (P7).",
       "properties": {
         "modeId": {
           "anyOf": [
@@ -234,6 +243,19 @@
           ],
           "default": null,
           "title": "Mcpservers"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
         }
       },
       "title": "SessionDefaults",

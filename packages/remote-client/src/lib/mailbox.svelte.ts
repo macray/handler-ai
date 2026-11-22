@@ -33,20 +33,38 @@ const LEASE = 90_000; // the host detaches a device that sent nothing for that l
 // whenever the host is back within 7 days. The host takes each one once, before it expires.
 const LIVE = 5 * 60_000;
 const QUEUED = 7 * 24 * 3600_000;
-const SEEN_KEY = "handler-remote-seen";
+const SEEN_KEY = "handler-remote-seen:";
+const CURSOR_KEY = "handler-remote-cursor:";
 
-/** Ids of the host's envelopes opened in this tab, each until it expires (then the host's own
- *  `expires` refuses it): a gateway replaying one gets nothing. In sessionStorage, so a reload
- *  keeps them; per tab, as each tab polls the gateway on its own. */
+/** One request of a batch (`requestAll`), and how it ended. */
+export interface Call {
+  method: string;
+  params?: object;
+}
+export type Settled<T = unknown> = { ok: true; result: T } | { ok: false; error: Error };
+
+function readIds(key: string): Record<string, number> {
+  try {
+    const ids = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, number>;
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(ids).filter(([, until]) => until > now));
+  } catch {
+    return {};
+  }
+}
+
+/** Ids of the host's envelopes this device opened, each until it expires (then the host's own
+ *  `expires` refuses it): a gateway replaying one gets nothing, after a reload or a new launch
+ *  too. Kept in localStorage, per device: a page starts from the ids opened before it (by an
+ *  earlier launch, or another tab), then adds its own; it never takes in another open tab's
+ *  later ids, which that tab may still be waiting to open itself. */
 class Seen {
   private ids: Record<string, number>;
+  private readonly key: string;
 
-  constructor() {
-    try {
-      this.ids = JSON.parse(sessionStorage.getItem(SEEN_KEY) ?? "{}");
-    } catch {
-      this.ids = {};
-    }
+  constructor(deviceId: string) {
+    this.key = SEEN_KEY + deviceId;
+    this.ids = readIds(this.key);
   }
 
   has(id: string): boolean {
@@ -54,15 +72,21 @@ class Seen {
   }
 
   add(id: string, expires: number): void {
-    const now = Date.now();
-    this.ids = Object.fromEntries(Object.entries(this.ids).filter(([, until]) => until > now));
     this.ids[id] = expires;
+    const kept = readIds(this.key); // what other pages of this device opened meanwhile
+    kept[id] = expires;
     try {
-      sessionStorage.setItem(SEEN_KEY, JSON.stringify(this.ids));
+      localStorage.setItem(this.key, JSON.stringify(kept));
     } catch {
       /* storage full: kept in memory for this page */
     }
   }
+}
+
+/** What a device keeps of its link (the ids it opened, where its poll is): erased with it. */
+export function forgetLink(deviceId: string): void {
+  localStorage.removeItem(SEEN_KEY + deviceId);
+  localStorage.removeItem(CURSOR_KEY + deviceId);
 }
 
 export class Mailbox {
@@ -77,20 +101,28 @@ export class Mailbox {
   onControl: ((method: string, params: Message) => void) | null = null;
   /** The answer to a call queued while the host was off (its id is "q-…"), arriving later. */
   onQueuedAnswer: ((id: string, m: Message) => void) | null = null;
+  /** The host polls the gateway again (it was not, or this device could not tell). */
+  onHostBack: (() => void) | null = null;
 
-  private cursor = "";
+  // where this device's poll is, kept across launches: a new launch takes only what is new (the
+  // gateway starts a cursor of another of its runs over)
+  private cursor: string;
   private channels = new Map<string, (m: AnyMessage) => void>();
   private closers = new Map<string, (closed: Closed) => void>();
   // requests waiting for their answer: random ids, so an old answer (replayed) never matches one,
   // and on the channel they were asked on
   private replies = new Map<string, { s: string | null; resolve: (m: Message) => void }>();
-  private seen = new Seen();
+  private seen: Seen;
   private states = new Map<string, SendState>();
   private stopped = false;
   private lastDown = Date.now(); // the last envelope the gateway took from this device
   private timers: ReturnType<typeof setInterval>[] = [];
+  private listening = false; // the host polled at the last poll
 
-  constructor(readonly device: Device) {}
+  constructor(readonly device: Device) {
+    this.seen = new Seen(device.deviceId);
+    this.cursor = localStorage.getItem(CURSOR_KEY + device.deviceId) ?? "";
+  }
 
   /** Sent nothing for nearly the lease (the phone slept): the host may have detached it. */
   get mayBeDetached(): boolean {
@@ -164,40 +196,72 @@ export class Mailbox {
 
   /** A request on the control channel (or `s`: an app's); its answer comes back through the poll. */
   async request<T>(method: string, params: object = {}, timeout = 30_000, s: string | null = null): Promise<T> {
-    const id = crypto.randomUUID();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const reply = new Promise<Message>((resolve, reject) => {
-      timer = setTimeout(() => {
-        this.replies.delete(id);
-        reject(new Error("the host did not answer (is it online?)"));
-      }, timeout);
-      this.replies.set(id, {
-        s,
-        resolve: (m) => {
-          clearTimeout(timer);
-          resolve(m);
-        },
-      });
-    });
-    try {
-      await this.send([{ s, m: { jsonrpc: "2.0", id, method, params } }]);
-    } catch (e) {
-      clearTimeout(timer);
-      this.replies.delete(id);
-      throw e;
-    }
-    const m = await reply;
+    const [answer] = await this.ask([{ method, params }], timeout, s);
+    const m = await answer!;
     if (m.error) throw new Error((m.error as { message?: string }).message ?? "error");
     return m.result as T;
+  }
+
+  /** Several requests of the control channel in one envelope (one trip to the host, which
+   *  answers them together); each ends on its own, in their order. */
+  async requestAll(calls: Call[], timeout = 30_000): Promise<Settled[]> {
+    const answers = await this.ask(calls, timeout, null);
+    return await Promise.all(
+      answers.map(async (answer): Promise<Settled> => {
+        try {
+          const m = await answer;
+          if (m.error) return { ok: false, error: new Error((m.error as { message?: string }).message ?? "error") };
+          return { ok: true, result: m.result };
+        } catch (e) {
+          return { ok: false, error: e as Error };
+        }
+      }),
+    );
+  }
+
+  /** Sends `calls` as the frames of one envelope; their answers, each awaited until `timeout`. */
+  private async ask(calls: Call[], timeout: number, s: string | null): Promise<Promise<Message>[]> {
+    const ids = calls.map(() => crypto.randomUUID());
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const answers = ids.map(
+      (id) =>
+        new Promise<Message>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.replies.delete(id);
+            reject(new Error("the host did not answer (is it online?)"));
+          }, timeout);
+          timers.push(timer);
+          this.replies.set(id, {
+            s,
+            resolve: (m) => {
+              clearTimeout(timer);
+              resolve(m);
+            },
+          });
+        }),
+    );
+    try {
+      await this.send(calls.map(({ method, params = {} }, i) => ({ s, m: { jsonrpc: "2.0", id: ids[i], method, params } })));
+    } catch (e) {
+      for (const timer of timers) clearTimeout(timer);
+      for (const id of ids) this.replies.delete(id);
+      for (const answer of answers) answer.catch(() => undefined); // never awaited
+      throw e;
+    }
+    return answers;
   }
 
   // ── receiving ───────────────────────────────────────────────────────
 
   private async loop(): Promise<void> {
     let backoff = 1_000;
+    // the first poll answers at once, and the first after a failure: whether the gateway is
+    // reached and the host listens is known now, not after a long poll's wait
+    let wait = 0;
+    let first = true;
     while (!this.stopped) {
       try {
-        const params = new URLSearchParams({ after: this.cursor, wait: String(POLL_WAIT) });
+        const params = new URLSearchParams({ after: this.cursor, wait: String(wait) });
         const r = await fetch(`/v1/device/poll?${params}`, { headers: this.headers() });
         if (r.status === 401) {
           this.unauthorized = true;
@@ -217,16 +281,33 @@ export class Mailbox {
         this.error = null;
         this.hostSeen = data.hostSeen;
         this.now = Date.now();
-        this.cursor = data.cursor;
         for (const id of data.fetched) this.track(id, "fetched");
         for (const envelope of data.envelopes) await this.receive(envelope);
+        this.keepCursor(data.cursor); // once what it covers is opened
+        const back = this.hostOnline && !this.listening && !first;
+        this.listening = this.hostOnline;
+        first = false;
+        if (back) this.onHostBack?.();
         backoff = 1_000;
+        wait = POLL_WAIT;
       } catch (e) {
+        this.listening = false;
+        first = false; // what was asked meanwhile went unanswered: once back, the host is asked again
+        wait = 0;
         this.reachable = false;
         this.error = (e as Error).message;
         await sleep(backoff);
         backoff = Math.min(backoff * 2, 15_000);
       }
+    }
+  }
+
+  private keepCursor(cursor: string): void {
+    this.cursor = cursor;
+    try {
+      localStorage.setItem(CURSOR_KEY + this.device.deviceId, cursor);
+    } catch {
+      /* storage full: this launch only */
     }
   }
 
@@ -247,7 +328,14 @@ export class Mailbox {
     this.seen.add(envelope.id, expires);
     for (const id of (plain.acks as string[] | undefined) ?? []) this.track(id, "delivered");
     for (const r of (plain.rejected as { id: string }[] | undefined) ?? []) this.track(r.id, "expired");
-    for (const frame of (plain.frames as Frame[] | undefined) ?? []) this.dispatch(frame);
+    for (const frame of (plain.frames as Frame[] | undefined) ?? []) {
+      this.dispatch(frame);
+      // The ACP connection reading a session's channel does not finish one message before it
+      // takes the next: given an envelope's frames at once, a short handler overtakes a longer
+      // one, and a Handler line lands inside the agent's message. Each frame is taken alone, as
+      // a WebSocket message is (one task each).
+      if (frame.s !== null) await nextTask();
+    }
   }
 
   private dispatch({ s, m }: Frame): void {
@@ -306,6 +394,19 @@ export class Mailbox {
       };
     };
   }
+}
+
+/** After the microtasks already queued: a MessageChannel's message, which browsers do not
+ *  delay as they do a nested `setTimeout(0)`. */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
 }
 
 function sleep(ms: number): Promise<void> {

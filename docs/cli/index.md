@@ -29,8 +29,9 @@ All three run the agent in its own container, seeing only its folder.
 
 - **In a project's folder** (or below), commands use that project's agents with their settings:
   the one you name, or the one on the account you name, or the default agent.
-- **Elsewhere**, name an account or a provider: Handler makes an *agent outside projects* for that
-  folder, reaching only the sites it needs. The same command in the same folder finds the same agent again.
+- **Elsewhere**, name an account or a provider (no name: the only one ready; with several, it
+  lists them and starts nothing): Handler makes an *agent outside projects* for that folder,
+  reaching only the sites it needs. The same command in the same folder finds the same agent again.
 
 Projects are created in the web UI. [`project`](project.md) and [`agent`](agent.md) list
 what exists.
@@ -100,6 +101,7 @@ what exists.
 - [`source`](source.md) `list | add | refresh | rm`: where apps, agents and tools come from
 - [`connection`](connection.md) `list`: tools with their settings and secrets
 - [`notes`](notes.md) `list`: notes folders
+- [`schema`](schema.md) `list | show | add | rm`: the schemas of structured notes
 
 **Images, apps, automations**
 

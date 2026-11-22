@@ -32,12 +32,12 @@ In `~/.config/zed/settings.json` (the full path of `handler`: `which handler`):
 ```json
 {
   "agent_servers": {
-    "handler · claude-perso": {
+    "handler · claude": {
       "type": "custom",
       "command": "/home/you/.local/bin/handler",
       "args": [
         "acp",
-        "claude-perso"
+        "claude"
       ]
     }
   }

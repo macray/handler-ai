@@ -19,11 +19,13 @@ import argparse
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .agent_commands import describe_agent, runs
 from .client import ClientError, Daemon
 from .output import table
 from .session_commands import agent_label
+from .source_commands import source_id as find_source
 
 
 def add_parser(sub: Any) -> None:
@@ -110,7 +112,8 @@ def export_agents(d: Daemon, project: dict[str, Any], args: argparse.Namespace) 
 
 def import_agents(d: Daemon, file: str, source_id: str | None) -> int:
     if source_id is not None:
-        read = d.call("POST", f"/v1/sources/{source_id}/agents/{file}")
+        where = f"/v1/sources/{quote(find_source(d, source_id), safe='')}"
+        read = d.call("POST", f"{where}/agents/{quote(file, safe='')}")
     else:
         path = Path(file)
         if not path.is_file():

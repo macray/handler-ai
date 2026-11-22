@@ -41,16 +41,18 @@ The account or provider and the model are for this time only: never saved to the
 | `--network open` | any host |
 | `--log-only` | with `filtered`: every host goes through and is logged, to learn what the agent needs; then allow them and enforce ([`agent network`](agent.md#learning-what-an-agent-needs)) |
 | `--allow HOST:PORT` | one more allowed host; repeatable |
-| `--keep-blocked HOST:PORT` | a host kept blocked: refused like any host not allowed, and the agent is told not to ask for it; repeatable. *Remove* in the session's network panel makes it undecided again |
+| `--keep-blocked HOST:PORT` | a host kept blocked: refused even when a wider allowed site covers it, and the agent is told not to ask for it; never one its model or tools need; repeatable. *Remove* in the session's network panel makes it undecided again |
 
 ## What it gets
 
 | Option | |
 |---|---|
 | `--tool NAME[=CONNECTION]` | a tool by its name (`app-builder`), with a connection when it asks for settings and secrets (`playwright=browser`, `github=github-agent`); repeatable ([`tool list`](tool.md), [`connection list`](connection.md)) |
-| `--notes FOLDER` | a notes folder, read-only at `/notes/<name>`; repeatable ([`notes list`](notes.md)) |
+| `--schema ID[=write]` | a schema of your Library ([`schema list`](schema.md)) whose documents it reads, or makes and changes with `ID=write`, in its notes folders; repeatable |
+| `--notes FOLDER[=write]` | a notes folder at `/notes/<name>`, read-only; `FOLDER=write` read-write: the agent can change or delete any file there, so it is confirmed. Repeatable ([`notes list`](notes.md)) |
 | `--containers` | the agent may run containers itself, inside its sandbox, with the toolbox's engine: Podman, or Docker when the toolbox has `docker` ([`toolbox`](toolbox.md)) |
 | `--display` | your Wayland display and its clipboard: watch the agent's browser window. The agent can read what you copy |
+| `--env NAME=VALUE` | an environment variable in its sandbox (`--env ASTRO_TELEMETRY_DISABLED=1`); `--env NAME=` removes it; repeatable. Kept in plain text in the agent's settings: never a key or a token, give those through a tool's connection. A variable Handler, the agent's program or one of its tools sets is refused |
 
 ## Permissions
 

@@ -3,9 +3,10 @@
   // Who you talk to are your agents of no project and no app, with no folder, used as a chat
   // (their `chat`, D.1): each conversation gets an empty folder. The one chosen has its
   // workspace below (the box, its conversations); someone new is a short form (a name, how it
-  // behaves, who works: the two chips of ModelChoice), the rest of its settings on its Edit page.
+  // behaves, who works: WhoWorksChoice), the rest of its settings on its Edit page.
   // With no one yet: Assistant (never a vendor's name), added in one click on what you used last
-  // or the one model ready (suggestedAccess), or someone new. That is the Talk tab; the Ask tab
+  // or the one model ready (suggestedAccess), or someone new; with no model yet, its Connect
+  // (ConnectFirst) alone. That is the Talk tab; the Ask tab
   // (`ask`, AskPanel) is Ask, apart: what you say goes to the router, which runs an app's action.
   // Ask's "Start a chat about it" opens Talk with what was said typed in the box (`say`).
   import Plus from "@lucide/svelte/icons/plus";
@@ -16,16 +17,20 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import AgentWorkspace from "../components/AgentWorkspace.svelte";
   import AskPanel from "../components/AskPanel.svelte";
+  import ConnectFirst from "../components/ConnectFirst.svelte";
   import Dialog from "../components/Dialog.svelte";
   import MessageSquare from "@lucide/svelte/icons/message-square";
-  import ModelChoice from "../components/ModelChoice.svelte";
+  import WhoWorksChoice from "../components/WhoWorksChoice.svelte";
   import PageHeader, { type PageTab } from "../components/PageHeader.svelte";
   import { accessLabel, accessOf, chosen, type ModelAccess } from "../lib/access";
   import { isChat } from "../lib/agents";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { Agent, AutomationView, Session } from "../lib/contracts.gen";
   import { productName } from "../lib/harnesses.svelte";
   import { agentBody, agentLabel, emptyAgent, projects, suggestedAccess, withModelAlone, type AgentSpec } from "../lib/projects.svelte";
+  import { emptyFor } from "../lib/menu";
+  import { menuUse } from "../lib/menuuse.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { sessions } from "../lib/sessions.svelte";
 
@@ -62,19 +67,23 @@
         (e: Error) => (error = e.message),
       );
     void load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+    return onChange(["sessions", "agents", "automations"], () => void load());
   });
 
   // the one chosen, else the one you talked to last
   const agent = $derived(agents.find((a) => a.id === chosenId) ?? agents[0]);
 
-  // with no one yet: Assistant, on what you used last or the one model ready
+  // with no one yet: Assistant, on what you used last or the one model ready (read again once
+  // one is ready: connected here)
+  const empty = $derived(emptyFor({ known: menuUse.modelKnown, ready: menuUse.modelReady }));
   let suggested = $state<ModelAccess | null>(null);
-  Promise.all([api.accounts(), api.providers(), projects.refresh()]).then(
-    ([accounts, providers]) => (suggested = suggestedAccess(projects.list, accounts, providers, null)),
-    () => undefined,
-  );
+  $effect(() => {
+    void menuUse.modelReady;
+    Promise.all([api.accounts(), api.providers(), projects.refresh()]).then(
+      ([accounts, providers]) => (suggested = suggestedAccess(projects.list, accounts, providers, null)),
+      () => undefined,
+    );
+  });
   async function addAssistant(): Promise<void> {
     if (!suggested) return;
     spec = { ...emptyAgent(suggested), name: "Assistant" };
@@ -125,20 +134,24 @@
       {#if loaded && !agents.length}
         <section class="space-y-4 rounded-[14px] border border-dashed p-7" data-testid="chat-empty">
           <h2 class="text-base font-semibold">No one to talk to yet</h2>
-          {#if suggested}
-            <div class="flex items-center gap-3.5 rounded-[10px] border bg-card px-4 py-3 shadow-panel" data-testid="chat-suggestion">
-              <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-primary"><MessageSquare class="size-4" /></span>
-              <div class="min-w-0 flex-1">
-                <p class="text-sm"><b class="font-semibold">Assistant</b> <span class="text-muted-foreground">· anything, with no folder of yours</span></p>
-                <p class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>{productName(suggested.harness ?? "")}</span>·<span class="fact">{suggested.account ?? suggested.provider}</span>{#if suggested.model}·<span>{suggested.model}</span>{/if}
-                </p>
+          {#if empty === "no-model"}
+            <ConnectFirst testid="chat-connect" />
+          {:else}
+            {#if suggested}
+              <div class="flex items-center gap-3.5 rounded-[10px] border bg-card px-4 py-3 shadow-panel" data-testid="chat-suggestion">
+                <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-primary"><MessageSquare class="size-4" /></span>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm"><b class="font-semibold">Assistant</b> <span class="text-muted-foreground">· anything, with no folder of yours</span></p>
+                  <p class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <span>{productName(suggested.harness ?? "")}</span>·<span class="fact">{suggested.account ?? suggested.provider}</span>{#if suggested.model}·<span>{suggested.model}</span>{/if}
+                  </p>
+                </div>
+                <Button disabled={saving} onclick={addAssistant} data-testid="chat-add-assistant">Add Assistant</Button>
               </div>
-              <Button disabled={saving} onclick={addAssistant} data-testid="chat-add-assistant">Add Assistant</Button>
-            </div>
+            {/if}
+            <Button variant="outline" onclick={newOne} data-testid="chat-new"><Plus />Someone new</Button>
+            {#if formError && !open}<p class="text-sm text-danger">{formError}</p>{/if}
           {/if}
-          <Button variant="outline" onclick={newOne} data-testid="chat-new"><Plus />Someone new</Button>
-          {#if formError && !open}<p class="text-sm text-danger">{formError}</p>{/if}
         </section>
       {:else if agents.length}
         <section class="space-y-2.5">
@@ -195,7 +208,7 @@
     </div>
     <div class="space-y-1.5">
       <Label>Who works</Label>
-      <ModelChoice
+      <WhoWorksChoice
         agent={{ id: "", name: spec.name, model: spec.model, area: null, modelAlone: spec.modelAlone }}
         own
         onchange={(m) => (spec.model = accessOf(m))}

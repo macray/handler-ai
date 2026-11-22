@@ -12,19 +12,25 @@ from .docker import PROXY_IMAGE, DockerError, docker
 from .launch import PROG
 
 
-def _as_root(path: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """`argv` as root in a container mounting `path` at /c."""
+def _as_root(paths: list[Path], argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """`argv` as root in one container mounting the n-th of `paths` at /c<n>."""
+    mounts = [
+        arg
+        for n, path in enumerate(paths)
+        for arg in ("--mount", f"type=bind,source={path},destination=/c{n}")
+    ]
     return subprocess.run(
         ["docker", "run", "--rm", "--network", "none", "--user", "0:0",
          "--label", f"{MANAGED_LABEL}=1", "--label", f"{LAUNCHER_LABEL}={launcher_label()}",
-         "--mount", f"type=bind,source={path},destination=/c",
-         "--entrypoint", argv[0], PROXY_IMAGE, *argv[1:]],
+         *mounts, "--entrypoint", argv[0], PROXY_IMAGE, *argv[1:]],
         capture_output=True, text=True, check=False, timeout=600,
     )  # fmt: skip
 
 
-def _run(path: Path, before: list[str], after: list[str]) -> subprocess.CompletedProcess[str]:
-    return _as_root(path, [*before, "/c", *after])
+def _run(
+    paths: list[Path], before: list[str], after: list[str]
+) -> subprocess.CompletedProcess[str]:
+    return _as_root(paths, [*before, *(f"/c{n}" for n in range(len(paths))), *after])
 
 
 def size(paths: list[Path]) -> int:

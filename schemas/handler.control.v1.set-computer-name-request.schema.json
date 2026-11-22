@@ -1,0 +1,18 @@
+{
+  "$id": "urn:handler.control/v1/set-computer-name-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the phones call this computer: given to each phone paired from now on.",
+  "properties": {
+    "computerName": {
+      "maxLength": 60,
+      "minLength": 1,
+      "title": "Computername",
+      "type": "string"
+    }
+  },
+  "required": [
+    "computerName"
+  ],
+  "title": "SetComputerNameRequest",
+  "type": "object"
+}

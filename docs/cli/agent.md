@@ -26,9 +26,9 @@ handler agent checks ID [--run]
 
 | Subcommand | |
 |---|---|
-| `list` | every agent, most recently used first: id, home (`project NAME`, `app NAME`, `Chat` or `outside projects`), name (and what it was set up from), what it runs on, its settings (what differs from the defaults), live sandboxes, folder |
-| `show ID` | its settings in full: folder, model, network and hosts (allowed, kept blocked), permissions, tools, notes, skills, containers, display, live sandboxes, and what uses it: Handler itself, your [apps](../apps.md), your automations |
-| `rm ID` | delete an agent outside projects and stop its sandboxes. The next `handler run` in that folder starts a new agent again. When an app uses it, says so and asks first (`--yes`: does not ask): the app stops running it until you give it another. A project's agents are removed in the web UI |
+| `list` | every agent, most recently used first: id, home (`project NAME`, `Chat` or `outside projects`), name (and what it was set up from), who works (the program, the account or provider, and the model), its settings (what differs from the defaults), live sandboxes, folder |
+| `show ID` | its settings in full: folder, model, network and hosts (allowed, kept blocked), permissions, tools, notes, skills, containers, display, live sandboxes, and what uses it: Handler itself, your automations |
+| `rm ID` | delete an agent outside projects and stop its sandboxes. The next `handler run` in that folder starts a new agent again. When Handler or an automation uses it, says so and asks first (`--yes`: does not ask): they stop running it until you give them another. A project's agents are removed in the web UI |
 | `network ID` | its network mode, its own hosts, the hosts it keeps blocked, and its recent connections |
 | `network ID log-only` | a filtered agent: every host goes through and is logged, live, while it works |
 | `network ID enforce` | back to blocking what is not allowed |

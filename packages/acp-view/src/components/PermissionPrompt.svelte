@@ -1,25 +1,40 @@
 <script lang="ts">
-  // The agent waits for your answer: what it asks to do (the tool call's own title, its files and
-  // its diff, never the agent's prose about it; a plan it asks to start from is shown whole, as the
-  // agent wrote it), then its options numbered as the harness names them, allow first, kept in view
-  // under a long diff; one that is remembered says so. On a keyboard the first answer takes the
-  // focus (unless you are typing), ↑ ↓ move between answers and Enter picks one. On a touch screen
-  // they are large buttons that take no tap for a moment after they appear or the screen comes
-  // back on.
+  // The agent waits for your answer: what it asks to do (the tool call's own title, the files it
+  // touches and its diff; on the phone also where it runs, the session's project and folder; a plan it asks to start from is shown whole, as the agent wrote it), why in the
+  // agent's own words when the harness gives them, then Reject and Allow side by side, the same
+  // size and style (no default for the risky answer; the harness's names), and under them any
+  // other answer it offers (a remembered one says so), kept in view under a long diff. The same
+  // card in One, a Grid tile and on the phone. On a keyboard the first answer (Reject) takes the
+  // focus (unless you are typing), the arrow keys move between answers and Enter picks one. On a
+  // touch screen they are large buttons that take no tap for a moment after they appear or the
+  // screen comes back on.
   import type { PermissionOption } from "@agentclientprotocol/sdk";
   import type { PendingPermission } from "../lib/connection.svelte";
   import { markdown } from "../lib/render";
   import { blockText } from "../lib/session.svelte";
   import { SETTLE, settled, touch } from "../lib/touch.svelte";
-  import { relative } from "../lib/tools";
+  import { homeFolder, permissionAnswers, permissionWhy, relative } from "../lib/tools";
   import Diff from "./Diff.svelte";
 
-  let { pending, root }: { pending: PendingPermission; root?: string | null } = $props(); // root: the session's folder
+  // root: the session's folder. On the phone, where the screen does not say it: `agent`, the
+  // agent's name (it asks), and `place`, where it runs (the session's project and folder)
+  let {
+    pending,
+    root,
+    agent = null,
+    place = null,
+  }: {
+    pending: PendingPermission;
+    root?: string | null;
+    agent?: string | null;
+    place?: { project?: string | null; folder: string } | null;
+  } = $props();
   const settle = settled();
 
   const tool = $derived(pending.request.toolCall);
   const options = $derived(pending.request.options);
-  const answers = $derived([...options.filter((o) => o.kind.startsWith("allow")), ...options.filter((o) => o.kind.startsWith("reject"))]);
+  const answers = $derived(permissionAnswers(options));
+  const why = $derived(permissionWhy(tool));
   const VERB: Record<string, string> = {
     execute: "run a command",
     edit: "change a file",
@@ -28,6 +43,7 @@
     fetch: "reach the network",
     read: "read a file",
   };
+  const who = $derived(agent || "The agent");
   const asks = $derived(tool.kind && VERB[tool.kind] ? `to ${VERB[tool.kind]}` : "for permission");
   const diffs = $derived((tool.content ?? []).filter((c) => c.type === "diff"));
   // leaving plan mode: the plan it would start from, in the request's own text
@@ -56,12 +72,13 @@
     if (!typing) list.querySelector("button")?.focus({ preventScroll: true });
   }
 
-  /** ↑ ↓ move between the answers (Enter or Space picks the one focused, as any button). */
+  /** The arrow keys move between the answers (Enter or Space picks the one focused, as any button). */
   function move(event: KeyboardEvent): void {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
     const buttons = [...(event.currentTarget as HTMLElement).querySelectorAll("button")];
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next = buttons[(at + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length];
+    const next = buttons[(at + step + buttons.length) % buttons.length];
     event.preventDefault();
     next?.focus();
   }
@@ -71,37 +88,47 @@
   <div class="head">
     <span class="badge">Needs you</span>
     {#if plan}
-      <span>The agent asks to start working from its plan:</span>
+      <span>{who} asks to start working from its plan:</span>
     {:else if file}
-      <span>The agent asks to change this file:</span>
+      <span>{who} asks to change this file:</span>
     {:else}
-      <span>The agent asks {asks}:</span>
+      <span>{who} asks {asks}:</span>
     {/if}
   </div>
+  {#if why}<p class="why" data-testid="permission-why">“{why}”</p>{/if}
   {#if plan}
     <div class="planbox md" data-testid="permission-plan">{@html markdown(plan)}</div>
-  {:else if !file}<pre class="what">{title}</pre>{/if}
-  {#if paths.length}<p class="paths">{paths.join(" · ")}</p>{/if}
+  {:else if !file}<pre class="what" data-testid="permission-what">{title}</pre>{/if}
+  {#if paths.length}<p class="paths" data-testid="permission-touches">Touches {paths.join(" · ")}</p>{/if}
+  {#if place}
+    <p class="where" data-testid="permission-where" title={place.folder}>
+      In {[place.project, homeFolder(place.folder)].filter(Boolean).join(" · ")}
+    </p>
+  {/if}
   {#each diffs as d, i (i)}
     {#if d.type === "diff"}<Diff path={d.path} oldText={d.oldText} newText={d.newText} {root} />{/if}
   {/each}
-  <div class="answers" role="toolbar" aria-orientation="vertical" aria-label="answers" tabindex="-1" onkeydown={move} {@attach focusFirst}>
-    {#each answers as option, n (option.optionId)}
+  <div class="answers" role="toolbar" aria-label="answers" tabindex="-1" onkeydown={move} {@attach focusFirst}>
+    {#snippet answer(option: PermissionOption, wide: boolean)}
       {@const always = option.kind.endsWith("always")}
-      {@const side = option.kind.startsWith("allow") ? "allow" : "reject"}
       <button
         type="button"
-        class="{side} {always ? 'always' : 'once'}"
+        class={[option.kind.startsWith("allow") ? "allow" : "reject", wide && "wide"]}
         class:settling={!settle.ready}
         style:--settle="{SETTLE}ms"
         disabled={!settle.ready}
         onclick={() => choose(option)}
         title={always ? "Remembered: the agent does not ask again for the same thing" : "This time only"}
+        data-testid="permission-answer"
+        data-kind={option.kind}
       >
-        <span class="pointer" aria-hidden="true">❯</span><span class="n" aria-hidden="true">{n + 1}.</span>
-        <span class="name">{option.name}{#if always}<span class="sub">remembered</span>{/if}</span>
+        {option.name}{#if always}<span class="sub">remembered</span>{/if}
       </button>
-    {/each}
+    {/snippet}
+    <div class="pair">
+      {#each answers.pair as option (option.optionId)}{@render answer(option, answers.pair.length === 1)}{/each}
+    </div>
+    {#each answers.more as option (option.optionId)}{@render answer(option, true)}{/each}
   </div>
 </div>
 
@@ -188,101 +215,75 @@
     border-radius: 3px;
     padding: 0 0.3ch;
   }
-  .paths {
+  .paths,
+  .where {
     margin: 0;
     color: var(--muted-foreground);
     overflow-wrap: anywhere;
   }
-  /* the answers as Claude Code lists them: numbered rows, the one under the pointer or focus
-     marked ❯ */
+  .why {
+    margin: 0;
+    color: var(--muted-foreground);
+    overflow-wrap: anywhere;
+  }
+  /* Reject | Allow: two equal buttons, then the other answers, each a row of its own */
   .answers {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    gap: 0.4rem;
     position: sticky; /* under a long diff, the answers stay in view */
     bottom: 0;
     margin: 0 -0.9rem -0.7rem;
-    padding: 0.3rem 0.9rem 0.6rem;
+    padding: 0.3rem 0.9rem 0.7rem;
     background: var(--user-line, var(--card));
     border-radius: 0 0 5px 0;
   }
-  button {
+  .pair {
     display: grid;
-    grid-template-columns: 2ch 3ch minmax(0, 1fr);
-    align-items: baseline;
-    text-align: left;
-    width: 100%;
-    border-radius: 4px;
-    padding: 0.1rem 0.4rem;
-    font-size: 1em;
-    color: var(--muted-foreground);
-    background: none;
-    border: 1px solid transparent;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
   }
-  .pointer {
-    visibility: hidden;
-    color: var(--primary);
+  button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1ch;
+    min-height: 1.9rem;
+    padding: 0.2rem 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--foreground) 22%, transparent);
+    border-radius: 7px;
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 1em;
+    font-weight: 600;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  button.wide {
+    grid-column: 1 / -1;
   }
   button:hover,
   button:focus-visible {
+    border-color: var(--foreground);
     background: var(--muted);
-    color: var(--foreground);
     outline: none;
   }
-  button:hover .pointer,
-  button:focus-visible .pointer {
-    visibility: visible;
-  }
-  .allow .name {
-    color: var(--foreground);
-  }
   .sub {
-    margin-left: 1ch;
     font-size: 0.85em;
+    font-weight: 400;
     color: var(--muted-foreground);
   }
   button:disabled {
     opacity: 0.6;
   }
-  /* a touch screen: large buttons, the first answer filled; no pointer, no numbers */
+  /* a touch screen: large buttons, still equal */
   @media (pointer: coarse) {
     .answers {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.5rem;
       padding-top: 0.5rem;
     }
     button {
-      display: flex;
-      justify-content: center;
-      text-align: center;
       min-height: 2.75rem;
-      padding: 0.4rem 0.6rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--muted);
-      color: var(--foreground);
-    }
-    button:first-child {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: var(--primary-foreground);
-      font-weight: 700;
-    }
-    button:first-child .name,
-    button:first-child .sub {
-      color: inherit;
-    }
-    button.reject {
-      background: none;
-      color: var(--muted-foreground);
-    }
-    button:last-child:nth-child(odd) {
-      grid-column: 1 / -1;
-    }
-    .pointer,
-    .n {
-      display: none;
+      border-radius: 10px;
     }
   }
 </style>

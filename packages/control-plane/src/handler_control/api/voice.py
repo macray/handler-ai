@@ -31,7 +31,9 @@ def add_voice_routes(app: FastAPI, ctx: Context) -> None:
         try:
             return dump(await ctx.voice.hear(body))
         except VoiceOffError as e:
+            ctx.assistant.unheard(body.via, str(e))
             raise ProblemError(409, "voice is off", str(e)) from None
         except ServiceError as e:  # the recording too large, the provider failing or too slow
+            ctx.assistant.unheard(body.via, e.message)
             status = 413 if e.code == "limit" else 502
             raise ProblemError(status, "nothing was written down", e.message) from None

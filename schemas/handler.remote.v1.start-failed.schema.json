@@ -1,0 +1,33 @@
+{
+  "$id": "urn:handler.remote/v1/start-failed",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The params of the notification `_handler/remote/start_failed`, to the device that started\nthe session: it did not start, so it is never shared (F.1, F.3).",
+  "properties": {
+    "session": {
+      "title": "Session",
+      "type": "string"
+    },
+    "error": {
+      "title": "Error",
+      "type": "string"
+    },
+    "missingImage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Missingimage"
+    }
+  },
+  "required": [
+    "session",
+    "error"
+  ],
+  "title": "StartFailed",
+  "type": "object"
+}

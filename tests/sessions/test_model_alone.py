@@ -64,11 +64,13 @@ def create(daemon: Daemon, **body: Any) -> dict[str, Any]:
 
 
 @pytest.mark.rule(
-    "alone.no-tools", "alone.reads-only-its-notes-and-conversation", "alone.a-session-like-any"
+    "model-alone.has-no-tools",
+    "model-alone.reads-only-its-notes-and-conversation",
+    "model-alone.its-sessions-are-like-any",
 )
 def test_a_chat_is_a_conversation_with_the_model(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = "Hello."
-    agent = create(daemon, name="ask", knowledge=["acme"])
+    agent = create(daemon, name="ask", knowledge=[{"folder": "acme"}])
     assert agent["modelAlone"] is True and agent["connections"] == []
     assert not {"harness", "problem"} & set(agent["model"])
     session = create_session(daemon, agent, prompt="Who do I write to?")
@@ -88,7 +90,7 @@ def test_a_chat_is_a_conversation_with_the_model(daemon: Daemon, stub: StubLlm) 
     assert not {"tools", "tool_choice", "functions"} & set(sent)
 
 
-@pytest.mark.rule("alone.a-session-like-any")
+@pytest.mark.rule("model-alone.its-sessions-are-like-any")
 def test_a_job_run_ends_with_its_result(daemon: Daemon, stub: StubLlm) -> None:
     stub.answer = 'Looks fine.\n```json handler-result\n{"verdict": "good"}\n```'
     agent = create(daemon, name="judge", interface={"result": RESULT})
@@ -98,7 +100,7 @@ def test_a_job_run_ends_with_its_result(daemon: Daemon, stub: StubLlm) -> None:
     assert done["output"] == {"valid": True, "value": {"verdict": "good"}}
 
 
-@pytest.mark.rule("alone.a-session-like-any", "job.its-result-is-checked")
+@pytest.mark.rule("model-alone.its-sessions-are-like-any", "job.its-result-is-checked")
 def test_a_run_on_a_model_it_cannot_reach_says_why(daemon: Daemon) -> None:
     """The model's own error is the run's: what Ask says when its router cannot answer, instead
     of "no valid result"."""
@@ -113,7 +115,7 @@ def test_a_run_on_a_model_it_cannot_reach_says_why(daemon: Daemon) -> None:
     assert "connect" in error.lower(), error  # httpx's: "All connection attempts failed"
 
 
-@pytest.mark.rule("alone.notes-fit-in-a-call")
+@pytest.mark.rule("model-alone.notes-fit-in-a-call")
 def test_saving_it_with_more_knowledge_than_a_call_takes_is_refused(
     daemon: Daemon, knowledge: Path
 ) -> None:
@@ -128,17 +130,23 @@ def test_saving_it_with_more_knowledge_than_a_call_takes_is_refused(
     (knowledge / "fits").mkdir()
     (knowledge / "fits" / "notes.md").write_text("x" * (190 * 1024))
     with daemon.http() as c:
-        r = c.post("/v1/agents", json=ALONE | {"name": "too-much", "knowledge": ["big"]})
+        big = [{"folder": "big"}]
+        r = c.post("/v1/agents", json=ALONE | {"name": "too-much", "knowledge": big})
         assert r.status_code == 400 and r.json()["title"] == "notes too large", r.text
         assert "too-much" not in {a.get("name") for a in c.get("/v1/agents").json()}
-    assert create(daemon, name="just-fits", knowledge=["fits"])["knowledge"] == ["fits"]
+    fits = [{"folder": "fits", "access": "read"}]
+    assert create(daemon, name="just-fits", knowledge=fits)["knowledge"] == fits
+    with daemon.http() as c:  # no sandbox to write from
+        write = [{"folder": "fits", "access": "write"}]
+        r = c.post("/v1/agents", json=ALONE | {"name": "writes", "knowledge": write})
+        assert r.status_code == 400 and "writes none" in r.text, r.text
     program = {"model": {"account": "fake"}, "scope": str(daemon.make_scope())}
     with daemon.http() as c:
-        r = c.post("/v1/agents", json=program | {"name": "a-program", "knowledge": ["big"]})
+        r = c.post("/v1/agents", json=program | {"name": "a-program", "knowledge": big})
         assert r.status_code == 201, r.text
 
 
-@pytest.mark.rule("alone.only-what-needs-no-sandbox")
+@pytest.mark.rule("model-alone.only-what-needs-no-sandbox")
 def test_what_only_a_sandbox_has_is_refused(daemon: Daemon) -> None:
     refused = [
         {"model": {"account": "fake"}},  # a subscription: its vendor's program signs in
@@ -146,6 +154,7 @@ def test_what_only_a_sandbox_has_is_refused(daemon: Daemon) -> None:
         {"network": "open"},
         {"addons": [{"addon": "x"}]},
         {"display": True},
+        {"env": {"ASTRO_TELEMETRY_DISABLED": "1"}},
         {"permissions": "ask"},
     ]
     with daemon.http() as c:
@@ -156,7 +165,7 @@ def test_what_only_a_sandbox_has_is_refused(daemon: Daemon) -> None:
         assert r.status_code == 400 and r.json()["title"] == "model alone"
 
 
-@pytest.mark.rule("alone.only-what-needs-no-sandbox")
+@pytest.mark.rule("model-alone.only-what-needs-no-sandbox")
 def test_no_plain_connection_and_no_terminal(daemon: Daemon) -> None:
     agent = create(daemon, name="plain")
     client = daemon.connect(agent["acpUrl"])

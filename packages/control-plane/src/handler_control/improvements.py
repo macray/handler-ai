@@ -16,6 +16,7 @@ import contextlib
 import json
 import secrets
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,7 @@ class ImprovementStore:
         self.root = settings.state_dir / "improvements"
         self.running: dict[str, asyncio.Task[None]] = {}  # agent id → its improvement
         self.stopping: set[str] = set()  # improvement ids asked to stop
+        self.watchers: list[Callable[[], None]] = []  # told after each save (the web UI, D.30)
 
     # ── storage ─────────────────────────────────────────────────────────
 
@@ -93,6 +95,8 @@ class ImprovementStore:
         tmp = self.file(agent_id).with_suffix(".tmp")
         tmp.write_text(json.dumps(raw, indent=2))
         tmp.replace(self.file(agent_id))
+        for watcher in self.watchers:
+            watcher()
 
     def get(self, agent_id: str, improvement_id: str) -> Improvement:
         for i in self.load(agent_id):
@@ -186,25 +190,23 @@ class ImprovementStore:
         deadline = time.monotonic() + improvement.max_minutes * 60
         improvement = await self.check(agent, improvement, 0)
         total = len(improvement.attempts[0].results)
-        while True:
-            best = improvement.attempts[improvement.best]
-            why = (
-                "every check passes"
-                if best.passed == total
-                else f"{improvement.max_attempts} attempts made"
-                if len(improvement.attempts) > improvement.max_attempts
-                else f"{improvement.max_minutes} min passed"
-                if time.monotonic() > deadline
-                else "stopped"
-                if improvement_id in self.stopping
-                else None
-            )
-            if why is not None:
-                break
+        while (why := self.end(improvement, total, deadline)) is None:
             improvement = await self.attempt(agent, improvement)
         self.stopping.discard(improvement_id)
         state = "stopped" if why == "stopped" else "done"
         self.put(improvement.model_copy(update={"state": state, "why": why, "ended_at": now()}))
+
+    def end(self, improvement: Improvement, total: int, deadline: float) -> str | None:
+        """Why it ends now, between attempts (`improve.within-its-budget`); None to go on."""
+        if improvement.attempts[improvement.best].passed == total:
+            return "every check passes"
+        if len(improvement.attempts) > improvement.max_attempts:
+            return f"{improvement.max_attempts} attempts made"
+        if time.monotonic() > deadline:
+            return f"{improvement.max_minutes} min passed"
+        if improvement.id in self.stopping:
+            return "stopped"
+        return None
 
     async def attempt(self, agent: AgentRecord, improvement: Improvement) -> Improvement:
         """One more: the prompt writer's new instructions from the best so far, then its checks."""

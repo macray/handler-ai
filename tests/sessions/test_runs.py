@@ -105,7 +105,7 @@ def test_a_folderless_agent_has_no_plain_connection(daemon: Daemon) -> None:
         assert "sessions only" in closed.value.rcvd.reason
 
 
-@pytest.mark.rule("job.never-asks")
+@pytest.mark.rule("job.runs-in-bypass-and-allows-what-it-is-asked")
 def test_an_interface_is_checked(daemon: Daemon) -> None:
     with daemon.http() as c:
         bad = {"result": RESULT, "fields": {"type": "string"}}
@@ -217,6 +217,26 @@ def test_a_run_gives_its_result_back(daemon: Daemon) -> None:
     assert output == {"valid": False, "error": "no `handler-result` block in the final message"}
 
 
+@pytest.mark.rule("launch.a-run-gets-its-harness-s-unattended-env")
+def test_only_a_run_gets_its_harness_s_unattended_env(daemon: Daemon) -> None:
+    """A run's sandbox starts with the variables its harness gives runs (Claude Code's turn off
+    background commands); a session someone follows, of the same agent, never does."""
+    agent = create_agent(daemon, name="checker", interface={"result": RESULT})
+    run = create_session(daemon, agent, input={})
+    wait_output(daemon, run["id"])
+    followed = create_agent(daemon, name="followed")
+    session = create_session(daemon, followed)
+    wait_state(daemon, session["id"], "running")
+    ran = daemon.config_dir.parent / "fake-ran"
+
+    def env(agent: dict[str, Any], session: dict[str, Any]) -> dict[str, str]:
+        spec = json.loads((ran / f"handler-{agent['id']}-{session['id']}").read_text())
+        return spec["env"]
+
+    assert env(agent, run)["FAKE_UNATTENDED"] == "1"
+    assert "FAKE_UNATTENDED" not in env(followed, session)
+
+
 @pytest.mark.rule("form.sessions-start-from-the-form", "job.nobody-prompts-a-run")
 def test_a_run_takes_no_prompt(daemon: Daemon) -> None:
     agent = create_agent(daemon, name="quiet", interface={"result": RESULT})
@@ -239,7 +259,7 @@ def events(daemon: Daemon, run: dict[str, Any]) -> str:
     ).read_text()
 
 
-@pytest.mark.rule("job.never-asks")
+@pytest.mark.rule("job.runs-in-bypass-and-allows-what-it-is-asked")
 def test_a_run_allows_the_permission_requests_it_still_sends(daemon: Daemon) -> None:
     agent = create_agent(daemon, name="asks", interface={"fields": FIELDS, "result": RESULT})
     run = wait_output(
@@ -348,7 +368,7 @@ def test_a_runs_secret_values_are_redacted(daemon: Daemon) -> None:
     assert FAKE_SECRET not in raw and "the token is «redacted»" in raw
 
 
-@pytest.mark.rule("form.the-subject-is-read-only")
+@pytest.mark.rule("form.the-skill-it-names-is-given-read-only")
 def test_a_run_on_a_skill(daemon: Daemon, skill: str) -> None:
     """D.18: the form's skill field names the skill the run works on (its subject)."""
     two = {"type": "object", "properties": {"a": SKILL_FIELD, "b": SKILL_FIELD}}

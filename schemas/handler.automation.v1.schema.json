@@ -94,6 +94,34 @@
       "title": "AutomationAppend",
       "type": "object"
     },
+    "AutomationJobRun": {
+      "additionalProperties": false,
+      "description": "`run = { app, job, input? }`: a run of one of an app's jobs (H.1), by the Who works chosen\nfor it (H.2), unattended (I.3).",
+      "properties": {
+        "app": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "App",
+          "type": "string"
+        },
+        "job": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/AutomationAgentInput",
+          "default": {
+            "fields": {}
+          }
+        }
+      },
+      "required": [
+        "app",
+        "job"
+      ],
+      "title": "AutomationJobRun",
+      "type": "object"
+    },
     "AutomationOnly": {
       "additionalProperties": false,
       "description": "The sessions an automation is for: by their project's name, their agent's; absent: any.",
@@ -150,12 +178,12 @@
     },
     "Schedule": {
       "additionalProperties": false,
-      "description": "A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.",
+      "description": "A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.",
       "properties": {
         "every": {
           "anyOf": [
             {
-              "pattern": "^[1-9]\\d{0,3}[mh]$",
+              "pattern": "^[1-9]\\d{0,3}[mhd]$",
               "type": "string"
             },
             {
@@ -258,6 +286,9 @@
         },
         {
           "$ref": "#/$defs/AutomationAgentRun"
+        },
+        {
+          "$ref": "#/$defs/AutomationJobRun"
         },
         {
           "$ref": "#/$defs/AutomationAppCall"

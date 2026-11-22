@@ -73,6 +73,7 @@ def add_acp_endpoint(app: FastAPI, ctx: Context) -> None:
             await Relay(ws, started, policy, record, ctx.registry).serve()
         finally:
             record.connections.pop(conn.id, None)
+            ctx.registry.connected()
             addon_folders.sweep_soon(ctx.settings)  # a folder it mounted may be free
 
     @app.websocket("/v1/sessions/{session_id}/acp")

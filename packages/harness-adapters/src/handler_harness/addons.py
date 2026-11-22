@@ -7,7 +7,7 @@ is a directory `<name>/` containing:
   tool.toml         the manifest (`handler.tool/v1`)
   Containerfile     the tool's image, FROM the toolbox image; present iff the manifest has an `image`
   skills/<skill>/   zero or more skills, each with a SKILL.md
-  PROVISIONING.md   how to create the account a connection needs (for people, not read here)
+  CONNECT.md        for people: how to make what a connection asks for, shown at Connect
 """
 
 import os
@@ -24,6 +24,7 @@ from .catalog import DATA, config_dir
 
 BUILTIN_DIR = DATA / "tools"
 MANIFEST = "tool.toml"
+CONNECT = "CONNECT.md"
 
 
 def user_dir() -> Path:
@@ -53,6 +54,14 @@ class Addon:
     @property
     def containerfile(self) -> Path:
         return self.directory / "Containerfile"
+
+    @property
+    def connect(self) -> str | None:
+        """Its CONNECT.md as written, shown where a connection to it is made (G.1); None: none."""
+        try:
+            return (self.directory / CONNECT).read_text(errors="replace")
+        except (FileNotFoundError, IsADirectoryError):
+            return None
 
     @property
     def skills(self) -> list[Path]:

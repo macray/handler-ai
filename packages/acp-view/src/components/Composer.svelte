@@ -818,17 +818,30 @@
     background: transparent;
     color: var(--prompt);
   }
+  /* Stop: a small ring around its ■, in a button as big as its neighbours' (the same tap area) */
   .round.stop {
+    position: relative;
     background: transparent;
     color: var(--danger);
-    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
-    font-size: 0.85rem;
+    border-color: transparent;
+    font-size: 0.7rem;
+  }
+  .round.stop::before {
+    content: "";
+    position: absolute;
+    inset: 0.45rem;
+    border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent);
+    border-radius: 999px;
   }
   .round.stop.confirming {
     width: auto;
     padding: 0 0.9rem;
+    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
     font-size: 0.9em;
     font-weight: 600;
+  }
+  .round.stop.confirming::before {
+    content: none;
   }
   .menu {
     position: absolute;

@@ -34,6 +34,7 @@ def test_a_running_launcher_s_label_says_it_is_alive(source: str) -> None:
     assert launcher.launcher_alive(launcher.launcher_label())
 
 
+@pytest.mark.rule("sandbox.sweep-spares-live-launchers")
 def test_a_label_is_one_word(source: str) -> None:
     """It is put on the engines' resources (`--label`) and read back from their listings.
     If this fails: `ps`'s start time ("Sat Oct 25 19:28:34 2026") breaks the label's value."""

@@ -1,6 +1,7 @@
 """Unit tests: a paired device's attachments held only while it is around (remote design): one
 that sent nothing for its lease, or whose output piled up past its outbox, is detached and told
-why; and who is pushed an inbox message. No gateway here: what would be sent stays in the
+why; and who is pushed what: an inbox message, a shared session waiting on you, each kind a
+switch on the device. No gateway here: what would be sent stays in the
 device's link; the push service is a stand-in."""
 
 import asyncio
@@ -11,15 +12,14 @@ from typing import Any, cast
 
 import pytest
 
-from handler_contracts import InboxMessage, PushKeys, WebPush
+from handler_contracts import InboxMessage, PushKeys, PushKind, PushSubscribeParams, WebPush
 from handler_control import remote
-from handler_control.agents import AgentRegistry
+from handler_control.agents import AgentRecord, AgentRegistry, RunsAs
 from handler_control.app_runs import AppRuns
 from handler_control.apps import AppStore
 from handler_control.inbox import Inbox
-from handler_control.projects import ProjectRegistry
 from handler_control.remote import Connector, Device, Link
-from handler_control.sessions import SessionStore
+from handler_control.sessions import LiveSession, SessionRecord, SessionStore
 from handler_control.settings import Settings
 
 
@@ -40,7 +40,7 @@ def connector(tmp_path: Path) -> Connector:
     )  # fmt: skip
     registry = AgentRegistry(settings.state_dir)
     sessions, inbox = SessionStore(settings, registry), Inbox(settings)
-    runs = AppRuns(settings, sessions, ProjectRegistry(tmp_path, registry), inbox)
+    runs = AppRuns(settings, sessions, inbox)
     return Connector(settings, sessions, AppStore(settings, "t0ken", inbox, runs))
 
 
@@ -115,11 +115,21 @@ def test_a_device_too_far_behind_is_detached_and_told(
 KEYS = PushKeys(p256dh="BPhone", auth="secret")  # not checked past push_subscribe
 
 
-def a_phone(c: Connector, name: str, person: str, endpoint: str | None) -> Device:
+def a_phone(
+    c: Connector,
+    name: str,
+    person: str,
+    endpoint: str | None,
+    *,
+    kinds: list[PushKind] | None = None,
+    scope: Any = "all",
+) -> Device:
     device = Device(
         id=f"d_{name}", name=name, key=b"k" * 32, created_at=datetime.now(UTC), person=person,
-        push=WebPush(endpoint=endpoint, keys=KEYS) if endpoint else None,
+        scope=scope, push=WebPush(endpoint=endpoint, keys=KEYS) if endpoint else None,
     )  # fmt: skip
+    if kinds is not None:
+        device.kinds = kinds
     c.devices[device.id] = device
     c.save_devices()
     return device
@@ -129,7 +139,8 @@ def pushed_on(c: Connector, person: str, statuses: dict[str, int]) -> list[str]:
     """An inbox message for `person`: the endpoints pushed to (each answering its status)."""
     pushed: list[str] = []
 
-    async def push(http: Any, vapid: Any, to: WebPush, contact: str) -> int:
+    async def push(http: Any, vapid: Any, to: WebPush, contact: str, kind: PushKind) -> int:
+        assert kind == "app-news"
         pushed.append(to.endpoint)
         return statuses.get(to.endpoint, 201)
 
@@ -190,7 +201,7 @@ def a_test_push_on(
     the answer it gets, and the endpoints pushed to."""
     pushed: list[str] = []
 
-    async def push(http: Any, vapid: Any, to: WebPush, contact: str) -> int:
+    async def push(http: Any, vapid: Any, to: WebPush, contact: str, kind: PushKind) -> int:
         pushed.append(to.endpoint)
         if status is None:
             raise remote.httpx.ConnectError("no route to host")
@@ -204,7 +215,7 @@ def a_test_push_on(
     return asyncio.run(asked()), pushed
 
 
-@pytest.mark.rule("push.the-person-s-devices-only")
+@pytest.mark.rule("push.the-person-s-devices-only", "push.a-test-says-why-it-was-not-sent")
 def test_a_test_push_goes_to_the_asking_device_only(tmp_path: Path) -> None:
     """If this fails: a test from one phone rings the others, or tells "sent" when it was not."""
     c = connector(tmp_path)
@@ -216,6 +227,7 @@ def test_a_test_push_goes_to_the_asking_device_only(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.rule("push.a-test-says-why-it-was-not-sent")
 @pytest.mark.parametrize(
     ("status", "problem"),
     [
@@ -234,6 +246,7 @@ def test_a_test_push_says_why_it_was_not_sent(
     assert answer["sent"] is False and problem in answer["problem"]
 
 
+@pytest.mark.rule("push.a-test-says-why-it-was-not-sent")
 def test_a_test_push_from_a_device_not_subscribed_says_so(tmp_path: Path) -> None:
     c = connector(tmp_path)
     off = a_phone(c, "off", "owner", None)
@@ -241,3 +254,170 @@ def test_a_test_push_from_a_device_not_subscribed_says_so(tmp_path: Path) -> Non
         {"sent": False, "problem": "notifications are off on this device"},
         [],
     )
+
+
+class Waiting:
+    """A session's side seen by the connector: shared or not, its requests awaiting an answer."""
+
+    def __init__(self, remote: bool = True) -> None:
+        self.record = cast(Any, type("R", (), {"id": "s_1", "state": "running"})())
+        self.remote = remote
+        self.pending: dict[str, object] = {}
+
+    def asks(self, c: Connector, request_id: str) -> None:
+        self.pending[request_id] = {}
+        for listener in c.sessions.waiting_listeners:
+            listener(cast(Any, self))
+
+    def answered(self, c: Connector, request_id: str) -> None:
+        self.pending.pop(request_id)
+        for listener in c.sessions.waiting_listeners:
+            listener(cast(Any, self))
+
+
+def pushes_of(c: Connector, happen: Any) -> list[tuple[str, PushKind]]:
+    """What `happen(c)` pushed: (endpoint, kind) each."""
+    pushed: list[tuple[str, PushKind]] = []
+
+    async def push(http: Any, vapid: Any, to: WebPush, contact: str, kind: PushKind) -> int:
+        pushed.append((to.endpoint, kind))
+        return 201
+
+    async def run() -> None:
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(remote.webpush, "push", push)
+            happen(c)
+            await asyncio.gather(*c.pushes)
+
+    asyncio.run(run())
+    return pushed
+
+
+@pytest.mark.rule("push.the-person-s-devices-only")
+def test_a_shared_session_waiting_on_you_is_pushed_once_per_wait(tmp_path: Path) -> None:
+    """To the devices that see sessions; once when it starts waiting, not per request, and
+    again only once it stopped waiting and waits again.
+
+    If this fails: a session waits on you unseen, a phone rings for each request, or a family
+    member's phone is told of your sessions."""
+    c = connector(tmp_path)
+    a_phone(c, "mine", "owner", "https://push.example/mine")
+    a_phone(c, "my-apps", "owner", "https://push.example/apps", scope="apps")
+    a_phone(c, "alice-s", "alice", "https://push.example/alice", scope="apps")
+    session = Waiting()
+    needs_you = [("https://push.example/mine", "needs-you")]
+
+    def two_requests(c: Connector) -> None:
+        session.asks(c, "r1")
+        session.asks(c, "r2")  # still the same wait
+        session.answered(c, "r1")
+
+    assert pushes_of(c, two_requests) == needs_you
+    assert pushes_of(c, lambda c: session.answered(c, "r2")) == []  # no longer waiting
+    assert pushes_of(c, lambda c: session.asks(c, "r3")) == needs_you  # a new wait
+
+
+@pytest.mark.rule("push.the-person-s-devices-only")
+def test_a_session_not_shared_is_never_pushed(tmp_path: Path) -> None:
+    """If this fails: the phone rings for a session it cannot see."""
+    c = connector(tmp_path)
+    a_phone(c, "mine", "owner", "https://push.example/mine")
+    assert pushes_of(c, lambda c: Waiting(remote=False).asks(c, "r1")) == []
+
+
+@pytest.mark.rule("push.each-kind-its-switch")
+def test_a_device_gets_only_the_kinds_it_turned_on(tmp_path: Path) -> None:
+    """If this fails: a phone rings for what its person turned off."""
+    c = connector(tmp_path)
+    a_phone(c, "both", "owner", "https://push.example/both")  # both on, by default
+    a_phone(c, "news", "owner", "https://push.example/news", kinds=["app-news"])
+    a_phone(c, "needs", "owner", "https://push.example/needs", kinds=["needs-you"])
+    message = InboxMessage(
+        id="m1", source="app", name="coach", person="owner", title="Hi", at=datetime.now(UTC)
+    )
+    assert sorted(pushes_of(c, lambda c: c.on_message(message))) == [
+        ("https://push.example/both", "app-news"),
+        ("https://push.example/news", "app-news"),
+    ]
+    assert sorted(pushes_of(c, lambda c: Waiting().asks(c, "r1"))) == [
+        ("https://push.example/both", "needs-you"),
+        ("https://push.example/needs", "needs-you"),
+    ]
+
+
+@pytest.mark.rule("push.each-kind-its-switch")
+def test_a_device_s_kinds_are_kept(tmp_path: Path) -> None:
+    """Its switches, as the phone sends them with its subscription, kept across a restart."""
+    c = connector(tmp_path)
+    mine = a_phone(c, "mine", "owner", None)
+    sub = WebPush(endpoint="https://fcm.googleapis.com/fcm/send/x", keys=KEYS)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(remote.webpush, "valid_keys", lambda p256dh, auth: True)
+        c.push_subscribe(mine, PushSubscribeParams(subscription=sub, kinds=["app-news"]))
+    assert connector(tmp_path).devices["d_mine"].kinds == ["app-news"]
+    assert PushSubscribeParams(subscription=sub).kinds == ["needs-you", "app-news"]
+
+
+class AgentSide:
+    """The agent's end of a session's link: what the session sent it."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    async def send(self, m: dict[str, Any]) -> None:
+        self.sent.append(m)
+
+
+def asking(request_id: str) -> dict[str, Any]:
+    params = {"sessionId": "acp_1", "toolCall": {"toolCallId": request_id}, "options": []}
+    return {"jsonrpc": "2.0", "id": request_id, "method": "session/request_permission", "params": params}  # fmt: skip
+
+
+@pytest.mark.rule("push.the-person-s-devices-only")
+def test_a_running_session_s_permission_requests_push_once_per_wait(tmp_path: Path) -> None:
+    """A real session, its agent asking permissions as a harness does and a client answering:
+    the first request pushes, a second while it waits does not, the wait ends with the last
+    answer, and the next request pushes again.
+
+    If this fails: the phone is not told a shared session needs you, or rings for each request."""
+    c = connector(tmp_path)
+    a_phone(c, "mine", "owner", "https://push.example/mine")
+    now = datetime.now(UTC)
+    record = SessionRecord(
+        id="s_1", agent_id="a1", harness="codex", scope="/code", created_at=now,
+        last_activity_at=now, agents_model=True, state="running", acp_session_id="acp_1",
+    )  # fmt: skip
+    agent = AgentRecord(model=RunsAs(harness="codex", account="fake"), scope="/code", id="a1")
+    live = LiveSession(c.sessions, record, agent, cast(Any, agent.model))
+    live.link, live.remote = cast(Any, AgentSide()), True
+    client = cast(Any, object())
+
+    def answer(request_id: str) -> dict[str, Any]:
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"outcome": {"outcome": "cancelled"}}}  # fmt: skip
+
+    def pushes(*steps: Any) -> list[tuple[str, PushKind]]:
+        async def go() -> list[tuple[str, PushKind]]:
+            pushed: list[tuple[str, PushKind]] = []
+
+            async def push(http: Any, vapid: Any, to: WebPush, contact: str, k: PushKind) -> int:
+                pushed.append((to.endpoint, k))
+                return 201
+
+            with pytest.MonkeyPatch.context() as m:
+                m.setattr(remote.webpush, "push", push)
+                for step in steps:
+                    await step()
+                await asyncio.gather(*c.pushes)
+            live.cancel_idle()
+            return pushed
+
+        return asyncio.run(go())
+
+    needs_you = [("https://push.example/mine", "needs-you")]
+    assert pushes(lambda: live.route(asking("r1")), lambda: live.route(asking("r2"))) == needs_you
+    assert c.waiting == {"s_1"}
+    assert pushes(lambda: live.from_client(client, answer("r1"))) == []  # r2 still waits
+    assert pushes(lambda: live.from_client(client, answer("r2"))) == []
+    assert c.waiting == set()  # no longer waiting
+    assert pushes(lambda: live.route(asking("r3"))) == needs_you  # a new wait
+    assert [m["id"] for m in cast(AgentSide, live.link).sent] == ["r1", "r2"]  # answers passed on

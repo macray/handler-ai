@@ -66,6 +66,10 @@ class Remote {
     this.status = await api.clearGateway();
   }
 
+  async setComputerName(name: string): Promise<void> {
+    this.status = await api.setComputerName(name.trim());
+  }
+
   async pair(name: string, person = "owner"): Promise<RemotePairing> {
     const pairing = await api.pairDevice(name.trim(), person);
     await this.refresh();

@@ -23,6 +23,8 @@ Cursors are opaque (`<epoch>-<n>`): after a gateway restart, a reader starts ove
 """
 
 import json
+import mimetypes
+import os
 import re
 import secrets
 import time
@@ -31,12 +33,14 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from .store import ConflictError, Mailbox, MailboxFullError, Queue, Registry
 
@@ -335,7 +339,7 @@ def create_app(state: State, client_dir: Path | None = None) -> Starlette:
         Route("/v1/device/poll", device_poll),
     ]
     if client_dir is not None and (client_dir / "index.html").is_file():
-        routes.append(Mount("/", StaticFiles(directory=client_dir, html=True)))
+        routes.append(Mount("/", ClientFiles(directory=client_dir, html=True)))
     return Starlette(routes=routes, middleware=[Middleware(SecurityHeaders)])
 
 
@@ -360,6 +364,35 @@ APP_FRAME_CSP = (
 )
 
 
+class ClientFiles(StaticFiles):
+    """The client's files, precompressed at its build (`name.br`, `name.gz` next to `name`): the
+    smallest one the browser accepts, with the original's type."""
+
+    def file_response(
+        self,
+        full_path: os.PathLike[str] | str,
+        stat_result: os.stat_result,
+        scope: Scope,
+        status_code: int = 200,
+    ) -> Response:
+        accepted = Headers(scope=scope).get("accept-encoding", "")
+        for encoding, suffix in (("br", ".br"), ("gzip", ".gz")):
+            packed = f"{full_path}{suffix}"
+            if encoding in accepted and os.path.isfile(packed):
+                response = super().file_response(packed, os.stat(packed), scope, status_code)
+                if response.status_code != 304:
+                    kind = mimetypes.guess_type(str(full_path))[0] or "application/octet-stream"
+                    if kind.startswith("text/") or kind.endswith(("javascript", "json", "+xml")):
+                        kind += "; charset=utf-8"
+                    response.headers["content-type"] = kind
+                    response.headers["content-encoding"] = encoding
+                response.headers["vary"] = "Accept-Encoding"
+                return response
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        response.headers["vary"] = "Accept-Encoding"
+        return response
+
+
 class SecurityHeaders(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
@@ -367,5 +400,9 @@ class SecurityHeaders(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = APP_FRAME_CSP if frame else CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
+        # The API never cached; the client's files kept but checked again on every use (their
+        # ETag: a 304 when unchanged), so a new client is used at once, and a file the gateway
+        # served while compromised does not outlive it.
+        api = request.url.path.startswith("/v1/")
+        response.headers["Cache-Control"] = "no-store" if api else "no-cache"
         return response

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import PurePath
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
@@ -26,7 +26,7 @@ from .common import Context, ProblemError, dump, log, parse_body
 
 
 def add_account_routes(app: FastAPI, ctx: Context) -> None:
-    """D.9: an account is its harness, a description, its plan and its login."""
+    """D.9: an account is its harness, a description, its subscription and its login."""
     authed = [Depends(ctx.require_auth)]
     settings = ctx.settings
     store = secrets.SecretStore(settings.data_dir)
@@ -46,7 +46,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
                 body.name,
                 body.harness,
                 body.description,
-                plan=body.plan,
+                subscription=body.subscription,
                 connectors=body.connectors,
                 areas=body.areas,
             )
@@ -57,7 +57,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.put("/v1/accounts/{name}", dependencies=authed)
     async def update_account(name: str, request: Request) -> Response:
-        """Its description, plan, connectors and areas, and its name while no agent uses it.
+        """Its description, subscription, connectors and areas, and its name while no agent uses it.
         Not its harness."""
         body = parse_body(AccountRequest, await request.body())
         check_areas(ctx, body.areas)
@@ -66,7 +66,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
             raise ProblemError(409, "invalid account: fix its file", old.error)
         if body.harness != old.account.harness:
             raise ProblemError(409, "an account's harness cannot change", old.account.harness)
-        if body.name != name and (users := references(ctx)["account"].get(name)):
+        if body.name != name and (users := in_use(ctx, "account", name)):
             raise ProblemError(409, "account in use: cannot rename it", ", ".join(users))
         try:
             accounts.update(
@@ -76,7 +76,7 @@ def add_account_routes(app: FastAPI, ctx: Context) -> None:
                 old,
                 name=body.name,
                 description=body.description,
-                plan=body.plan,
+                subscription=body.subscription,
                 connectors=body.connectors,
                 areas=body.areas,
             )
@@ -176,6 +176,22 @@ def references(ctx: Context) -> dict[str, dict[str, list[str]]]:
     return found
 
 
+def in_use(ctx: Context, kind: Literal["account", "provider"], name: str) -> list[str]:
+    """Who uses that account or provider, so it is not renamed under them (rule
+    access.in-use-is-never-renamed): its agents, and the apps whose Who works it is (the app's,
+    "the app Planner", or a job's own, "Planner's job write", H.2)."""
+    users = list(references(ctx)[kind].get(name, []))
+    for app, record in sorted(ctx.apps.records.items()):
+        uses = record.who_works and getattr(record.who_works, kind) == name
+        jobs = sorted(j for j, w in record.jobs_who_works.items() if getattr(w, kind) == name)
+        if not (uses or jobs):
+            continue
+        title = ctx.apps.view(app).title or app
+        users += [f"the app {title}"] if uses else []
+        users += [f"{title}'s job {j}" for j in jobs]
+    return users
+
+
 def ad_hoc_label(record: AgentRecord) -> str:
     if record.name:
         return record.name
@@ -216,7 +232,7 @@ def account_infos(ctx: Context) -> list[AccountInfo]:
                 **info,
                 harness=a.account.harness,
                 description=a.account.description,
-                plan=a.account.plan,
+                subscription=a.account.subscription,
                 connectors=a.account.connectors,
                 areas=a.account.areas,
                 login=a.login.kind,

@@ -18,7 +18,7 @@ import sys
 from typing import Any
 
 from .client import Daemon
-from .output import table
+from .output import table, when_at
 
 
 def add_parser(sub: Any) -> None:
@@ -39,7 +39,7 @@ def dispatch(args: argparse.Namespace) -> int:
         for s in d.call("GET", "/v1/secrets"):
             source = s["source"] if s["hasValue"] else f"{s['source']} (not set)"
             used = ", ".join(s["usedBy"]) or "nothing"
-            rows.append([s["path"], source, used, _given(s), (s.get("updatedAt") or "")[:16]])
+            rows.append([s["path"], source, used, _given(s), when_at(s.get("updatedAt"), "")])
         table(rows) if len(rows) > 1 else print("no secret")
         return 0
     if args.secret_cmd == "set":

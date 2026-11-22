@@ -5,6 +5,9 @@
   import * as SidebarUI from "$lib/components/ui/sidebar";
   import NotConnected from "./components/NotConnected.svelte";
   import RuntimeBanner from "./components/RuntimeBanner.svelte";
+  import AskDialog from "./components/AskDialog.svelte";
+  import ConnectDialogs from "./components/ConnectDialogs.svelte";
+  import AddFolderDialog from "./components/AddFolderDialog.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import { signedIn } from "./lib/auth";
   import { projects } from "./lib/projects.svelte";
@@ -13,6 +16,7 @@
   import { runtime } from "./lib/runtime.svelte";
   import { bell } from "./lib/bell.svelte";
   import { showCount } from "./lib/favicon";
+  import { addFolder } from "./lib/workfolders.svelte";
   import AppInstallView from "./views/AppInstallView.svelte";
   import AgentSetupView from "./views/AgentSetupView.svelte";
   import AdHocAgentEditView from "./views/AdHocAgentEditView.svelte";
@@ -33,8 +37,7 @@
   import ProjectsView from "./views/ProjectsView.svelte";
   import ProjectView from "./views/ProjectView.svelte";
   import RunView from "./views/RunView.svelte";
-  import SessionView from "./views/SessionView.svelte";
-  import TerminalView from "./views/TerminalView.svelte";
+  import RunningView from "./views/RunningView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import DiscoverItemView from "./views/DiscoverItemView.svelte";
   import ToolView from "./views/ToolView.svelte";
@@ -94,23 +97,21 @@
       data-testid="skip-link">Skip to the page</button
     >
     <Sidebar />
+    <AskDialog />
+    <ConnectDialogs />
+    <AddFolderDialog bind:open={addFolder.open} onadded={() => addFolder.added()} />
     <!-- the page, against the menu's edge: one edge, the menu never moves -->
     <SidebarUI.Inset bind:ref={panel} tabindex={-1} class="h-svh min-w-0 overflow-hidden outline-none">
       <RuntimeBanner />
-      {#if router.route.view === "session"}
-        {#key router.route.key}<SessionView key={router.route.key} />{/key}
-      {:else if router.route.view === "terminal"}
-        {#key `${router.route.agent}/${router.route.connection}`}
-          <TerminalView agent={router.route.agent} connection={router.route.connection} />
-        {/key}
+      {#if router.route.view === "session" || router.route.view === "running"}
+        <!-- one page for both: One ↔ Grid keeps its panes -->
+        <RunningView focus={router.route.view === "session" ? router.route.key : undefined} panel={router.route.view === "session" ? router.route.panel : undefined} terminal={router.route.view === "running" ? router.route.terminal : undefined} />
       {:else if router.route.view === "agents"}
         <OutsideView agent={router.route.agent} />
       {:else if router.route.view === "agent"}
         {#key router.route.id}<AgentView id={router.route.id} />{/key}
       {:else if router.route.view === "edit-ad-hoc"}
-        {#key `${router.route.id ?? `new/${router.route.app ?? ""}/${router.route.need ?? ""}`}`}
-          <AdHocAgentEditView id={router.route.id} app={router.route.app} need={router.route.need} />
-        {/key}
+        {#key router.route.id ?? "new"}<AdHocAgentEditView id={router.route.id} />{/key}
       {:else if router.route.view === "install-app"}
         {#key router.route.name}<AppInstallView name={router.route.name} />{/key}
       {:else if router.route.view === "setup"}
@@ -123,10 +124,6 @@
         <SettingsView section={router.route.section} helper={router.route.helper} />
       {:else if router.route.view === "library"}
         <LibraryView shelf={router.route.shelf} more={router.route.more} install={router.route.install} project={router.route.project} />
-      {:else if router.route.view === "skills"}
-        <LibraryView shelf="skills" />
-      {:else if router.route.view === "addons"}
-        <LibraryView shelf="tools" />
       {:else if router.route.view === "tool"}
         {#key router.route.name}<ToolView name={router.route.name} connect={router.route.connect} />{/key}
       {:else if router.route.view === "discover-item"}
@@ -141,12 +138,10 @@
         <ChatView agent={router.route.agent} say={router.route.say} new={router.route.new} />
       {:else if router.route.view === "apps"}
         {#if router.route.app}
-          {#key router.route.app}<AppView name={router.route.app} />{/key}
+          {#key router.route.app}<AppView name={router.route.app} tab={router.route.tab} />{/key}
         {:else}
           <AppsView />
         {/if}
-      {:else if router.route.view === "automations"}
-        <LibraryView shelf="automations" />
       {:else if router.route.view === "inbox"}
         <InboxView />
       {:else if router.route.view === "plans"}

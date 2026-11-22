@@ -20,7 +20,6 @@ from handler_control.agents import AgentRegistry
 from handler_control.app_runs import AppRuns
 from handler_control.apps import AppStore
 from handler_control.inbox import Inbox
-from handler_control.projects import ProjectRegistry
 from handler_control.sessions import SessionStore
 from handler_control.settings import Settings
 from handler_harness import addons
@@ -287,7 +286,7 @@ def test_an_addon_brings_the_system_package_of_its_source_it_needs(
     assert [(a.name, a.source) for a in again.toolbox.adds] == [("fake-cc", None)]
 
 
-@pytest.mark.rule("source.only-offers")
+@pytest.mark.rule("source.offers-never-installs")
 def test_removing_a_source_keeps_what_came_from_it(
     settings: Settings, tmp_path: Path, https: dict[str, Path]
 ) -> None:
@@ -303,12 +302,7 @@ def test_removing_a_source_keeps_what_came_from_it(
     addon_install.install(settings, "source:acme/notes", seen.digest)
     settings = dataclasses.replace(settings, data_dir=tmp_path / "data")
     inbox, registry = Inbox(settings), AgentRegistry(settings.state_dir)
-    runs = AppRuns(
-        settings,
-        SessionStore(settings, registry),
-        ProjectRegistry(settings.state_dir, registry),
-        inbox,
-    )
+    runs = AppRuns(settings, SessionStore(settings, registry), inbox)
     apps = AppStore(settings, token="t0ken", inbox=inbox, runs=runs)
     apps.add_from_source("acme", sources.item(settings, "acme", "app", "journal"))
     code = apps.source("journal")

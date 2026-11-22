@@ -12,8 +12,10 @@ const api = vi.hoisted(() => ({
   voice: vi.fn(),
   transcribe: vi.fn(),
   ask: vi.fn(),
+  askHistory: vi.fn(async () => ({ keep: true, asks: [] })),
 }));
 vi.mock("../src/lib/api", () => ({ api }));
+vi.mock("../src/lib/events.svelte", () => ({ onChange: () => () => {} }));
 
 const microphone = { getUserMedia: vi.fn(), stopped: 0 };
 
@@ -51,7 +53,7 @@ describe("Ask's microphone", () => {
     microphone.getUserMedia.mockReset().mockResolvedValue({ getTracks: () => [{ stop: () => microphone.stopped++ }] });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     Object.defineProperty(navigator, "mediaDevices", { value: { getUserMedia: microphone.getUserMedia }, configurable: true });
-    api.apps.mockResolvedValue([{ name: "planner", current: true, askable: true, actions: [{ name: "add" }] }]);
+    api.apps.mockResolvedValue([{ name: "planner", current: true, actions: [{ name: "add", inAsk: true }] }]);
     api.handlerNeeds.mockResolvedValue([{ name: "ask-router", agentId: "router" }]);
     api.voice.mockResolvedValue({ model: "whisper", problem: null });
     api.transcribe.mockReset().mockResolvedValue({ text: "" });

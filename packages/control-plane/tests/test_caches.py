@@ -55,6 +55,7 @@ bin = "bin"
 """
 
 
+@pytest.mark.rule("tool.each-start-gets-what-it-gives")
 def test_an_addon_s_caches_for_the_agents_using_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -77,6 +78,7 @@ def test_an_addon_s_caches_for_the_agents_using_it(
     assert own.bin == "bin"
 
 
+@pytest.mark.rule("cache.a-deleted-project-s-are-freed")
 def test_a_deleted_project_loses_its_own_caches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -91,6 +93,7 @@ def test_a_deleted_project_loses_its_own_caches(
     assert emptied == [caches.project_dir(s, "p_1")]
 
 
+@pytest.mark.rule("cache.never-emptied-under-a-sandbox", "cache.a-deleted-project-s-are-freed")
 def test_a_project_still_in_use_keeps_its_caches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1,13 +1,29 @@
 """What an app's backend may ask handler (H.9, H.11): a small HTTP/1.x server on a Unix socket
 in the app's socket folder (`/run/handler-app/handler.sock` in its sandbox), one per running
-backend, so handler knows which app is asking without any token. Only with `needs.notify` or
-`needs.agents`.
+backend, so handler knows which app is asking without any token. Only with `needs.notify`,
+`jobs` (H.1), `nudges` (H.17), `schemas` (`/smd/*`, app_smd.py) or a read-write files need
+(`/history*`).
 
     POST /notify  {title, body?, person?}                → 200 {id} · 400 · 403 · 429
-    POST /runs    {agent, fields?, start}                → 202 AppRun · 400 · 403 · 409 · 429
+    POST /nudge   {name, title, body?, key?, fields?, until?, person?}
+                                                         → 200 {id} · 400 · 403 · 429
+    POST /nudge/{id}/done                                → 200 · 404 · 409
+    DELETE /nudge/{id}                                   → 200 · 404 · 409
+    POST /nudge/done {name, key} · DELETE /nudge {name, key}
+                                                         → 200 {ids} · 400 · 403
+    POST /runs    {job, fields?, start}                  → 202 AppRun · 400 · 403 · 409 · 429
+    GET  /runs                                           → 200 {runs: AppRun[]}, newest first
     GET  /runs/{id}                                      → 200 AppRun · 404
     POST /runs/{id}/cancel                               → 200 AppRun · 404 · 409
+    POST /smd/parse {path} · /smd/check {path} · /smd/write {path, document}   (app_smd.py)
+    GET  /history?files=<need>                           → 200 NotesHistory · 403 · 404
+    GET  /history/{id}?files=<need>                      → 200 NotesCommitDiff · 403 · 404
+                                     a read-write folder's changes (D.5), read only: no undo
 
+Bounded (rule `app.its-calls-are-bounded`): headers and a body 16 KiB each, `/smd/write`'s body
+1 MiB, refused before it is read; the whole call within 10 s.
+
+Any call may also get 500 when handler itself fails (its log says why).
 `person` is who gets a notification ("owner" by default); it must be the owner or a person the
 app is shared with. `start` is the START_HEADER of the owner's request the backend is answering.
 The template's `server/handler.ts` calls them.
@@ -24,7 +40,8 @@ from urllib.parse import urlsplit
 
 log = logging.getLogger("handler.apps")
 
-MAX_BYTES = 16 * 1024
+MAX_BYTES = 16 * 1024  # headers, and the body of every call but a document written
+MAX_DOCUMENT_BYTES = 1024 * 1024  # POST /smd/write: a whole document (H.9)
 TIMEOUT = 10.0
 
 # (app, method, path, body: a JSON object, or None without one) → (status, answer)
@@ -37,6 +54,7 @@ REASONS = {
     404: "Not Found",
     409: "Conflict",
     429: "Too Many Requests",
+    500: "Internal Server Error",
 }
 
 
@@ -63,15 +81,20 @@ class AppApi:
             status, body = await asyncio.wait_for(self.answer(reader), TIMEOUT)
         except (TimeoutError, ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             status, body = 400, {"error": "bad request"}
+        except OSError:  # handler's own failure (a run's sandbox, a file): said, and logged
+            log.exception("app %s: a call to handler.sock failed", self.name)
+            status, body = 500, {"error": "handler failed; see its log"}
         data = json.dumps(body).encode()
         head = (
             f"HTTP/1.1 {status} {REASONS.get(status, 'Error')}\r\n"
             f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n"
             "Connection: close\r\n\r\n"
         )
-        with contextlib.suppress(OSError):
-            writer.write(head.encode() + data)
-            await writer.drain()
+        try:
+            with contextlib.suppress(OSError):
+                writer.write(head.encode() + data)
+                await writer.drain()
+        finally:
             writer.close()
 
     async def answer(self, reader: asyncio.StreamReader) -> tuple[int, dict[str, Any]]:
@@ -87,9 +110,10 @@ class AppApi:
             k.strip().lower(): v.strip()
             for k, _, v in (line.partition(":") for line in lines[1:] if line)
         }
+        limit = MAX_DOCUMENT_BYTES if (method, path) == ("POST", "/smd/write") else MAX_BYTES
         length = int(headers.get("content-length", "0"))
-        if length > MAX_BYTES:
-            return 400, {"error": f"body over {MAX_BYTES} bytes"}
+        if length > limit:  # said before a byte of it is read
+            return 400, {"error": f"body over {limit} bytes"}
         raw = await reader.readexactly(length)
         payload: dict[str, Any] | None = None
         if raw.strip():

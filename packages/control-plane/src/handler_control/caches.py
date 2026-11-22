@@ -82,6 +82,7 @@ def declared() -> dict[str, CacheInfo]:
                 about=cache.about,
                 general=cache.general,
                 bin=cache.bin,
+                kind=cache.kind,
                 declared_by=[by],
             )
     return found
@@ -107,7 +108,9 @@ def mounts(
         root = settings.cache_dir
     return [
         (
-            CacheDeclaration(target=c.target, about=c.about, general=c.general, bin=c.bin),
+            CacheDeclaration(
+                target=c.target, about=c.about, general=c.general, bin=c.bin, kind=c.kind
+            ),
             str(root / n),
         )
         for n, c in declared().items()

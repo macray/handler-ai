@@ -5,14 +5,97 @@ tablet control shared agent sessions and apps. Handler never opens a port: it po
 outbound, and the phone talks to the same gateway. Everything relayed is end-to-end encrypted;
 the gateway cannot read or forge it. What a compromised gateway can do: [security](#security).
 
+## How it works
+
+Three pieces: the phone, the gateway, and Handler on your computer. The gateway does two jobs,
+in one program today:
+
+- **Gateway UI**: a web server for the **remote client**, the small web app the phone opens
+  (`https://<gateway>/`). Just files: the phone runs them.
+- **Gateway relay**: a **mailbox** between Handler and its paired devices (`/v1/...`). It keeps
+  sealed messages (envelopes) until the other side takes them.
+
 ```
-phone ──HTTPS──► gateway ◄──HTTPS (outbound long poll)── handlerd on your machine
+                         ┌────────────────── gateway (handler-gateway) ──────────────────┐
+  phone / tablet         │                                                               │
+ ┌────────────────┐  1   │  ┌──────────────────────┐                                     │
+ │ browser        │◄─────┼──│ Gateway UI           │ the remote client's files (/)       │
+ │ ┌────────────┐ │      │  └──────────────────────┘                                     │
+ │ │ remote     │ │  2   │  ┌──────────────────────┐                                     │
+ │ │ client     │─┼─────►┼─►│ Gateway relay        │  per device: commands down,         │
+ │ │ (its key)  │◄┼──────┼──│ mailboxes, queue     │  output up (10 min); calls queued   │
+ │ └────────────┘ │      │  └──────────▲───────────┘  for later (7 days)                 │
+ └────────────────┘      └─────────────┼─────────────────────────────────────────────────┘
+                                       │ 3  outbound long poll (Handler opens no port)
+                          ┌────────────┴─────────────────────────┐
+                          │ Handler on your computer (handlerd)  │
+                          │ the device keys · sessions · apps    │
+                          └──────────────────────────────────────┘
+
+  1  the phone loads the app (HTTPS)
+  2  the app sends and fetches envelopes (HTTPS; sealed inside)
+  3  Handler fetches and sends envelopes (HTTPS; sealed inside)
+  ═  phone ⇄ Handler: end-to-end encrypted, with a key the gateway never has
 ```
 
-The gateway does two jobs:
+A prompt from the phone, step by step:
 
-- a **mailbox** between Handler hosts and their paired devices (`/v1/...`);
-- a **web server** for the remote client, the small web app the phone opens (`/`).
+1. The phone seals the prompt and posts it to the relay, in its host's mailbox.
+2. Handler, waiting on the relay (a long poll, up to 25 s at a time), takes it, opens it, checks
+   it, and gives it to the session as any other client would.
+3. Handler seals the agent's output and posts it to the relay, in the phone's mailbox.
+4. The phone, waiting on the relay too, takes it and opens it.
+
+Handler waits on the relay only while something is reachable from a phone (a session or an app
+shared, an agent you may start from the phone, Ask set up). When your computer is off, the
+phone shows what it saw last, and an app's calls marked for it wait in the relay's queue until
+Handler is back.
+
+### How the data is encrypted
+
+**Pairing gives the phone its key.** *Pair a device* makes a random 256-bit key for that device,
+on your computer. The QR code is a link to the gateway with the key after `#`: a browser never
+sends that part to a server, so the gateway never sees it. Handler keeps the key in
+`~/.config/handler-ai/remote-devices.json` (0600); the phone keeps it in its browser, in a form
+the page can use but not read back.
+
+**Three keys come from it** (HKDF-SHA256): one for what the phone sends, one for what Handler
+sends, and the device's password towards the gateway. The gateway only stores a hash of that
+password, and of Handler's host token. It checks who is calling; it cannot open anything.
+
+**Every message is an envelope**, sealed with AES-256-GCM, a fresh random nonce each time. The
+seal is bound to your computer, the device, the direction and the envelope's id, so the gateway
+cannot change a byte, give one phone's envelope to another, or send Handler's output back to it
+as a command: any of these fails to open, and is dropped unread. Inside, each envelope says
+until when it is valid (a command: 5 minutes; a queued call: 7 days), and Handler takes each one
+once: a gateway that replays a command, or hands it over late, gets it refused.
+
+**Around that, HTTPS.** Every link (1, 2, 3) is HTTPS too, so someone on the network sees even
+less than the gateway does.
+
+**Notifications** go through your phone's browser's push service, not the gateway. A push holds
+one byte (which kind: *a session needs you* or *something new*), encrypted for that phone and
+padded to the same size, signed with a key of your computer's. The text itself stays on your
+computer until the phone fetches it, sealed, through the relay.
+
+**On the phone**, the last Home it showed is kept encrypted (AES-256-GCM), with a key of its own
+that the page cannot read; *Forget this phone* erases both.
+
+What each side can see:
+
+| | Reads your prompts, output, app data | Sees |
+|---|---|---|
+| Handler on your computer | yes | everything |
+| your phone | yes, what is shared with it | what is shared with it |
+| the gateway | no | which device talks to which computer, when, how much; their IP addresses |
+| the push service | no | that a phone gets a notification, when |
+
+Two limits, said plainly:
+
+- **The Gateway UI is trusted.** The phone runs the code the gateway serves, and that code holds
+  the key. Whoever controls the gateway could serve a modified client: see [security](#security).
+- **No forward secrecy.** A device's key stays the same until you pair it again: someone who
+  recorded its envelopes and later gets that key could open them. Revoke a phone you lost.
 
 ## Before you start
 
@@ -176,9 +259,18 @@ handler-gateway remove-host h_…   # a host and all its devices
 
 In the Handler web UI (`handler ui`) on your machine:
 
-1. **Settings → Your phone**, *1 · The gateway*: its address (`https://<gateway>`) and the host
-   token, then **Connect**. Saved in `~/.config/handler-ai/remote.json` (0600). The address then
-   shows its status light, the token *sealed*; **Change** enters another (or removes it).
+1. **Settings → Your phone**, *1 · Set up your gateway*: the steps above, as copy-ready commands
+   (a tab for each way: *Container*, *Without a container*), then step 4: its address
+   (`https://<gateway>`) and the host token, and **Connect**. A Connect refused says why (the
+   address is not `https://`, the token is not one). Otherwise it is saved in
+   `~/.config/handler-ai/remote.json` (0600), and Handler tries the gateway once, at once (a few
+   seconds at most): when that fails, it says beside **Connect** what went wrong, in words (the
+   gateway didn't answer, something else answered, or the gateway doesn't know the token), and
+   the form stays open to fix it. Once it works, the address shows its status light (green), the
+   token *sealed*; **Change** enters another (or removes it). After that one try, Handler reaches
+   the gateway only while something is on your phone. *This computer's name* is what your phones
+   call it (the computer's hostname until you **Rename** it): a phone paired after a rename
+   shows the new name; one paired before keeps the name it was given until you pair it again.
 2. *2 · Your devices* → **Pair a device** (greyed until a gateway is set): a dialog asks who the device is for and its name, then
    shows a QR code: scan it with the phone, then tap **Pair**. The key travels in the link's
    `#fragment`, which never reaches a server, and the code is shown only once. Devices can only
@@ -187,7 +279,12 @@ In the Handler web UI (`handler ui`) on your machine:
      their name (`alice`; lowercase letters, digits, `-`, `_`): the device reaches apps only,
      never a session.
    - **Device name** is just a label (`phone`, `alice-tablet`).
-3. In a session, turn on its phone button. The phone lists the session.
+3. In a session, turn on its phone button (**On your phone**). The phone lists the session.
+
+The phone opens even without a network, or with the gateway or your computer away: it shows the
+last Home it saw, faded, under a big title (*laptop is away* · *As it was at 14:02. Answer when it
+is back.*), and a session opened then says it is offline. Once your computer answers, the live
+Home replaces it.
 
 ## 5. Use an app from the phone
 
@@ -200,38 +297,98 @@ sessions. The app still runs only on your machine: there is no URL of its own fr
    for your own devices, and each family member you paired a device for. Apps are shared with
    **persons, not devices**: every device of a ticked person gets the app, and a device paired
    later for that person gets it too. Nothing is ticked by default (local only).
-3. On the phone, open `https://<gateway>/`: the shared apps are listed above the shared sessions.
+3. On the phone, open `https://<gateway>/`: the shared apps are on the **Apps** tab.
    Tap one to open it.
 
 When your machine is off, the phone shows the last copy of the app's UI it received; calls fail
 with "host offline", except routes the app declares `queued`, which wait at the gateway (up to
 7 days) and run when the machine is back.
 
-## 6. Ask from the phone
+## 6. The screens
+
+Tabs at the bottom: **Ask** · **Sessions** · **Apps** · **Inbox** · **Settings**. Ask is there
+only when your computer offers something to ask (see [Ask from the phone](#7-ask-from-the-phone));
+without it there are four tabs. An amber number on a tab says how many sessions need you, or how
+many things in your inbox wait for you. Each screen has a one-line header: its name, and your
+computer as a small chip on the right (*● laptop*; tap it to refresh), with its counts under it
+(*2 needs you · 1 working · 1 idle*).
+
+A **big title** shows only when the screen is a state, never over a list:
+
+- **First launch**: while the phone reaches your computer, the chain *this phone → gateway →
+  computer* lights link by link.
+- **Pair this phone with laptop?**: a phone opened from a pairing link, with three steps: show the
+  QR code in Handler on your computer, point the phone's own camera at it (the link opens Handler
+  there), tap **Pair**. The phone cannot open its camera by itself: the camera app reads the code.
+- **laptop is away**: the last Home it saw, faded, *As it was at 14:02. Answer when it is back.*
+  What you answer waits at the gateway for 10 minutes at most.
+- **all quiet**: nothing needs you.
+
+**Sessions** lists every session your computer shares, in one list, with **New session** (the
+**+** button above the tabs). A card shows the session's project and agent, how long ago its state
+changed (amber when it waits for you), the state (*working*, *idle*) and the agent's last line. A
+session that needs you has a warm tint and says what it asks. A **safe** ask (read a file, say) is
+answered on its card: **Reject** or **Allow**, once; a risky one only opens the session. If the
+ask is gone or changed when you tap, nothing is allowed and the session opens, saying so.
+
+**Permission requests.** In a session, a request opens as a sheet over it. A **safe** one has two
+buttons, **Reject** and **Allow** (once, or always when the agent offers it). A **risky** one (the
+agent runs a command, deletes, moves or fetches, or reaches outside its folder or network) says why
+in a line, asks you to choose its scope first (the agent's own choices, such as **Allow once** or **Always allow**), and is allowed only
+with a **slide**: an accidental tap cannot allow it, and "always" is never quicker than "once".
+**Reject** is always a tap. The slide is also a button for the keyboard and screen readers: press
+it twice. A session stays dark, like a terminal, in every theme.
+
+**Apps** lists the apps shared with you as a launcher: tap one to open it.
+
+**Inbox** lists, first, what is *asked of you* (a nudge: its small form, filled and sent from
+there); then the messages from your apps, automations, plans, sessions and notes (the last five, each marked *new* until you tap it; a tap reads it on your
+computer too, later if it is away); then **Waiting for laptop**: the calls you left for your computer, with **Clear
+done**.
+
+**Settings** shows this phone (its name, the computer it is paired with, what it can do) and:
+
+- **Appearance**: **System** (light or dark like this phone), **Light** or **Dark**, kept in this
+  browser. Sessions stay dark either way.
+- **Notifications**: see [Notifications](#8-notifications).
+- **Voice**: read aloud *when spoken* or *when typed* (with Voice set up).
+- **Connection**: the chain lit link by link, whether the gateway is reachable and your computer
+  listening, and the ids of the gateway, the computer and this phone, each with a copy button.
+- **Forget this phone**, set apart and red: erases its keys and what it kept; **slide to forget**
+  in the sheet that opens. Pairing again needs a new QR code from your computer.
+
+## 7. Ask from the phone
 
 With Ask set up on the computer (its router, the first time you open Ask in the web UI) and an
 app that can be asked something (Tracker, Notes), your own phone opens on **Ask**: type what you want
 ("I drank 2 glasses of water"); Handler picks the app that does it and answers. An app's
 agent that takes a minute answers there and in your inbox (pushed, when notifications are on).
 When no app does it, **Start a chat about it** opens a new session on Chat with your words
-typed. **Home** has the rest: shared sessions, apps, your inbox, and **New session**: on an agent
+typed. The other tabs have the rest, and **New session** (on Sessions) starts one: on an agent
 of a project that **Can be started from your phone**, or on someone you talk to in Chat (they
-have no folder, so your own phone may start them, as it asks). A family member's phone has no
+have no folder, so your own phone may start them, as it asks). An agent with a brief or a job
+shows its form instead of a request: fill it in and **Start**, as on the computer. A family member's phone has no
 Ask and starts nothing: it runs apps' actions as you. With Voice set up (Settings → Expert → Voice), hold the
 microphone to speak, and *Dictate* in New session writes down what you say the same way. See
 [Ask](ask.md#speaking).
 
 Status lights (Settings → Your phone and each session's switch): 🟢 ok · ⚪ idle (nothing shared,
-Handler not polling) · 🔴 unreachable · 🟠 unauthorized (host token refused). A shared session's
+Handler not polling; after Connect, the light shows its try instead) · 🔴 unreachable · 🟠 unauthorized (host token refused). A shared session's
 header shows its phone button on, and the menu says when the gateway is unreachable or refused while a session
 is shared; nothing otherwise.
 
-## 7. Notifications
+## 8. Notifications
 
-On the phone, **Settings → Notifications → Notify this device** turns them on: when Handler has
-something new for you (an app's message, an automation's result), the phone shows "Something
-new for you". The notification says nothing more: the text stays on your machine, and the phone
-reads it, encrypted, when you open Handler. On an iPhone, add Handler to the home screen first
+On the phone, **Settings → Notifications** has two switches, each turning on one kind:
+
+- **When a session needs you**: a session you share with the phone asks you something (a
+  permission); the phone shows "A session needs you". Once for each time it starts waiting, not
+  for each question. Only on a phone that sees your sessions.
+- **When an app has news**: an app's message, an automation's result, or a call you left for your
+  computer has run; the phone shows "Something new for you".
+
+The notification says nothing more: the text stays on your machine, and the phone reads it,
+encrypted, when you open Handler. Turning both off stops notifications on this phone. On an iPhone, add Handler to the home screen first
 (Share → Add to Home Screen) and open it from there.
 
 **Send a test notification** checks it, with two notifications:
@@ -294,5 +451,12 @@ phone that opens it. Hence:
   (non-root user, only `/state` writable);
 - if you think the gateway was tampered with, revoke every device in Handler and pair again after
   redeploying.
+
+What the phone keeps: its keys (usable by the page, never readable); the client's own files, so
+it opens without a network (nothing of yours in them; the gateway's answers are never kept); and,
+to show your Home at once on the next opening while it asks your computer again, or when nothing
+answers, the last Home it showed (what is shared with you, your inbox, what you can ask), only
+encrypted, with a key of its own that the page cannot read. **Forget this phone** in Settings
+erases it, and so does pairing again.
 
 Moving the client off the gateway is planned.

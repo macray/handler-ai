@@ -1,7 +1,8 @@
 <script lang="ts">
   // Pick a scope inside the work folders (server-side check: /v1/directories, D.13), or create a
   // new folder there (a new project). Browsing a folder chooses it. The work folders themselves
-  // are listed by their full path; `used` folders (by another project) are marked.
+  // are listed by their full path; `used` folders (by another project) are marked. `forApp`: a
+  // folder given to an app (H.9), so the notes root is offered too.
   import { untrack } from "svelte";
   import { api } from "../lib/api";
   import type { DirectoryListing } from "../lib/contracts.gen";
@@ -15,9 +16,11 @@
     value = $bindable(""),
     used = {},
     id,
+    forApp = false,
   }: {
     value: string;
     id?: string; // its path field's
+    forApp?: boolean;
     used?: Record<string, string>; // folder → the project using it
   } = $props();
 
@@ -28,7 +31,7 @@
   async function browse(path?: string): Promise<void> {
     error = null;
     try {
-      listing = await api.directories(path);
+      listing = await api.directories(path, forApp);
       if (listing.path) value = listing.path;
     } catch (e) {
       error = (e as Error).message;
@@ -41,7 +44,7 @@
     if (!parent || !newName?.trim()) return;
     error = null;
     try {
-      listing = await api.createDirectory({ parent, name: newName.trim() });
+      listing = await api.createDirectory({ parent, name: newName.trim() }, forApp);
       if (listing.path) value = listing.path;
       newName = null;
     } catch (e) {

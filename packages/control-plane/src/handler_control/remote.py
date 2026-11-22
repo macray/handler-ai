@@ -1,7 +1,7 @@
 """Remote connector (remote design §5): paired devices reach shared sessions through a
 gateway that handlerd polls — handlerd never listens to anything but loopback.
 
-    config     <config>/remote.json          gateway URL + host token (0600)
+    config     <config>/remote.json          gateway URL + host token, the computer's name (0600)
     devices    <config>/remote-devices.json  paired devices, their keys and push subscriptions (0600)
     seen       <state>/remote-replay.json    ids of the envelopes taken, each until it expires
     push key   <config>/vapid.json           Web Push signing key (0600), made when first asked
@@ -25,7 +25,13 @@ devices start sessions of it).
 A5 (apps design §5.3, §7): what a device queued at the gateway while the host was
 off is taken when handlerd is back (only app calls to routes the app declares "queued", until
 they expire: 7 days); what handler tells a person (its inbox: apps' notifications, automations'
-results) is pushed, content-free, to the devices of that person (Web Push).
+results) is pushed, content-free, to the devices of that person (Web Push); a shared session
+starting to wait on you (a permission request) is pushed to your devices that see sessions, once
+per wait. A push says only its kind, each a switch on the device (`kinds`).
+
+The devices around that see sessions are sent the list of shared sessions again when what they
+are shown of one changes (`session_shown`): a turn, an ask, at once; its last line, at most every
+LIST_EVERY seconds.
 """
 
 import asyncio
@@ -34,8 +40,9 @@ import json
 import logging
 import os
 import secrets
+import socket
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -45,9 +52,11 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from handler_contracts import (
+    PUSH_KINDS,
     AcpCloseCode,
     ActionOption,
     ActionRunParams,
+    ActParams,
     AgentList,
     AppHttpParams,
     AppList,
@@ -59,7 +68,14 @@ from handler_contracts import (
     DeviceScope,
     InboxList,
     InboxMessage,
+    InboxReadParams,
+    ModelAccess,
+    NudgeFillParams,
+    NudgeParams,
+    NudgeSettingAnswer,
+    NudgeSettingParams,
     PushKey,
+    PushKind,
     PushSubscribeParams,
     PushSubscription,
     PushTest,
@@ -67,24 +83,28 @@ from handler_contracts import (
     RemoteAgent,
     RemoteDevice,
     RemoteLight,
+    RemoteNudgeFill,
     RemotePairing,
     RemoteStatus,
     RemoteTranscription,
+    SessionInput,
     SessionList,
     SharedApps,
     SharedSession,
     StartedSession,
+    StartFailed,
     StartSessionParams,
     TranscribeParams,
     WebPush,
 )
+from handler_harness import catalog
 
-from . import agents, files, webpush
+from . import agents, files, interfaces, webpush
 from . import remote_crypto as rc
-from .agents import describe as model_label
 from .app_remote import AppChannel, RemoteAppError
 from .apps import AppError, AppStore
 from .assistant import Assistant, AssistantError
+from .nudges import NudgeError
 from .policy import is_request, is_response
 from .projects import ProjectRegistry
 from .services import ServiceError
@@ -112,9 +132,14 @@ QUEUE_EVERY = 30.0  # seconds between two looks at the gateway's queue
 PUSH_CONTACT = os.environ.get("HANDLER_PUSH_CONTACT", "mailto:handler@example.invalid")
 LEASE = 90.0  # seconds without an envelope from a device: its attachments are closed
 POLL_WAIT = 25
-FLUSH_DELAY = 0.25
+TRY_TIMEOUT = 5  # Connect's try of the gateway (D.7): the person waits on it
+NOT_A_GATEWAY = "not a gateway's answer"  # the try's detail when something else answered (D.7)
+FLUSH_DELAY = 0.25  # an agent's output streams in small frames: sent together, not one by one
 ENVELOPE_BYTES = 512 * 1024  # plaintext per up envelope (a single bigger frame goes alone)
 OUTBOX_BYTES = 16 * 1024 * 1024  # a device's unsent output; beyond, it is detached (re-syncs)
+LIST_EVERY = (
+    10.0  # seconds: the list sent again for a session's last line alone, at most this often
+)
 
 ALLOWED = frozenset(
     {
@@ -131,6 +156,23 @@ IDLE_CLOSE = 1001  # "going away": the lease ran out
 NOT_SHARED = -32020
 NOT_ATTACHED = -32021
 NOT_ALLOWED = -32022
+
+
+def product(harness: str) -> str:
+    """A harness's product name ("Claude Code"), as a device shows it; its name when it is no
+    longer installed."""
+    try:
+        return catalog.get(harness).descriptor.product
+    except catalog.UnknownHarnessError:
+        return harness
+
+
+def access_label(m: ModelAccess) -> str:
+    """`Claude Code · account claude-pro`, `The model alone · provider mistral-api · mistral-medium`:
+    an agent with no name, as the web UI says it."""
+    program = product(m.harness) if m.harness else "The model alone"
+    via = f"account {m.account}" if m.account else f"provider {m.provider}"
+    return " · ".join([program, via, *([m.model] if m.model else [])])
 
 
 class RemoteError(RuntimeError):
@@ -158,6 +200,11 @@ class Device:
     person: str = "owner"
     scope: DeviceScope = "all"
     push: WebPush | None = None  # its Web Push subscription (A5)
+    kinds: list[PushKind] = field(default_factory=lambda: list(PUSH_KINDS))  # pushed for (H.10)
+
+    def wants(self, kind: PushKind) -> bool:
+        """Subscribed, with that kind's switch on."""
+        return self.push is not None and kind in self.kinds
 
     def to_json(self) -> Message:
         return {
@@ -166,6 +213,7 @@ class Device:
             "person": self.person,
             "scope": self.scope,
             "push": self.push.model_dump(by_alias=True) if self.push else None,
+            "kinds": self.kinds,
             "key": rc.b64(self.key),
             "createdAt": self.created_at.isoformat(),
             "lastSeenAt": self.last_seen_at.isoformat() if self.last_seen_at else None,
@@ -183,6 +231,7 @@ class Device:
             d["person"],
             d["scope"],
             WebPush.model_validate(d["push"]) if d["push"] else None,
+            d["kinds"],
         )
 
 
@@ -198,6 +247,7 @@ class Link:
     rejected: list[Message] = field(default_factory=list)
     last_seen: float = 0.0  # monotonic
     flushing: asyncio.Task[None] | None = None
+    hurry: asyncio.Event = field(default_factory=asyncio.Event)  # an answer waits: flush now
     app_calls: set[asyncio.Task[None]] = field(default_factory=set)
 
 
@@ -248,6 +298,7 @@ class Connector:
         self.light: RemoteLight = "off" if self.config is None else "idle"
         self.detail: str | None = None
         self.since = now()
+        self.tried = False  # the light is Connect's try (D.7): kept until polling starts
         self.cursor = ""
         self.synced = False
         self.wake = asyncio.Event()
@@ -257,6 +308,15 @@ class Connector:
         sessions.registry.listeners.append(self.agents_changed)
         apps.listeners.append(self.apps_changed)
         apps.inbox.listeners.append(self.on_message)
+        sessions.waiting_listeners.append(self.session_waits)
+        sessions.shown_listeners.append(self.session_shown)
+        # the list of shared sessions the devices were sent last, when (`clock`), and the send
+        # held for a last line (`session_shown`)
+        self.list_sent: list[Message] | None = None
+        self.list_at = 0.0
+        self.list_later: asyncio.TimerHandle | None = None
+        self.clock: Callable[[], float] = time.monotonic
+        self.waiting: set[str] = set()  # the sessions waiting on you, each pushed once per wait
         self.queue_checked = 0.0  # monotonic
         self._vapid: webpush.Vapid | None = None
         self.pushes: set[asyncio.Task[Any]] = set()  # running: pushes, slow answers
@@ -282,6 +342,13 @@ class Connector:
     @property
     def host_id(self) -> str | None:
         return self.config["hostToken"].split(".")[0] if self.config else None
+
+    @property
+    def computer_name(self) -> str:
+        """What the phones call this computer (D.7): the hostname until it is named."""
+        if self.config and (name := self.config.get("computerName")):
+            return name
+        return socket.gethostname().split(".")[0]
 
     @property
     def base(self) -> str:
@@ -331,13 +398,16 @@ class Connector:
                 await self.wake.wait()
                 continue
             if not self.active():
-                self.set_light("idle")
+                if not self.tried:
+                    self.set_light("idle")
                 await self.wake.wait()
                 continue
+            self.tried = False
             try:
                 if not self.synced:
                     await self.sync_devices()
                 r = await self.poll()
+                self.tried = False  # Connect tried while this poll waited: polling says now
                 if r is None:
                     continue  # nothing shared any more
                 if r.status_code == 401:
@@ -399,10 +469,51 @@ class Connector:
         devices that are around, with the new list (with nothing shared, handlerd stops polling: a
         device could not ask)."""
         self.wake.set()
-        shared = wire(SessionList(sessions=[self.describe(live) for live in self.shared()]))
-        for link in self.links.values():
-            if time.monotonic() - link.last_seen < LEASE and link.device.scope == "all":
-                self.send(link, None, notification("_handler/remote/sessions_changed", **shared))
+        self.tell_list(self.listing())
+
+    def session_shown(self, live: LiveSession) -> None:
+        """What a device is shown of a session changed (a turn started or ended, an ask came or
+        went, its last line): when it is shared, the devices around that see sessions are sent
+        the list, if it differs from the one they were sent last. At once, but for a change of
+        last lines alone: at most every LIST_EVERY seconds (what is sent meanwhile carries it)."""
+        if live.remote and live.record.state == "running":
+            self.send_list()
+
+    def send_list(self) -> None:
+        self.list_later = None
+        if not self.list_links():
+            return  # nobody to tell: a device lists again when it comes back
+        sessions = self.listing()
+        if sessions == self.list_sent:
+            return
+        wait = self.list_at + LIST_EVERY - self.clock()
+        if self.list_sent is not None and wait > 0 and lines_only(sessions, self.list_sent):
+            if self.list_later is None:
+                self.list_later = asyncio.get_running_loop().call_later(wait, self.send_list)
+            return
+        self.tell_list(sessions)
+
+    def listing(self) -> list[Message]:
+        return wire(SessionList(sessions=[self.describe(live) for live in self.shared()]))[
+            "sessions"
+        ]
+
+    def list_links(self) -> list[Link]:
+        """The devices around that see sessions (scope `all`): those told the list."""
+        return [
+            link
+            for link in self.links.values()
+            if time.monotonic() - link.last_seen < LEASE and link.device.scope == "all"
+        ]
+
+    def tell_list(self, sessions: list[Message]) -> None:
+        if self.list_later is not None:
+            self.list_later.cancel()
+            self.list_later = None
+        self.list_sent, self.list_at = sessions, self.clock()
+        for link in self.list_links():
+            changed = notification("_handler/remote/sessions_changed", sessions=sessions)
+            self.send(link, None, changed)
 
     def apps_changed(self) -> None:
         """An app was shared, unshared, deployed or removed: each device around gets its list."""
@@ -414,11 +525,50 @@ class Connector:
 
     # ── gateway configuration and devices (D.7) ────────────────────────
 
-    def set_gateway(self, url: str, host_token: str) -> None:
+    async def set_gateway(self, url: str, host_token: str) -> None:
+        """Saved whatever the gateway answers; then tried once (`try_gateway`)."""
+        named = self.config.get("computerName") if self.config else None  # a Change keeps it
         self.config = {"gatewayUrl": url.rstrip("/"), "hostToken": host_token}
+        if named:
+            self.config["computerName"] = named
         write_private(self.config_file, self.config)
-        self.set_light("idle")
+        self.set_light("idle")  # not known to answer: polling starts with a quick poll
         self.restart()
+        await self.try_gateway()
+
+    async def try_gateway(self) -> None:
+        """Connect (D.7): one quick call to the gateway, even with nothing reachable, so the
+        light says at once whether it answers and takes the host token; the light keeps the
+        result until polling starts. The host's list of devices, not a poll: the same address and
+        token, but nothing marked fetched, and the phones are not told the computer listens
+        (the gateway's "host last seen" is a poll's)."""
+        try:
+            r = await self.http.get(
+                f"{self.base}/v1/host/devices", headers=self.headers(), timeout=TRY_TIMEOUT
+            )
+            if r.status_code == 401:
+                light, detail = "unauthorized", "the gateway refused the host token"
+            else:
+                r.raise_for_status()
+                if not isinstance(r.json().get("devices"), list):
+                    raise ValueError(NOT_A_GATEWAY)
+                light, detail = "ok", None
+        except httpx.HTTPError as e:
+            light, detail = "unreachable", describe(e)
+        except (ValueError, AttributeError):
+            light, detail = "unreachable", NOT_A_GATEWAY
+        if self.config is None:
+            return  # cleared while it was tried
+        self.set_light(light, detail)
+        self.since = now()  # this try's
+        self.tried = True
+
+    def set_computer_name(self, name: str) -> None:
+        """Given to each phone paired from now on, in its pairing fragment; kept with the gateway."""
+        if self.config is None:
+            raise RemoteError("set the gateway first")
+        self.config["computerName"] = name.strip()
+        write_private(self.config_file, self.config)
 
     def clear_gateway(self) -> None:
         self.config = None
@@ -472,7 +622,9 @@ class Connector:
             log.warning("remote: registering %s: %s", device.id, describe(e))
             self.synced = False
         assert self.host_id is not None
-        fragment = rc.pairing_fragment(self.base, self.host_id, device.id, device.key, name)
+        fragment = rc.pairing_fragment(
+            self.base, self.host_id, device.id, device.key, name=name, computer=self.computer_name
+        )
         return RemotePairing(device=self.to_device(device), pairing_url=f"{self.base}/#{fragment}")
 
     async def revoke(self, device_id: str) -> bool:
@@ -511,6 +663,7 @@ class Connector:
         return RemoteStatus(
             gateway_url=self.config["gatewayUrl"] if self.config else None,
             host_id=self.host_id,
+            computer_name=self.computer_name,
             light=self.light,
             detail=self.detail,
             since=self.since,
@@ -636,10 +789,7 @@ class Connector:
         if not is_request(m):  # _handler/remote/ping is a notification: the lease is renewed
             return
         if method in self.slow:  # a provider's call (then an ask): answered when done
-            call = self.slow[method](link.device, params or {})
-            task = asyncio.get_running_loop().create_task(self.answer_later(link, m, call))
-            self.pushes.add(task)
-            task.add_done_callback(self.pushes.discard)
+            self.spawn(self.answer_later(link, m, self.slow[method](link.device, params or {})))
             return
         handlers: dict[str, tuple[type[BaseModel] | None, Callable[..., BaseModel]]] = {
             "_handler/remote/list_sessions": (None, self.list_sessions),
@@ -647,10 +797,13 @@ class Connector:
             "_handler/remote/start_session": (StartSessionParams, self.start_session),
             "_handler/remote/list_apps": (None, self.list_apps),
             "_handler/remote/inbox": (None, self.device_inbox),
+            "_handler/remote/inbox_read": (InboxReadParams, self.inbox_read),
             "_handler/remote/ask_options": (None, self.ask_options),
             "_handler/remote/action_run": (ActionRunParams, self.action_run),
             "_handler/remote/push_key": (None, self.push_key),
             "_handler/remote/push_subscribe": (PushSubscribeParams, self.push_subscribe),
+            "_handler/remote/nudge_dismiss": (NudgeParams, self.nudge_dismiss),
+            "_handler/remote/nudge_setting": (NudgeSettingParams, self.nudge_setting),
         }
         if method not in handlers:
             self.send(link, None, error(m["id"], NOT_ALLOWED, "not allowed remotely"))
@@ -705,6 +858,8 @@ class Connector:
             "_handler/remote/ask": self.ask,
             "_handler/remote/transcribe": self.transcribe,
             "_handler/remote/push_test": self.push_test,
+            "_handler/remote/act": self.act,
+            "_handler/remote/nudge_fill": self.nudge_fill,
         }
 
     async def answer_later(self, link: Link, m: Message, call: Awaitable[BaseModel]) -> None:
@@ -713,7 +868,14 @@ class Connector:
         except ValidationError as e:
             self.send(link, None, error(m["id"], -32602, files.describe(e)))
             return
-        except (RemoteError, AssistantError, VoiceOffError, ServiceError) as e:
+        except (
+            RemoteError,
+            AssistantError,
+            VoiceOffError,
+            ServiceError,
+            NudgeError,
+            AppError,
+        ) as e:
             self.send(link, None, error(m["id"], -32602, str(e)))
             return
         except Exception as e:  # the device must get an answer
@@ -727,16 +889,53 @@ class Connector:
         asked = AskParams.model_validate(params)
         if asked.turns[-1].who != "you":
             raise RemoteError("the last turn is the person's")
-        answer = await self.asker(device).answer(asked.turns, asked.timezone)
+        answer = await self.asker(device).answer(asked.turns, asked.timezone, "phone", asked.spoken)
         return AskAnswer.model_validate(answer.model_dump())
+
+    async def act(self, device: Device, params: dict[str, Any]) -> RemoteActionRun:
+        """`_handler/remote/act`: an action done from the owner's device, its form filled; from a
+        nudge (H.17), which it makes done once it succeeds. Actions run as the owner."""
+        asked = ActParams.model_validate(params)
+        self.asker(device)
+        run = await self.apps.act(asked.app, asked.action, asked.fields, asked.nudge)
+        return RemoteActionRun.model_validate(run.model_dump())
+
+    async def nudge_fill(self, device: Device, params: dict[str, Any]) -> RemoteNudgeFill:
+        """`_handler/remote/nudge_fill`: what the owner said fills a nudge's form (H.17)."""
+        asked = NudgeFillParams.model_validate(params)
+        filled = await self.asker(device).fill(asked.id, asked.said, asked.timezone)
+        return RemoteNudgeFill.model_validate(filled.model_dump())
+
+    def nudge_dismiss(self, device: Device, params: NudgeParams) -> InboxMessage:
+        """A nudge of the device's person dismissed (H.17)."""
+        try:
+            message = self.apps.nudges.get(params.id)
+            if message.person != device.person:
+                raise RemoteError("not your nudge")
+            return self.apps.nudges.end(params.id, "dismissed")
+        except NudgeError as e:
+            raise RemoteError(str(e)) from None
+
+    def nudge_setting(self, device: Device, params: NudgeSettingParams) -> NudgeSettingAnswer:
+        """How often an app's nudge alerts the owner (H.17): the owner's devices."""
+        self.asker(device)
+        try:
+            self.apps.set_nudge_setting(params.app, params.nudge, params.setting)
+        except AppError as e:
+            raise RemoteError(str(e)) from None
+        return NudgeSettingAnswer(setting=params.setting)
 
     async def transcribe(self, device: Device, params: dict[str, Any]) -> RemoteTranscription:
         """`_handler/remote/transcribe` (D.25): the owner's devices, as they Ask."""
         speech = TranscribeParams.model_validate(params)
-        self.asker(device)
-        if self.voice is None:
-            raise VoiceOffError("no speech model is chosen (Settings → Voice)")
-        heard = await self.voice.hear(speech)
+        asker = self.asker(device)
+        try:
+            if self.voice is None:
+                raise VoiceOffError("no speech model is chosen (Settings → Voice)")
+            heard = await self.voice.hear(speech)
+        except (VoiceOffError, ServiceError) as e:  # kept in Ask's history, as from the web UI
+            asker.unheard("phone", e.message if isinstance(e, ServiceError) else str(e))
+            raise
         return RemoteTranscription(text=heard.text)
 
     def list_sessions(self, device: Device) -> SessionList:
@@ -757,7 +956,7 @@ class Connector:
         return [
             RemoteAgent(
                 id=a.id,
-                name=a.name or model_label(a.model),
+                name=a.name or access_label(a.model),
                 description=a.description,
                 default=i == 0,
             )
@@ -773,19 +972,44 @@ class Connector:
             raise RemoteError("agentId: not an agent you may start from a device")
         agent = self.sessions.registry.get(params.agent_id)
         assert agent is not None  # listed just above
+        run, subject = None, None
+        if agent.interface is not None:  # its form, as Handler's start checks it (D.18)
+            if params.fields is None or params.prompt:
+                raise RemoteError("fields: this agent is started with its form, not a request")
+            run = SessionInput(fields=params.fields)
+            try:
+                subject = interfaces.check_input(agent.interface, run, self.settings.skills_dir)
+            except interfaces.InterfaceError as e:
+                raise RemoteError(str(e)) from None
+        elif params.fields is not None:
+            raise RemoteError("fields: this agent has no form")
         rec = self.sessions.create(
-            agent, agent.runs_as(), prompt=params.prompt or None, origin="phone"
+            agent,
+            agent.runs_as(),
+            prompt=params.prompt or None,
+            origin="phone",
+            run=run,
+            subject=subject,
         )
-        task = asyncio.get_running_loop().create_task(self.share_when_running(rec.id))
-        self.pushes.add(task)
-        task.add_done_callback(self.pushes.discard)
+        self.spawn(self.share_when_running(rec.id, device))
         log.info("remote: %s started session %s", device.id, rec.id)
         return StartedSession(session=rec.id)
 
-    async def share_when_running(self, session_id: str) -> None:
-        with contextlib.suppress(SessionError):
+    async def share_when_running(self, session_id: str, device: Device) -> None:
+        """Shared once it runs; a start that fails is told to the device that asked for it,
+        which waits for it to be shared (F.1: an image not built says which)."""
+        try:
             await self.sessions.ensure_running(session_id)
-            self.sessions.set_remote(session_id, True)
+        except SessionError as e:
+            rec = self.sessions.records.get(session_id)
+            why = (rec.error if rec else None) or str(e)
+            failed = StartFailed(
+                session=session_id, error=why, missing_image=rec.missing_image if rec else None
+            )
+            if (link := self.links.get(device.id)) is not None:
+                self.send(link, None, notification("_handler/remote/start_failed", **wire(failed)))
+            return
+        self.sessions.set_remote(session_id, True)
 
     def list_apps(self, device: Device) -> AppList:
         apps = self.apps.remote_apps(device.person)
@@ -794,6 +1018,17 @@ class Connector:
     def device_inbox(self, device: Device) -> InboxList:
         found = self.apps.inbox.list(device.person)
         return InboxList(messages=found)
+
+    def inbox_read(self, device: Device, params: InboxReadParams) -> InboxMessage:
+        """One of the device's person's messages marked read, as the computer marks it (H.9,
+        I.3), whatever its scope. Another person's is refused as one that is not there: a device
+        learns nothing of another's inbox."""
+        message = self.apps.inbox.get(params.id)
+        mine = message is not None and message.person == device.person
+        read = self.apps.inbox.mark_read(params.id) if mine else None
+        if read is None:
+            raise RemoteError("no such message")
+        return read
 
     # ── Web Push (A5) ───────────────────────────────────────────────────
 
@@ -813,25 +1048,45 @@ class Connector:
         if sub is not None and not webpush.valid_keys(sub.keys.p256dh, sub.keys.auth):
             raise RemoteError("keys: the subscription's p256dh and auth")
         device.push = sub  # None: unsubscribe
+        device.kinds = params.kinds
         self.save_devices()
         return PushSubscription(subscribed=sub is not None)
 
     def on_message(self, message: InboxMessage) -> None:
         for device in self.devices.values():
-            if device.person == message.person and device.push:
-                self.push_to(device)
+            if device.person == message.person and device.wants("app-news"):
+                self.push_to(device, "app-news")
 
-    def push_to(self, device: Device) -> None:
-        task = asyncio.get_running_loop().create_task(self.push(device))
+    def session_waits(self, live: LiveSession) -> None:
+        """A session's requests awaiting an answer changed: one that starts waiting on you
+        while shared (Needs you on the phone) pushes the devices that see sessions (scope
+        `all`: the owner's), once per wait, not per request."""
+        if not live.pending:
+            self.waiting.discard(live.record.id)
+            return
+        if live.record.id in self.waiting:
+            return
+        self.waiting.add(live.record.id)
+        if live.remote and live.record.state == "running":
+            for device in self.devices.values():
+                if device.scope == "all" and device.wants("needs-you"):
+                    self.push_to(device, "needs-you")
+
+    def push_to(self, device: Device, kind: PushKind) -> None:
+        self.spawn(self.push(device, kind))
+
+    def spawn(self, work: Coroutine[Any, Any, Any]) -> None:
+        """Run `work` beside the polling loop, kept in `pushes` until it is done."""
+        task = asyncio.get_running_loop().create_task(work)
         self.pushes.add(task)
         task.add_done_callback(self.pushes.discard)
 
-    async def push(self, device: Device) -> str | None:
+    async def push(self, device: Device, kind: PushKind) -> str | None:
         """One push to the device: None once its push service took it, else why not."""
         if device.push is None:
             return "notifications are off on this device"
         try:
-            status = await webpush.push(self.http, self.vapid, device.push, PUSH_CONTACT)
+            status = await webpush.push(self.http, self.vapid, device.push, PUSH_CONTACT, kind)
         except httpx.HTTPError as e:
             log.info("remote: push to %s: %s", device.id, describe(e))
             return f"Handler could not reach the push service ({describe(e)})"
@@ -845,8 +1100,9 @@ class Connector:
         return None
 
     async def push_test(self, device: Device, _params: dict[str, Any]) -> PushTest:
-        """`_handler/remote/push_test`: one push now, to the asking device only."""
-        problem = await self.push(device)
+        """`_handler/remote/push_test`: one push now (app news, as a message's), to the asking
+        device only, whatever its switches."""
+        problem = await self.push(device, "app-news")
         log.info("remote: test push to %s: %s", device.id, problem or "taken by its push service")
         return PushTest(sent=problem is None, problem=problem)
 
@@ -881,8 +1137,8 @@ class Connector:
                 continue
             await self.app_call(link, s, m)
         self.schedule_flush(link)
-        if link.device.push:
-            self.push_to(link.device)
+        if link.device.wants("app-news"):
+            self.push_to(link.device, "app-news")
 
     def queueable(self, name: str, m: Message) -> bool:
         """Only `_handler/app/http` calls to a route the installed version declares queued."""
@@ -913,11 +1169,14 @@ class Connector:
             project=project.name if project else None,
             agent=agent.name if project else None,
             origin=rec.origin,
-            harness=rec.harness,
+            program=product(rec.harness) if rec.harness else None,
             scope=rec.scope,
             acp_session_id=rec.acp_session_id,
             busy=live.busy,
             pending_permissions=len(live.pending),
+            since=live.since,
+            last=live.last,
+            ask=live.ask(),
         )
 
     def attach(self, link: Link, s: str, live: LiveSession) -> tuple[LiveSession, Attachment]:
@@ -944,6 +1203,8 @@ class Connector:
 
     def send(self, link: Link, s: str | None, m: Message) -> None:
         frame = {"s": s, "m": m}
+        if is_response(m) and (s is None or s.startswith(APP_CHANNEL)):
+            link.hurry.set()  # a device waits on it (its home, Ask, an app's call): no batching
         link.frames.append(frame)
         link.size += len(json.dumps(frame))
         if link.size > OUTBOX_BYTES:  # the gateway is not taking it: drop, the device re-syncs
@@ -953,8 +1214,7 @@ class Connector:
                 for s_ in link.attachments
             ]
             for s_ in list(link.attachments):
-                held = link.attachments.pop(s_)
-                held[0].remove(held[1])
+                self.detach(link, s_)
             link.frames, link.size = closed, 0
         self.schedule_flush(link)
 
@@ -963,7 +1223,11 @@ class Connector:
             link.flushing = asyncio.create_task(self.flush(link))
 
     async def flush(self, link: Link) -> None:
-        await asyncio.sleep(FLUSH_DELAY)
+        # The frames sent meanwhile go together: those of an agent's output for FLUSH_DELAY, the
+        # answers to one envelope's requests at once (`control` answers them without yielding).
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(link.hurry.wait(), FLUSH_DELAY)
+        link.hurry.clear()
         while (link.frames or link.acks or link.rejected) and self.config is not None:
             frames, size = [], 0
             while link.frames and (not frames or size < ENVELOPE_BYTES):
@@ -1001,6 +1265,15 @@ def closed_notice(s: str, code: int, reason: str) -> Message:
     return notification(
         "_handler/remote/closed", **wire(ClosedNotice(s=s, code=code, reason=reason))
     )
+
+
+def lines_only(sessions: list[Message], before: list[Message]) -> bool:
+    """Whether two lists of shared sessions differ in their last lines alone."""
+
+    def others(listed: list[Message]) -> list[Message]:
+        return [{k: v for k, v in s.items() if k != "last"} for s in listed]
+
+    return others(sessions) == others(before)
 
 
 def wire(model: BaseModel) -> Message:

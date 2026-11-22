@@ -184,7 +184,8 @@ def as_definition(agent: AgentRecord, project: ProjectRecord) -> tuple[AgentDefi
             said.append(f"connection {use.binding} → one of {use.addon}, chosen at set-up")
     for use in agent.project_addons:
         said.append(f"tool {use.addon}, given by its project → it uses it")
-    for folder in agent.knowledge:
+    for use in agent.knowledge:
+        folder = use.folder
         said.append(f"notes folder {folder} → one chosen at set-up ({folder} if you have it)")
     for name in agent.project_skills:
         said.append(f"skill {name}, given by its project → it picks it")
@@ -199,9 +200,11 @@ def as_definition(agent: AgentRecord, project: ProjectRecord) -> tuple[AgentDefi
         permissions=agent.permissions,
         skills=sorted({*agent.skills, *agent.project_skills}),
         interface=agent.interface,
-        addons=sorted({u.addon for u in agent.addon_uses}),
-        knowledge=agent.knowledge,
+        addons=sorted({u.addon for u in [*agent.addons, *agent.project_addons]}),
+        knowledge=[u.folder for u in agent.knowledge],
+        schemas=agent.schemas,
         display=agent.display,
+        env=agent.env,
         model_alone=agent.model_alone,
     )
     return definition, said
@@ -218,8 +221,8 @@ def unique(part: str, taken: set[str]) -> str:
     return found
 
 
-def write(folder: Path, file: AgentsFile, skills_dir: Path) -> None:
-    """Its files in `folder` (made), its skills from the library."""
+def write(folder: Path, file: AgentsFile, skills_dir: Path, schemas_dir: Path) -> None:
+    """Its files in `folder` (made), its skills and schemas from the library."""
     folder.mkdir(parents=True)
     meta: dict[str, object] = {"name": file.name, "version": file.version}
     if file.description:
@@ -228,7 +231,7 @@ def write(folder: Path, file: AgentsFile, skills_dir: Path) -> None:
     (folder / META_FILE).write_text(tomlkit.dumps(meta))
     for agent in file.agents:
         part = folder / "agents" / agent.part
-        definitions.write(part, agent.definition, skills_dir)
+        definitions.write(part, agent.definition, skills_dir, schemas_dir)
         if agent.checks:
             checks = [c.model_dump(mode="json", by_alias=True) for c in agent.checks]
             (part / CHECKS_FILE).write_text(json.dumps(checks, indent=2) + "\n")
@@ -237,7 +240,7 @@ def write(folder: Path, file: AgentsFile, skills_dir: Path) -> None:
 def pack(settings: Settings, file: AgentsFile) -> tuple[str, bytes]:
     """The agents file: its name to save it as, and the zip."""
     with tempfile.TemporaryDirectory() as tmp:
-        write(Path(tmp) / file.name, file, settings.skills_dir)
+        write(Path(tmp) / file.name, file, settings.skills_dir, settings.schemas_dir)
         return f"{file.name}-agents.zip", files.zipped(Path(tmp) / file.name)
 
 

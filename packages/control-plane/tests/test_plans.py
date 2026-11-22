@@ -176,6 +176,7 @@ def f(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Fixture]:
     fixture.loop.close()
 
 
+@pytest.mark.rule("plan.written-as-its-skill-says")
 def test_a_plan_is_parsed_as_written() -> None:
     parsed = parse(PLAN)
     assert parsed.problems == []
@@ -192,6 +193,7 @@ def test_a_plan_is_parsed_as_written() -> None:
     assert two.done_when == "`./scripts/ci.sh` passes."
 
 
+@pytest.mark.rule("plan.written-as-its-skill-says")
 def test_the_step_time_limit() -> None:
     assert (
         parse(PLAN.replace("Agent: dev", "Agent: dev\nStep time limit: 90m")).step_timeout_sec
@@ -208,6 +210,7 @@ def test_the_step_time_limit() -> None:
         assert len(problems) == 1 and "between 1m and 24h" in problems[0], wrong
 
 
+@pytest.mark.rule("plan.written-as-its-skill-says")
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
@@ -256,6 +259,7 @@ def test_the_file_is_read_in_the_folder_without_following_links(f: Fixture, tmp_
     assert read.text == PLAN
 
 
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_its_agent_is_named_among_those_of_the_folder(f: Fixture) -> None:
     reader = f.agent("reader")
     f.write()
@@ -271,7 +275,7 @@ def test_its_agent_is_named_among_those_of_the_folder(f: Fixture) -> None:
     assert "2 agents named dev" in f.store.read(plans.file_of(reader, "plans/p.md")).problems[0]
 
 
-@pytest.mark.rule("plan.its-agent-its-settings")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_a_runner_chosen_on_review_runs_it(f: Fixture) -> None:
     reader = f.agent("reader")
     f.agent("dev")
@@ -300,6 +304,7 @@ def test_a_runner_chosen_on_review_runs_it(f: Fixture) -> None:
     assert f.store.view(plan.id).agent == "renamed"
 
 
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_the_runners_offered_are_the_folders_agents_that_may_run_steps(f: Fixture) -> None:
     project = f.projects.add(ProjectRecord(id="p1", name="x", folder=str(f.folder)))
     reader = f.agent("reader", permissions="ask")
@@ -315,7 +320,7 @@ def test_the_runners_offered_are_the_folders_agents_that_may_run_steps(f: Fixtur
     assert f.store.read(plans.file_of(reader, "plans/p.md")).project_id is None
 
 
-@pytest.mark.rule("plan.its-agent-its-settings")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_its_agent_runs_steps_nobody_answers(f: Fixture) -> None:
     reader = f.agent("reader")
     f.write()
@@ -326,14 +331,9 @@ def test_its_agent_runs_steps_nobody_answers(f: Fixture) -> None:
     job = f.agent(interface=AgentInterface(result={"type": "object"}))
     assert "takes a form" in f.store.read(plans.file_of(reader, "plans/p.md")).problems[0]
     f.registry.delete(job.id)
-    part = f.agent()
-    part.app = "planner"
-    assert (
-        "one of the app planner's parts"
-        in f.store.read(plans.file_of(reader, "plans/p.md")).problems[0]
-    )
 
 
+@pytest.mark.rule("plan.read-without-following-links")
 def test_large_or_binary_files_are_problems(f: Fixture) -> None:
     reader = f.agent()
     f.write(PLAN + "x" * plans.MAX_BYTES)
@@ -342,6 +342,7 @@ def test_large_or_binary_files_are_problems(f: Fixture) -> None:
     assert f.store.read(plans.file_of(reader, "plans/p.md")).problems == ["not UTF-8 text"]
 
 
+@pytest.mark.rule("plan.on-a-subscription-recommended-not-refused")
 def test_on_a_subscription_an_api_key_is_recommended(f: Fixture) -> None:
     reader = f.agent()
     f.write()
@@ -393,6 +394,7 @@ def test_the_approved_copy_is_handlerds(f: Fixture) -> None:
     assert e.value.status == 409
 
 
+@pytest.mark.rule("plan.one-step-after-another")
 def test_one_plan_running_per_agent(f: Fixture) -> None:
     reader = f.agent()
     digest = f.write()
@@ -402,6 +404,7 @@ def test_one_plan_running_per_agent(f: Fixture) -> None:
     assert e.value.title == "its agent already runs a plan"
 
 
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_a_folderless_agent_has_no_plan_file(f: Fixture) -> None:
     folderless = f.agent()
     folderless.scope = None
@@ -415,7 +418,9 @@ def done(summary: str = "did it", notes: str | None = None) -> dict[str, Any]:
 
 
 @pytest.mark.rule(
-    "plan.one-step-after-another", "plan.its-agent-its-settings", "plan.a-step-knows-only-its-notes"
+    "plan.one-step-after-another",
+    "plan.each-step-a-session-of-its-runner-as-set-now",
+    "plan.a-step-knows-only-the-earlier-steps-notes",
 )
 def test_steps_run_one_after_another_each_a_fresh_session(f: Fixture) -> None:
     dev = f.agent()
@@ -511,6 +516,7 @@ def test_cancel_stops_its_step_and_run_again_from_a_step(f: Fixture) -> None:
     assert f.state(plan.id) == ("running", ["running", "waiting"])
 
 
+@pytest.mark.rule("plan.stops-at-the-first-failure")
 def test_handlerd_restarting_during_a_step_stops_the_plan(f: Fixture) -> None:
     plan = f.approve(f.agent(), "plans/p.md", f.write())
     f.until(lambda: len(f.created) == 1)
@@ -523,6 +529,7 @@ def test_handlerd_restarting_during_a_step_stops_the_plan(f: Fixture) -> None:
     )
 
 
+@pytest.mark.rule("plan.stops-at-the-first-failure", "plan.one-step-after-another")
 def test_a_step_that_ended_while_handlerd_was_down_is_read(f: Fixture) -> None:
     plan = f.approve(f.agent(), "plans/p.md", f.write())
     f.until(lambda: len(f.created) == 1)
@@ -533,7 +540,7 @@ def test_a_step_that_ended_while_handlerd_was_down_is_read(f: Fixture) -> None:
     assert f.state(plan.id) == ("running", ["done", "running"])
 
 
-@pytest.mark.rule("plan.its-agent-its-settings")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now")
 def test_a_step_runs_with_its_agents_settings_as_they_are(f: Fixture) -> None:
     dev = f.agent()
     plan = f.approve(dev, "plans/p.md", f.write())
@@ -550,7 +557,7 @@ def test_a_step_runs_with_its_agents_settings_as_they_are(f: Fixture) -> None:
     assert f.store.view(plan.id).agent is None  # kept for reading
 
 
-@pytest.mark.rule("plan.a-step-knows-only-its-notes")
+@pytest.mark.rule("plan.a-step-knows-only-the-earlier-steps-notes")
 def test_the_notes_before_a_step_are_trimmed_oldest_first() -> None:
     steps = [PlanStep(n=n, title=f"step {n}", goal="g", done_when="d") for n in range(1, 5)]
     big = "x" * 7000
@@ -563,6 +570,7 @@ def test_the_notes_before_a_step_are_trimmed_oldest_first() -> None:
     assert "(no notes)" in plans.notes_part([(steps[0], None)])
 
 
+@pytest.mark.rule("plan.one-step-after-another", "plan.a-step-knows-only-the-earlier-steps-notes")
 def test_a_steps_session_is_unattended_with_its_own_interface(
     f: Fixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -603,6 +611,7 @@ def test_a_steps_session_is_unattended_with_its_own_interface(
     assert dev.interface is None
 
 
+@pytest.mark.rule("plan.written-as-its-skill-says")
 def test_the_skill_is_installed_once_and_its_format_is_the_parsers(f: Fixture) -> None:
     plans.install_skill(f.settings)
     skill = skills.get(f.settings.skills_dir, "handler-plan")
@@ -623,6 +632,7 @@ def drafts_of(f: Fixture) -> tuple[PlanDrafts, ProjectRecord]:
     return PlanDrafts(f.settings, f.projects), project
 
 
+@pytest.mark.rule("plan.builder-reads-the-project-only")
 def test_a_draft_is_kept_by_handler_for_a_project(f: Fixture) -> None:
     drafts, project = drafts_of(f)
     draft = drafts.create(project.id)

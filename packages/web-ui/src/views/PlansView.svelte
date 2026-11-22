@@ -11,6 +11,7 @@
   import PageHeader from "../components/PageHeader.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import When from "../components/When.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { PlanDraft, PlanView } from "../lib/contracts.gen";
   import { stepsDone } from "../lib/plans";
@@ -31,8 +32,7 @@
 
   $effect(() => {
     void load();
-    const timer = setInterval(load, 5000); // their steps go on
-    return () => clearInterval(timer);
+    return onChange(["plans", "plan-drafts", "sessions"], () => void load());
   });
 </script>
 

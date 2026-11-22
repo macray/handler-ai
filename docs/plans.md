@@ -14,8 +14,8 @@ the conversation and type "do the next step" again and again. A **plan** does it
 
 On the project's page, its **Plans** tab → **New plan**. The tab says who writes it (*Written by
 the plan builder*, with its program and model; the link opens its page in Settings → Helpers). The
-first time, its card opens in place: who works (you choose the program and the account or key with
-its model) and what it can do, then **Turn on**. Then a session of the plan builder opens: it
+first time, its card opens in place: who works (you choose the account or key, its program and its
+model) and what it can do, then **Turn on**. Then a session of the plan builder opens: it
 reads the project, asks what you want done, and writes the plan.
 
 The plan builder only writes: it sees the project **read-only**, all of it, and writes in a
@@ -102,7 +102,7 @@ provider) is recommended. Approving a plan is starting its steps yourself.
 
 The project's **Plans** tab lists its plans. One that runs shows its steps: done (what it did),
 running (its session, the time used), waiting (its *Done when*); one that stopped shows why on the
-step it stopped at, with the fix there (*Allow it and run again from step 3* for a host the network
+step it stopped at, with the fix there (*Allow pypi.org:443 for Dev, run again from step 3* for a host the network
 filter refused, *Keep blocked*, or *Run again from step 3*). The finished ones are folded. A
 plan's page shows each step: waiting, running, done or
 failed, its summary, the notes it left for the next steps, and **Its session**: open it to watch
@@ -119,7 +119,7 @@ plan says so, "Stopped: step 1 failed: pypi.org:443 was blocked by the network f
 the agent's guess. A step that completed without some hosts says "Completed, with 2 hosts
 refused", how many times each, what the agent did instead, and that the result may differ from
 what you would get with these hosts; its notes end with "Hosts refused: …", so the next steps
-know, and your inbox is told. **Allow and run again from step n** allows them for the agent and
+know, and your inbox is told. **Allow *host* for *agent*, run again from step n** allows them for the agent and
 runs the plan from that step; **Keep blocked** keeps them out for good (never listed again).
 
 One plan runs per agent at a time. A plan's steps wait for the agent's other runs (a job's) to

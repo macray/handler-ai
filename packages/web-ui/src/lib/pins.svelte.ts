@@ -1,7 +1,6 @@
 // The menu's Pinned (D.28): projects and apps mixed, in the person's order, kept by handlerd so
 // every browser shows the same. Pin, unpin and reorder send the whole list; the menu shows the
-// change at once. Refused (this list was old: a project deleted elsewhere), the change is made
-// again on handlerd's list; refused again, the menu goes back to it.
+// change at once, then the list handlerd kept (without a pin of something deleted elsewhere).
 import { api } from "./api";
 import type { Pin } from "./contracts.gen";
 import { moved } from "./menu";
@@ -59,18 +58,9 @@ class PinStore {
     this.error = null;
     try {
       this.items = (await api.setPins({ items: this.items })).items;
-      return;
-    } catch {
-      /* this list was old: made again on handlerd's */
-    }
-    try {
-      const fresh = (await api.pins()).items;
-      this.items = make(fresh);
-      this.items = (await api.setPins({ items: this.items })).items;
     } catch (e) {
       this.items = before;
       this.error = (e as Error).message;
-      void this.load();
       throw e;
     }
   }

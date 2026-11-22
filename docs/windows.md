@@ -19,16 +19,18 @@ Already have WSL 2 with systemd? Jump to [step 3](#3-prepare-linux).
 
 1. Open **PowerShell as administrator**: right-click the Start button → *Terminal (Admin)* (or
    search "PowerShell", then *Run as administrator*).
-2. Install WSL with its default Linux distribution, Ubuntu:
+2. Install WSL with Ubuntu, its Linux distribution:
 
    ```powershell
-   wsl --install
+   wsl --install -d Ubuntu
    ```
 
 3. **Restart your PC** when it asks.
 4. Ubuntu opens by itself after the restart (else: Start menu → *Ubuntu*). It unpacks, then asks
    for a **user name and a password**: they are your Linux account's, not Windows'. Pick them
-   freely; `sudo` asks for this password.
+   freely; `sudo` asks for this password. No Ubuntu in the Start menu? In PowerShell, `wsl -l -v`:
+   if it lists no distribution, run `wsl --install -d Ubuntu` again (WSL itself was installed
+   first).
 
 You now have an Ubuntu terminal. Every command below without "PowerShell" before it runs **in
 Ubuntu**, not in Windows.
@@ -143,7 +145,8 @@ setup-token`, `handler run`…) in Ubuntu.
 
 - **Claude Pro or Max**: install Claude Code in Ubuntu (`curl -fsSL https://claude.ai/install.sh
   | bash`), then `claude setup-token` there. It opens Anthropic's sign-in page, or prints a
-  link to open in your browser.
+  link to open in your browser. Already have Claude Code on Windows? Run `claude setup-token` in
+  PowerShell instead: the token it prints works in Handler too.
 - **ChatGPT or Mistral**: on Linux the web UI opens the login in a terminal window. WSL has none to
   open, so the web UI says *cannot open a terminal*: run the command it shows, `handler account
   login <name>`, in Ubuntu.
@@ -175,8 +178,8 @@ Moving a project from Windows: `cp -r /mnt/c/Users/<you>/code/my-app ~/code/`.
 
 ## Update and remove
 
-- Update Handler: `uv tool upgrade handler-ai` in Ubuntu, then `handler setup` (from 0.2.0, a few
-  files are renamed by hand first: [upgrading from 0.2.0](configuration.md#upgrading-from-020)). Update WSL itself:
+- Update Handler: `uv tool upgrade handler-ai` in Ubuntu, then `handler setup` (from 0.3, start
+  with empty settings first: [upgrading from 0.3](configuration.md#upgrading-from-03)). Update WSL itself:
   `wsl --update` in PowerShell.
 - Remove Handler: `handler daemon uninstall`, then `uv tool uninstall handler-ai` (your settings
   stay in `~/.config/handler-ai` and `~/.local/state/handler-ai`; delete them to remove them too).
@@ -188,11 +191,13 @@ Moving a project from Windows: `cp -r /mnt/c/Users/<you>/code/my-app ~/code/`.
 | What you see | What to do |
 |---|---|
 | `wsl --install` shows WSL's help | WSL is installed already: `wsl --install -d Ubuntu` |
+| no Ubuntu after the restart; `wsl -d Ubuntu` says `WSL_E_DISTRO_NOT_FOUND` | WSL is installed, not Ubuntu: `wsl --install -d Ubuntu` |
 | "Please enable the Virtual Machine Platform" or "virtualization" | turn virtualization on in your PC's firmware, then restart |
 | `handler: command not found` | close Ubuntu's window and open it again (`~/.local/bin` goes on PATH at login) |
 | `handler setup`: systemd failed | systemd is off: [step 3](#3-prepare-linux), item 2 |
 | `podman` line FAIL: WSL 1 | in PowerShell: `wsl --set-version Ubuntu 2` |
 | `subordinate ids` warn | for agents that run containers and for apps: run the command its line shows |
+| `memory and CPU limits` warn | for apps that set limits only: run the command its line shows, then `wsl --shutdown` in PowerShell and open Ubuntu again |
 | the web UI stops answering a while after closing Ubuntu | [step 2](#2-keep-linux-running-when-its-window-closes) |
 | `localhost:7430` does not open in Windows | `handler daemon status` in Ubuntu; in WSL Settings → Networking, *localhost forwarding* must stay on |
 | sessions slow on a project | is it under `/mnt/c`? Move it to `~/code` ([step 6](#6-where-to-keep-your-projects)) |

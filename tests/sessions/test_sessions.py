@@ -119,24 +119,30 @@ def test_create_attach_prompt(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
 )
 def test_instructions_go_with_the_first_prompt(daemon: Daemon) -> None:
     """A session created without a request: the agent's instructions go with the first prompt a
-    client sends, before its text, and only with that one (F.3)."""
+    client sends, before its text, and only with that one (F.3). Its log keeps them as Handler's
+    line before the person's words, never as the person's (F.5 `instructed`)."""
     agent = daemon.create_ad_hoc("fake", daemon.make_scope(), instructions="Be brief.")
     session = create_session(daemon, agent)
     client, _ = attach(daemon, session)
     try:
         acp_id = get_session(daemon, session["id"])["acpSessionId"]
         client.prompt(acp_id, "hello")
-        client.prompt(acp_id, "again")
+        said = len(client.text())
+        client.prompt(acp_id, "report")
+        received = json.loads(client.text()[said:])["prompts"]
     finally:
         client.close()
+    told = f"Be brief.\n\n{FILTERED_NETWORK}"  # filtered: the network's words too
+    assert received == [[f"{told}\n\nhello"], ["report"]]
     log = daemon.config_dir.parent / "state" / "sessions" / session["id"] / "events.ndjson"
     events = [json.loads(line) for line in log.read_text().splitlines()]
-    sent = [
-        e["update"]["content"]["text"]
+    shown = [
+        e["update"]["content"]["text"] if e["kind"] == "update" else e["text"]
         for e in events
-        if e["kind"] == "update" and e["update"]["sessionUpdate"] == "user_message_chunk"
+        if (e["kind"] == "update" and e["update"]["sessionUpdate"] == "user_message_chunk")
+        or e.get("event") == "instructed"
     ]
-    assert sent == [f"Be brief.\n\n{FILTERED_NETWORK}\n\nhello", "again"]  # filtered
+    assert shown == [told, "hello", "report"]
 
 
 def test_an_agent_s_title_made_of_handler_s_words_is_not_taken(daemon: Daemon) -> None:
@@ -205,8 +211,8 @@ def test_reload_during_a_turn_keeps_it(daemon: Daemon, ad_hoc: dict[str, Any]) -
         ]
         assert replayed[0] == {
             "sessionUpdate": "user_message_chunk",
-            "content": {"type": "text", "text": f"{FILTERED_NETWORK}\n\npermission"},
-        }  # its first prompt: what its filtered network means first
+            "content": {"type": "text", "text": "permission"},
+        }  # its first prompt, the person's words alone (Handler's line before it)
         assert loaded["state"]["busy"] is True and loaded["state"]["pendingPermissions"] == 1
         assert loaded["state"]["turnStartedAt"]  # the elapsed time survives a reload
         ended = second.wait_notification("_handler/turn_ended")  # the re-sent request was answered
@@ -229,7 +235,7 @@ def test_several_attachments_see_the_same_session(daemon: Daemon, ad_hoc: dict[s
         assert first.prompt(acp_id, "hello")["stopReason"] == "end_turn"
         assert second.wait_notification("_handler/turn_ended") == {"stopReason": "end_turn"}
         updates = [u["params"]["update"] for u in second.updates if u["method"] == "session/update"]
-        hello = {"type": "text", "text": f"{FILTERED_NETWORK}\n\nhello"}  # the first prompt
+        hello = {"type": "text", "text": "hello"}  # the person's, without Handler's words
         assert updates[-2:] == [
             {"sessionUpdate": "user_message_chunk", "content": hello},
             {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}},
@@ -487,7 +493,7 @@ def test_the_first_request_is_sent_once_the_image_is_built(daemon: Daemon) -> No
         client.close()
     wait_state(daemon, session["id"], "stopped", timeout=10)  # idle
     attach(daemon, session)[0].close()  # started again: nothing sent again
-    assert sent() == [f"Be brief.\n\n{FILTERED_NETWORK}\n\nreport"]
+    assert sent() == ["report"]
 
 
 @pytest.mark.rule("session.a-start-that-fails-says-why")

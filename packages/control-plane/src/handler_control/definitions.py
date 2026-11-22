@@ -1,15 +1,18 @@
 """Agent definitions (D.18): everything an agent is but what it runs as and where it works, in a
-folder. An agents file's agents are definitions (D.23, agents_files.py), and so are an app's (H.2,
-`needs.agents.<name>.from`) and those of Handler's needs (D.18, handler_needs.py). The web UI fills
+folder. An agents file's agents are definitions (D.23, agents_files.py), and so are those of
+Handler's needs (D.18, handler_needs.py). The web UI fills
 the agent's form with one and the user chooses its models; from then on the agent's settings are the
 user's, nothing follows the definition.
 
     agent.toml       [agent]: its name, description, sandbox, the addons and knowledge folders it
                      needs, the library's skills it picks
     instructions.md  its instructions (optional)
-    interface.json   its interface (optional, D.18; an app's: a job's, with a result)
+    interface.json   its interface (optional, D.18)
     skills/<name>/   skills that come with it: installed in the library when it is set up (a
                      skill of that name already there is kept: it may be the user's)
+    schemas/<$id>.schema.json   schemas that come with it (D.29): into the Library when it is
+                     set up; a different one with that `$id` there refuses it (the person
+                     decides, in Library → Schemas)
 """
 
 import json
@@ -21,7 +24,7 @@ from pydantic import ValidationError
 
 from handler_contracts import AgentDefinition
 
-from . import skills
+from . import knowledge_schemas, skills
 
 # what agent.toml holds besides [agent]'s own names (`name`, `description`)
 _FILES = {"instructions", "interface"}
@@ -53,9 +56,9 @@ def read(folder: Path) -> AgentDefinition:
         raise DefinitionError(str(e)) from None
 
 
-def write(folder: Path, definition: AgentDefinition, skills_dir: Path) -> None:
+def write(folder: Path, definition: AgentDefinition, skills_dir: Path, schemas_dir: Path) -> None:
     """The definition into a new folder, its skills copied from the library (all of them come
-    with it: `skills/`, none named in agent.toml)."""
+    with it: `skills/`, none named in agent.toml), and the schemas it uses (`schemas/`, D.29)."""
     folder.mkdir(parents=True)
     own = definition.model_dump(mode="json", exclude=_FILES | {"skills"}, exclude_defaults=True)
     agent = {k.removeprefix("agent_"): v for k, v in own.items()}
@@ -69,6 +72,10 @@ def write(folder: Path, definition: AgentDefinition, skills_dir: Path) -> None:
         target = folder / "skills" / name
         target.mkdir(parents=True)
         skills.copy(skills_dir / name, target)
+    used = [u.schema_id for u in definition.schemas]
+    for file, content in knowledge_schemas.files(schemas_dir, used).items():
+        (folder / "schemas").mkdir(exist_ok=True)
+        (folder / "schemas" / file).write_text(content, encoding="utf-8")
 
 
 def shipped_skills(folder: Path) -> list[str]:
@@ -86,3 +93,27 @@ def install_skills(folder: Path, skills_dir: Path) -> list[str]:
             target.mkdir(parents=True)
             skills.copy(folder / "skills" / name, target)
     return names
+
+
+def shipped_schemas(folder: Path, schemas_dir: Path, differs: str) -> list[str]:
+    """The schemas a folder ships (`folder`/schemas, D.29: an agent definition's, an app's),
+    each checked: SchemaError when one is not a schema; SchemaClashError when the Library has a
+    different one of that `$id` (`differs`: what the person may do then)."""
+    shipped = folder / "schemas"
+    files = sorted(shipped.glob(f"*{knowledge_schemas.SUFFIX}")) if shipped.is_dir() else []
+    contents = [f.read_text(encoding="utf-8") for f in files]
+    for content in contents:
+        typedef = knowledge_schemas.parse(content, "schema")
+        path = knowledge_schemas.path_of(schemas_dir, typedef.id)
+        if path.exists() and path.read_text(encoding="utf-8") != content:
+            raise knowledge_schemas.SchemaClashError(
+                f"{typedef.id} in your Library differs from the one {differs}"
+            )
+    return contents
+
+
+def install_schemas(folder: Path, schemas_dir: Path, differs: str) -> list[str]:
+    """A folder's shipped schemas into the Library, those not there yet; returns their `$id`s.
+    All checked first (`shipped_schemas`): a clash adds none."""
+    contents = shipped_schemas(folder, schemas_dir, differs)
+    return [knowledge_schemas.add(schemas_dir, content)[0] for content in contents]

@@ -3,16 +3,20 @@
 // phone) may be attached at once (F.7); only beyond the daemon's limit is the oldest closed
 // (4001), and this tab then shows the session as open elsewhere.
 //
-// The sidebar lists the sessions this browser opened (ids in localStorage), attached while they
-// run, and the running sessions started elsewhere (the CLI, an editor, a phone), polled and not
-// attached until opened: attaching would keep them from stopping when idle.
+// The store holds the sessions this browser opened (ids in localStorage), attached while they
+// run, and the running sessions started elsewhere (the CLI, an editor, a phone), read again on
+// each change of the sessions (the event stream) and
+// attached only while shown on Running's stage (`watch`), or once opened (focused, typed in):
+// attaching keeps a session from stopping when idle (F.4).
 // Views use only this module's interface (`sessions`, `LiveSession`).
 import { SvelteSet } from "svelte/reactivity";
 import { AcpConnection } from "@handler/acp-view/lib/connection.svelte";
 import type { Prompt, PromptImage } from "@handler/acp-view/lib/images";
 import { websocketTransport } from "./acp/transport";
-import { api, ApiError } from "./api";
+import { api } from "./api";
+import { onChange } from "./events.svelte";
 import type { Agent, ModelAccess, Session } from "./contracts.gen";
+import { appTitle } from "./apps";
 
 export type SessionStatus = "starting" | "needs-you" | "working" | "replied" | "idle" | "elsewhere" | "stopped" | "failed";
 
@@ -43,7 +47,9 @@ export class LiveSession {
   draft = $state(""); // composer text, kept while switching sessions
   draftImages = $state<PromptImage[]>([]); // and its images
   queued = $state<Prompt | null>(null); // typed while the agent works: sent when its turn ends
-  discovered = $state(false); // started elsewhere, not opened here: not attached, not saved
+  discovered = $state(false); // started elsewhere, not opened here: not saved, attached only while watched
+  watchers = 0; // the panes showing it now (a discovered one is detached when none does)
+  endedAt = $state<number | null>(null); // ms: its last turn ended (seen here), for "idle · 2m ago"
 
   constructor(info: Session, agent: Agent) {
     this.info = info;
@@ -84,11 +90,11 @@ export class LiveSession {
 }
 
 const STORAGE = "handler.sessions.open"; // ids of the sessions this browser keeps in its sidebar
-const POLL_MS = 5000; // sessions started elsewhere
 
 class SessionStore {
   list = $state<LiveSession[]>([]);
-  restored = $state(false); // the sidebar is known (restore() done)
+  restored = $state(false); // this browser's sessions are known (restore() done)
+  polled = $state(false); // the daemon's running sessions are known too (the first discover())
   loadError = $state<string | null>(null); // the daemon's sessions could not be listed
   private closed = new Set<string>(); // closed here: not adopted again (a stale link, a race)
   /** Closed here, the daemon still stopping them: no longer live, though the daemon says so. */
@@ -125,6 +131,8 @@ class SessionStore {
     if (existing || this.closed.has(key)) return existing ?? null;
     try {
       const info = await api.session(key);
+      // a run of an app's job has no agent: shown with what it ran as (jobAgent)
+      if (!info.agentId) return info.app && info.job ? this.open(info, await jobAgent(info)) : null;
       return this.open(info, await api.agent(info.agentId));
     } catch {
       return null;
@@ -141,9 +149,36 @@ class SessionStore {
     if (!session.conn && !session.starting && running) void this.connect(session);
   }
 
+  /** A pane shows it: attached while it runs. A session started elsewhere is detached once no
+   *  pane shows it, so it can still stop when idle; call the function returned when the pane goes. */
+  watch(session: LiveSession): () => void {
+    session.watchers++;
+    const attach = () => {
+      const running = session.info.state === "running" || session.info.state === "starting";
+      if (session.watchers && !session.conn && !session.starting && running) void this.connect(session);
+    };
+    // one started elsewhere is known by polling: asked first, as attaching a session that has
+    // just stopped would start it again (F.4)
+    if (session.discovered && !session.conn)
+      void api.session(session.key).then(
+        (info) => ((session.info = info), attach()),
+        () => {},
+      );
+    else attach();
+    return () => {
+      session.watchers--;
+      if (session.discovered && session.watchers === 0) this.detach(session);
+    };
+  }
+
+  private detach(session: LiveSession): void {
+    session.conn?.close();
+    session.conn = null; // what the daemon says again (read on each change)
+  }
+
   /** The running sessions started elsewhere; those that stopped without being opened go. */
   async discover(): Promise<void> {
-    // a request that fails: next time (the daemon is away); a throw would end the polling (restore)
+    // a request that fails: the next change, or the stream reopened (the daemon back)
     let all: Session[];
     try {
       all = await api.sessions();
@@ -151,7 +186,8 @@ class SessionStore {
       return;
     }
     const byId = new Map(all.map((s) => [s.id, s]));
-    this.list = this.list.filter((s) => !s.discovered || byId.get(s.key)?.state === "running");
+    const alive = (s: Session | undefined) => s?.state === "running" || s?.state === "starting";
+    this.list = this.list.filter((s) => !s.discovered || alive(byId.get(s.key)));
     // a check's run (D.20) is the agent's checks', not a session of yours
     const running = (s: Session) => (s.state === "running" || s.state === "starting") && !this.closed.has(s.id) && s.origin !== "check";
     const unknown = all.filter((s) => running(s) && !this.get(s.id));
@@ -162,7 +198,7 @@ class SessionStore {
       return;
     }
     for (const info of unknown) {
-      const agent = agents.get(info.agentId);
+      const agent = info.agentId ? agents.get(info.agentId) : undefined;
       if (!agent || this.get(info.id)) continue;
       const session = new LiveSession(info, agent);
       session.discovered = true;
@@ -170,6 +206,7 @@ class SessionStore {
     }
     // not attached, or its attachment closed: what the daemon says (why the agent stopped)
     for (const s of this.list) if (!s.live && byId.has(s.key)) s.info = byId.get(s.key)!;
+    this.polled = true;
   }
 
   /** An agent changed (e.g. renamed): show it so in its open sessions. */
@@ -193,6 +230,7 @@ class SessionStore {
       session.info = await api.session(session.key);
       await conn.loadSession(session.info.acpSessionId ?? "", session.info.scope);
       session.conn = conn;
+      if (session.discovered && session.watchers === 0) this.detach(session); // its pane went meanwhile
     } catch (e) {
       session.error = conn.closed?.reason || (e as Error).message;
       session.info = await api.session(session.key).catch(() => session.info); // failed, or stopped with why
@@ -238,6 +276,7 @@ class SessionStore {
   }
 
   private turnEnded(session: LiveSession): void {
+    session.endedAt = Date.now();
     if (session.queued) return void this.sendQueued(session);
     if (this.viewing !== session.key || document.hidden) session.unread = true;
   }
@@ -274,15 +313,12 @@ class SessionStore {
     try {
       await this.load();
     } catch (e) {
-      const notFound = e instanceof ApiError && e.status === 404;
-      this.loadError = notFound
-        ? "This daemon has no sessions API (/v1/sessions): restart handlerd to run the current version."
-        : `Sessions could not be loaded: ${(e as Error).message}`;
+      this.loadError = `Sessions could not be loaded: ${(e as Error).message}`;
     } finally {
       this.restored = true;
     }
+    onChange(["sessions"], () => void this.discover()); // first: a change while it reads is told
     await this.discover();
-    setInterval(() => void this.discover(), POLL_MS);
   }
 
   private async load(): Promise<void> {
@@ -290,7 +326,7 @@ class SessionStore {
     const [all, agents] = await Promise.all([api.sessions(), api.agents()]);
     const byId = new Map(agents.map((r) => [r.id, r]));
     for (const info of all.reverse()) {
-      const agent = byId.get(info.agentId);
+      const agent = info.agentId ? byId.get(info.agentId) : undefined;
       if (!agent || !open.has(info.id) || this.get(info.id)) continue;
       const session = new LiveSession(info, agent);
       this.list.push(session);
@@ -317,3 +353,24 @@ class SessionStore {
 }
 
 export const sessions = new SessionStore();
+
+/** What a run of an app's job (H.11: a session with no agent) is shown with, never saved nor
+ *  sent: no id, named after its app and its job ("CV: Writes your CV"), its model and folder the
+ *  run's, unattended (bypass); its settings are the app's job's, on the app's page. */
+export async function jobAgent(info: Session): Promise<Agent> {
+  const app = await api.app(info.app ?? "").catch(() => null);
+  const job = app?.jobs?.find((j) => j.name === info.job);
+  const model = { harness: info.harness ?? null, account: info.account ?? null, provider: info.provider ?? null, model: info.model ?? null };
+  return {
+    id: "",
+    name: `${app ? appTitle(app) : info.app}: ${job?.description ?? info.job}`,
+    model,
+    network: "filtered",
+    confinement: "strict",
+    permissions: "bypass",
+    scope: info.scope ?? null,
+    acpUrl: "",
+    connections: [],
+    createdAt: info.createdAt,
+  } as Agent;
+}

@@ -39,6 +39,7 @@ Storage under <state>/builds/:
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import os
 import re
@@ -46,13 +47,14 @@ import signal
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import IO, Any
 
 from handler_contracts import AddonState, Build, BuildLog, ToolboxRecord
 from handler_harness import addons, catalog, images
 from handler_harness import toolbox as toolbox_parts
 
-from . import addon_folders, image_check, runtime, toolbox
+from . import __version__, addon_folders, image_check, knowledge_tool, runtime, toolbox
 from .agents import AgentRegistry
 from .settings import Settings
 
@@ -102,6 +104,18 @@ def built_addons(settings: Settings) -> list[addons.Addon]:
     return found
 
 
+def makes(build: Build, target: str) -> bool:
+    """Whether `build` makes what `target` names (a session's `missingImage`, F.1): a build of
+    that target, or the toolbox's, which rebuilds the harnesses and addons already built."""
+    if build.target == target:
+        return True
+    if build.target != TOOLBOX_TARGET:
+        return False
+    if target.startswith(ADDON_PREFIX):
+        return target.removeprefix(ADDON_PREFIX) in build.addons
+    return target in build.harnesses
+
+
 def built_harnesses() -> list[catalog.Harness]:
     """The harnesses whose image is built (`:latest`): a toolbox build rebuilds those."""
     return [
@@ -122,6 +136,7 @@ class BuildStore:
         self.waiting: set[str] = set()  # addons installed, waiting for the toolbox (in memory)
         self.listeners: list[Callable[[Build], None]] = []  # told when a build ends
         self.queued: dict[asyncio.Task[None], str] = {}  # `start_soon`'s → their targets
+        self.watchers: list[Callable[[], None]] = []  # told after each save (the web UI, D.30)
         self._load()
 
     # ── persistence ─────────────────────────────────────────────────────
@@ -147,6 +162,8 @@ class BuildStore:
         path = self.dir / f"{build.id}.json"
         path.with_suffix(".tmp").write_text(build.model_dump_json(by_alias=True, exclude_none=True))
         path.with_suffix(".tmp").replace(path)
+        for watcher in self.watchers:
+            watcher()
 
     def list(self) -> list[Build]:
         found = [Build.model_validate_json(p.read_text()) for p in self.dir.glob("*.json")]
@@ -241,7 +258,8 @@ class BuildStore:
     def addon_state(self, name: str, ready: bool) -> tuple[AddonState, str | None]:
         """An addon's state (G.5) from its builds; `ready`: its folder built (when it has an
         image) and its needs in the toolbox."""
-        if name in self.running_addons or (name in self.waiting and self.toolbox_pending()):
+        mine = name in self.running_addons or f"{ADDON_PREFIX}{name}" in self.queued.values()
+        if mine or (name in self.waiting and self.toolbox_pending()):
             return "preparing", None
         if ready:
             return "ready", None
@@ -347,7 +365,7 @@ class _Job:
                 harnesses, addon_list = [catalog.get(target)], []
         units: list[catalog.Harness | addons.Addon] = [*harnesses, *addon_list]
         for unit in units:
-            recipe = images.recipe(unit, base)
+            recipe = await asyncio.to_thread(self.recipe, unit, base)
             self.built[_repo(unit)] = await self.image_build(f"build {_label(unit)}", recipe)
         for h in harnesses:
             await self.check_harness(h)
@@ -363,6 +381,18 @@ class _Job:
             self.line(f"{ADDON_PREFIX}{name} switched to {image[:12]}")
         if self.record is not None:
             toolbox.write_record(self.store.settings, self.record)
+
+    def recipe(self, unit: catalog.Harness | addons.Addon, base: str) -> images.Recipe:
+        """A harness's or a tool's, from its own folder; the knowledge tool's from the context
+        handlerd writes (knowledge_tool.py): a copy of Handler's own format package."""
+        found = images.recipe(unit, base)
+        if not (
+            isinstance(unit, addons.Addon) and unit.builtin and unit.name == knowledge_tool.NAME
+        ):
+            return found
+        context = knowledge_tool.write_context(self.store.settings.state_dir, unit.directory)
+        args = found.build_args | {"HANDLER_VERSION": __version__}
+        return dataclasses.replace(found, context=context, build_args=args)
 
     async def check_harness(self, harness: catalog.Harness) -> None:
         image = self.built[harness.descriptor.image]
@@ -445,10 +475,13 @@ class _Job:
             limit=MAX_LOG_BYTES,
         )
         assert proc.stdout is not None
+        said = f"{Path(argv[0]).name}: "  # how the runtime starts its reason (A.7)
+        last = ""
         try:
             async for raw in proc.stdout:
                 text = raw.decode(errors="replace")
                 self.line(text)
+                last = text.strip() or last
                 if m := _STEP.match(_ANSI.sub("", text)):
                     self.update(step=int(m[1]), steps=int(m[2]))
             code = await proc.wait()
@@ -459,7 +492,10 @@ class _Job:
                 await asyncio.wait_for(proc.wait(), 30)
             raise
         if code != 0:
-            raise BuildError(f"{stage} failed (exit code {code}); see the log")
+            # the runtime's reason, its engine's own words when it gave some (rule
+            # runtime.an-image-verb-says-what-it-did); else only its exit code
+            why = last.removeprefix(said) if last.startswith(said) else f"exit code {code}"
+            raise BuildError(f"{stage} failed: {why}; see the log")
 
 
 def _repo(unit: catalog.Harness | addons.Addon) -> str:

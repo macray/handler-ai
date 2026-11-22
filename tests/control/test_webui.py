@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -9,7 +10,8 @@ import pytest
 
 from handler_control.settings import WEB_UI
 
-from ..support.daemon import Daemon
+from ..support import dev_env
+from ..support.daemon import Daemon, start_daemon
 
 UI_BUILT = (WEB_UI / "index.html").is_file()
 
@@ -82,6 +84,44 @@ def test_directories_are_confined_to_the_work_folders(daemon: Daemon, tmp_path: 
         for path in ("/etc", str(tmp_path), str(escape), f"{daemon.scope_root}/../"):
             r = c.get("/v1/directories", params={"path": path})
             assert r.status_code == 403, path
+
+
+@pytest.fixture(scope="module")
+def notes_home() -> Iterator[tuple[Daemon, Path]]:
+    """A daemon whose notes root is in its home, outside its work folders."""
+    home = dev_env.make_scope()
+    (home / "notes" / "cv").mkdir(parents=True)
+    env = {"HOME": str(home), "HANDLER_NOTES_DIR": str(home / "notes")}
+    for daemon in start_daemon(extra_env=env):
+        yield daemon, home / "notes"
+    dev_env.remove_scope(home)
+
+
+def test_an_app_s_folder_picker_also_offers_the_notes(notes_home: tuple[Daemon, Path]) -> None:
+    """H.9: an app may be given a notes folder, so its picker browses the notes root too; the
+    other pickers (projects, agents) stay in the work folders (D.13)."""
+    daemon, notes = notes_home
+    with daemon.http() as c:
+        listed = c.get("/v1/directories").json()["entries"]
+        assert [e["path"] for e in listed] == [str(daemon.scope_root)]
+        listed = c.get("/v1/directories", params={"for": "app"}).json()["entries"]
+        assert [e["path"] for e in listed] == [str(daemon.scope_root), str(notes)]
+        inside = c.get("/v1/directories", params={"path": str(notes), "for": "app"}).json()
+        assert [e["name"] for e in inside["entries"]] == ["cv"] and inside.get("parent") is None
+        assert c.get("/v1/directories", params={"path": str(notes)}).status_code == 403
+        made = {"parent": str(notes), "name": "cv-written"}
+        assert c.post("/v1/directories", json=made).status_code == 403
+        r = c.post("/v1/directories", params={"for": "app"}, json=made)
+        assert r.status_code == 201, r.text
+        assert (notes / "cv-written").is_dir()
+
+
+def test_notes_outside_the_home_are_not_offered_to_an_app(daemon: Daemon) -> None:
+    """A notes root an app cannot be given (here outside the home, as Handler's data) is not
+    offered: the picker would offer what Install then refuses."""
+    with daemon.http() as c:
+        listed = c.get("/v1/directories", params={"for": "app"}).json()["entries"]
+        assert [e["path"] for e in listed] == [str(daemon.scope_root)]
 
 
 def test_create_directory(daemon: Daemon, tmp_path: Path) -> None:

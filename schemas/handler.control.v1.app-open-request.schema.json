@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/app-open-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/apps/{name}/open`: the page of its UI to open (what an action did, H.12).",
+  "properties": {
+    "path": {
+      "default": "/",
+      "maxLength": 200,
+      "pattern": "^/[A-Za-z0-9/_.~%-]*(\\?[A-Za-z0-9=&_.~%-]*)?$",
+      "title": "Path",
+      "type": "string"
+    }
+  },
+  "title": "AppOpenRequest",
+  "type": "object"
+}

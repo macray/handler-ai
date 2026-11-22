@@ -12,6 +12,12 @@ export function canRecord(): boolean {
   return typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
 }
 
+/** How long it has been recording, as a clock: "0:07", "1:00". */
+export function clock(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 /** Starts recording; `stop` gives the recording (null: nothing was said), `cancel` drops it. */
 export async function record(onLimit: () => void): Promise<Recording> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

@@ -17,6 +17,34 @@ from handler_control import __version__
 from ..support.daemon import Daemon, _free_port
 
 
+def test_setup_warns_of_what_stops_handlerd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user service stops at logout without lingering, and WSL stops Linux a while after its
+    last window closes without `instanceIdleTimeout=-1`: each said, with its fix; neither when
+    set.
+
+    If this fails: "sessions keep running when you close the tab" breaks once you log out of
+    SSH, or close Ubuntu's window, and nothing said why."""
+    linger = {"value": "no"}
+
+    def loginctl(argv: list[str], **_: Any) -> Any:
+        assert argv[:2] == ["loginctl", "show-user"]
+        return type("Done", (), {"stdout": linger["value"] + "\n"})()
+
+    monkeypatch.setattr(daemon_commands.subprocess, "run", loginctl)
+    monkeypatch.setattr(daemon_commands, "wsl", lambda: True)
+    monkeypatch.setattr(daemon_commands, "WSL_CONFIGS", str(tmp_path / "*" / ".wslconfig"))
+    monkeypatch.setenv("USER", "ada")
+    said = daemon_commands.keeps_running()
+    assert said[0].endswith("sudo loginctl enable-linger ada")
+    assert "instanceIdleTimeout=-1" in said[1] and len(said) == 2
+    (tmp_path / "ada").mkdir()
+    (tmp_path / "ada" / ".wslconfig").write_text("[general]\ninstanceIdleTimeout=-1\n")
+    linger["value"] = "yes"
+    assert daemon_commands.keeps_running() == []
+
+
 @pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
 def test_setup_reports_the_runtime_and_the_toolbox(
     daemon: Daemon, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -208,8 +236,9 @@ class FakeBuilds:
                 "systemPackages": [{"name": "podman"}],
             },
             "/v1/toolbox/system-packages": [],
-            "/v1/harnesses": [
-                {"name": n, "product": p, "imagePresent": n in self.built} for n, p in self.PROGRAMS
+            "/v1/harnesses": [{"name": n, "product": p} for n, p in self.PROGRAMS],
+            "/v1/harness-images": [
+                {"name": n, "imagePresent": n in self.built} for n, _ in self.PROGRAMS
             ],
         }
         if path in answers:
@@ -301,6 +330,24 @@ def test_setup_asks_which_program_first(
     fake.started.clear()
     assert setup._setup(cast(Client, fake), cli.parser().parse_args(["setup"])) == 0
     assert fake.started == [] and "agent programs built: Mistral Vibe" in capsys.readouterr().out
+
+
+def test_setup_without_a_terminal_says_it_is_not_finished(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No terminal to ask on and no --yes: nothing built, and setup says it is not finished.
+
+    If this fails: a script (or an agent) running `handler setup` reads "Done." and exit 0, and
+    the first session has no image to run."""
+    fake = FakeBuilds()
+    monkeypatch.setenv("HANDLER_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"asked: {prompt}"))
+    assert setup._setup(cast(Client, fake), cli.parser().parse_args(["setup"])) == 1
+    out = capsys.readouterr().out
+    assert fake.started == [] and "Done." not in out
+    assert "Setup is not finished: the images are not built" in out
+    assert "`handler setup --yes`, which builds the toolbox and Claude Code" in out
 
 
 def test_setup_says_what_it_leaves_to_other_commands(
@@ -442,3 +489,20 @@ def test_the_runtime_is_asked_only_on_a_mac_s_terminal(monkeypatch: pytest.Monke
     monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"asked: {prompt}"))
     setup._choose_runtime(cast(Client, fake), cli.parser().parse_args(["setup"]))
     assert fake.current == "apple" and fake.calls == []
+
+
+def test_no_build_neither_builds_nor_waits_for_the_network_filter(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--no-build builds nothing, the network filter included: setup only says it is missing
+    (handlerd builds it by itself), never starts its build nor follows handlerd's."""
+    calls: list[tuple[str, str]] = []
+
+    class Missing:
+        def call(self, method: str, path: str, body: Any = None) -> Any:
+            calls.append((method, path))
+            return {"imagePresent": False}
+
+    assert setup._network_filter(cast(Client, Missing()), verbose=False, no_build=True) == 0
+    assert calls == [("GET", "/v1/network-filter")]
+    assert "not built yet (--no-build): handlerd builds it by itself" in capsys.readouterr().out

@@ -4,13 +4,102 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="theme-color" content="#0d0f12" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f8f6f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1917" media="(prefers-color-scheme: dark)" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Handler remote</title>
+    <!-- A neutral screen, painted from this page alone before the app's files arrive (a home-screen
+         shortcut has no progress bar: never a blank screen): "Connecting…" in the middle, the
+         tabs' place kept. No tab's shape: the app shows the one last used, which no
+         style can know (the page's policy runs no inline script); the app draws the same
+         (Starting.svelte) until it knows, so nothing on screen moves. The build puts the app's
+         stylesheet and script after it, at the end of <body>: they do not hold this first paint.
+         Light or dark like the OS: the choice kept in the browser (Settings → Appearance) needs a
+         script, so a phone set to the other theme sees it turn at the app's first paint (a known
+         limit). The colours are the app's page (app.css `--page`) and theme.css's text. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f8f6f2;
+        color: #1c1a17;
+        color-scheme: light dark;
+      }
+      #app {
+        height: 100%;
+      }
+      .s-app {
+        height: 100%;
+        background: #f8f6f2; /* its own: the app's stylesheet, come before its script, draws the page light */
+        display: flex;
+        flex-direction: column;
+        font: 15px/1.55 "Inter Variable", "Inter", system-ui, sans-serif;
+        -webkit-text-size-adjust: 100%;
+      }
+      .s-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.75em;
+        line-height: 1.25;
+        color: #66615a;
+        white-space: nowrap;
+      }
+      .s-status i {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: #66615a;
+        animation: s-pulse 1.4s cubic-bezier(0.32, 0.72, 0, 1) infinite alternate;
+      }
+      .s-wait {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding-top: env(safe-area-inset-top);
+      }
+      .s-tabs {
+        height: 57px; /* the tab bar's (TabBar.svelte), its border under it */
+        border-top: 1px solid transparent;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      @keyframes s-pulse {
+        to {
+          opacity: 0.25;
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body,
+        .s-app {
+          background: #1a1917;
+          color: #ece9e4;
+        }
+        .s-status {
+          color: #a39d94;
+        }
+        .s-status i {
+          background: #a39d94;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .s-status i {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="s-app" aria-busy="true">
+        <main class="s-wait"><span class="s-status" role="status"><i></i>Connecting…</span></main>
+        <div class="s-tabs"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

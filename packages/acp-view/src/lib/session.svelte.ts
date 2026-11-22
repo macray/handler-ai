@@ -55,7 +55,8 @@ export function modelText(e: ModelEntry): string {
 }
 
 export type Entry =
-  | { kind: "user"; text: string; images: PromptImage[]; ms?: number } // ms: how long its turn took, when seen
+  // ms: how long its turn took, when seen; told: the agent's instructions, sent before its words
+  | { kind: "user"; text: string; images: PromptImage[]; ms?: number; told?: string }
   | { kind: "agent"; text: string }
   | { kind: "thought"; text: string; ms?: number } // ms: how long it thought, once it went on
   | ToolEntry
@@ -110,12 +111,17 @@ export class SessionState {
   }
 
   private thinking = 0; // when the last thought started (ms)
+  private instructions: string | null = null; // the agent's, for the person's next prompt
 
   /** A new entry; a thought before it has ended (replayed ones end at once: no time said). */
   private push(entry: Entry): void {
     const last = this.entries.at(-1);
     if (last?.kind === "thought" && last.ms === undefined) last.ms = Date.now() - this.thinking;
     if (entry.kind === "thought") this.thinking = Date.now();
+    if (entry.kind === "user" && this.instructions !== null) {
+      entry.told = this.instructions;
+      this.instructions = null;
+    }
     this.entries.push(entry);
   }
 
@@ -193,10 +199,18 @@ export class SessionState {
 
   /** A line of Handler's own (`_handler/line`, F.5): a host refused or held (a new card, or its
    *  card's count raised, its wait ended), the person's answer for it (said on its cards so far),
-   *  Handler's message to the agent (a turn of its own, with every queued answer), or the
+   *  Handler's message to the agent (a turn of its own, with every queued answer), the agent's
+   *  instructions sent before the person's first words (shown folded with them), or the
    *  model's host that does not answer. */
   line(line: Record<string, unknown>): void {
     const { event, host, card, count, decision, until, queued, text, error, provider, local } = line;
+    if (event === "instructed" && typeof text === "string") {
+      // before the person's words in the log; after them here when this client sent them
+      const last = this.entries.at(-1);
+      if (this.inTurn && last?.kind === "user" && last.told === undefined) last.told = text;
+      else this.instructions = text;
+      return;
+    }
     if (event === "told agent" && typeof text === "string") {
       for (const e of this.entries) if (e.kind === "host") e.queued = false;
       this.push({ kind: "told", text });

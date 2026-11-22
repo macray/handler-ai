@@ -6,6 +6,7 @@ Docker's `/.dockerenv`), which a FROM scratch addon image does not hold."""
 import gzip
 import io
 import json
+import platform
 import shutil
 import tarfile
 from collections.abc import Iterator
@@ -31,9 +32,22 @@ def _layers(archive: tarfile.TarFile) -> list[IO[bytes]]:
 
     index = json.load(archive.extractfile("index.json") or io.BytesIO(b"{}"))
     manifest = json.load(blob(index["manifests"][0]["digest"]))
-    if "manifests" in manifest:  # an index of platforms: the first is this machine's
-        manifest = json.load(blob(manifest["manifests"][0]["digest"]))
+    if "manifests" in manifest:  # an index of platforms (Apple lists linux/386 first)
+        manifest = json.load(blob(_this_platform(manifest["manifests"])["digest"]))
     return [blob(layer["digest"]) for layer in manifest["layers"]]
+
+
+def _this_platform(manifests: list[dict]) -> dict:
+    """The entry of an index of platforms for this machine's (linux/amd64, linux/arm64); a lone
+    entry is it (OCI's `platform` is optional)."""
+    if len(manifests) == 1:
+        return manifests[0]
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    for entry in manifests:
+        found = entry.get("platform") or {}
+        if (found.get("os"), found.get("architecture")) == ("linux", arch):
+            return entry
+    raise ImageArchiveError(f"image archive: no linux/{arch} image in its index")
 
 
 def layer_files(archive: tarfile.TarFile) -> Iterator[tarfile.TarFile]:

@@ -19,7 +19,8 @@
   import { Label } from "$lib/components/ui/label";
   import * as NativeSelect from "$lib/components/ui/native-select";
   import FolderPicker from "../components/FolderPicker.svelte";
-  import ModelAccessPicker from "../components/ModelAccessPicker.svelte";
+  import WhoWorksChoice from "../components/WhoWorksChoice.svelte";
+  import { accessOf } from "../lib/access";
   import PageHeader from "../components/PageHeader.svelte";
   import UseChip from "../components/UseChip.svelte";
   import { api, toolboxChanges, type ToolboxChanges } from "../lib/api";
@@ -274,7 +275,15 @@
                       {/if}
                     </div>
                   {/each}
-                  <ModelAccessPicker bind:value={c.model} {area} alone={d.modelAlone ?? false} />
+                  <div class="flex flex-wrap items-center gap-3 text-sm">
+                    <span class="w-44 text-muted-foreground">Who works</span>
+                    <WhoWorksChoice
+                      agent={{ id: "", name: names[i] ?? d.agentName, model: c.model, area, modelAlone: d.modelAlone ?? false }}
+                      own
+                      onchange={(m) => (c.model = accessOf(m))}
+                      unattended={!!d.interface?.result}
+                    />
+                  </div>
                   {#each (d.addons ?? []).filter((n) => comingTools.includes(n)) as addon (addon)}
                     <div class="flex items-start gap-3 rounded-lg bg-muted/60 p-3 text-sm" data-testid="setup-tool-comes">
                       <Wrench class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -291,7 +300,7 @@
                           {#each fit as x (x.name)}<NativeSelect.Option value={x.name}>{x.name}</NativeSelect.Option>{/each}
                         </NativeSelect.Root>
                       {:else}
-                        <span class="text-warn">none yet: make one in <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Tools</a>, then come back</span>
+                        <span class="text-warn">none yet: make one in <a class="text-link hover:underline" href={href({ view: "library", shelf: "tools" })}>Library → Tools</a>, then come back</span>
                       {/if}
                     </div>
                   {/each}

@@ -1,6 +1,6 @@
 apiVersion = "handler.system-package/v1"
 name = "docker"
-version = 1
+version = 2
 description = "Docker, for agents that run containers in their sandbox"
 provides = ["docker", "dockerd-rootless.sh"]
 

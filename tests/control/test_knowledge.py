@@ -42,19 +42,27 @@ def test_listing(daemon: Daemon, root: Path) -> None:
 def test_selection_is_checked(daemon: Daemon) -> None:
     scope = daemon.make_scope()
     with daemon.http() as c:
-        body = {"model": {"account": "echo-box"}, "scope": str(scope), "knowledge": ["../x"]}
+        body = {
+            "model": {"account": "echo-box"},
+            "scope": str(scope),
+            "knowledge": [{"folder": "../x"}],
+        }
         r = c.post("/v1/agents", json=body)
         assert r.status_code == 400 and "outside the notes root" in r.text
 
-    ad_hoc = daemon.create_ad_hoc("echo-box", scope, knowledge=["projects/shop", "me"])
-    assert ad_hoc["knowledge"] == ["me", "projects/shop"]
+    given = [{"folder": "projects/shop", "access": "write"}, {"folder": "me"}]
+    ad_hoc = daemon.create_ad_hoc("echo-box", scope, knowledge=given)
+    assert ad_hoc["knowledge"] == [
+        {"folder": "me", "access": "read"},
+        {"folder": "projects/shop", "access": "write"},
+    ]
     assert daemon.create_ad_hoc("echo-box", scope, name="none")["knowledge"] == []
 
 
 @pytest.mark.rule("notes.read-only-at-its-name")
 def test_agent_reads_knowledge_read_only(daemon: Daemon) -> None:
     require_echo_box()
-    ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), knowledge=["me"])
+    ad_hoc = daemon.create_ad_hoc("echo-box", daemon.make_scope(), knowledge=[{"folder": "me"}])
     client = daemon.connect(ad_hoc["acpUrl"])  # `cat` agent: nothing to initialize
     try:
         container = wait_for_container(ad_hoc["id"])
@@ -62,6 +70,44 @@ def test_agent_reads_knowledge_read_only(daemon: Daemon) -> None:
         assert "summary: My preferences." in read.stdout, read.stderr
         assert podman_exec(container, "ls", "/notes").stdout.split() == ["me"]
         assert podman_exec(container, "touch", "/notes/me/x").returncode != 0
+    finally:
+        client.close()
+
+
+@pytest.mark.rule(
+    "notes.read-only-at-its-name",
+    "notes.agents-never-reach-the-history",
+    "save.widening-is-confirmed",
+)
+def test_agent_writes_a_folder_given_read_write_never_its_git(daemon: Daemon, root: Path) -> None:
+    """A folder given read-write: the agent's writes land in it at once; its own `.git` (a
+    vault's history) stays read-only.
+
+    If this fails: an agent given write access rewrites the vault's git history, or its
+    writes never reach your notes."""
+    require_echo_box()
+    name = f"rw-{uuid.uuid4().hex[:6]}"
+    (root / name / ".git").mkdir(parents=True)
+    (root / name / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    with daemon.http() as c:
+        body = {
+            "model": {"account": "echo-box"},
+            "scope": str(daemon.make_scope()),
+            "knowledge": [{"folder": name, "access": "write"}],
+        }
+        r = c.post("/v1/agents", json=body)
+        assert r.status_code == 409 and r.json()["title"] == "risks not confirmed", r.text
+        assert f"notes {name} read-write" in r.json()["detail"]
+        ad_hoc = c.post("/v1/agents", json=body | {"confirmRisks": True}).json()
+    client = daemon.connect(ad_hoc["acpUrl"])
+    try:
+        container = wait_for_container(ad_hoc["id"])
+        wrote = podman_exec(container, "sh", "-c", f"echo hi > /notes/{name}/new.md")
+        assert wrote.returncode == 0, wrote.stderr
+        assert (root / name / "new.md").read_text() == "hi\n"
+        assert podman_exec(container, "touch", f"/notes/{name}/.git/HEAD").returncode != 0
+        assert podman_exec(container, "rm", "-rf", f"/notes/{name}/.git").returncode != 0
+        assert (root / name / ".git" / "HEAD").read_text() == "ref: refs/heads/main\n"
     finally:
         client.close()
 
@@ -86,9 +132,11 @@ def wait_for_container(agent_id: str, timeout: float = 60) -> str:
 
 
 @pytest.fixture(scope="module")
-def configurable() -> Iterator[Daemon]:
-    """A daemon without HANDLER_NOTES_DIR: the root is set through the API."""
-    yield from start_daemon()
+def configurable(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Daemon]:
+    """A daemon without HANDLER_NOTES_DIR: the root is set through the API, else ~/notes (in a
+    home of its own)."""
+    home = tmp_path_factory.mktemp("home")
+    yield from start_daemon(extra_env={"HANDLER_NOTES_DIR": "", "HOME": str(home)})
 
 
 @pytest.mark.rule("notes.follows-its-root")
@@ -104,6 +152,7 @@ def test_configure_create_browse_read(configurable: Daemon, tmp_path: Path) -> N
     with configurable.http() as c:
         start = c.get("/v1/knowledge").json()  # nothing to set up: the default is made
         assert (start["source"], start["exists"]) == ("default", True)
+        assert start["root"].endswith("/notes") and "handlerd-" not in start["root"]
         check = c.get("/v1/knowledge/check", params={"path": str(vault)})
         assert check.json() == {"root": str(vault), "state": "missing"}
         assert c.get("/v1/knowledge/check", params={"path": "vault"}).status_code == 400
@@ -127,7 +176,11 @@ def test_configure_create_browse_read(configurable: Daemon, tmp_path: Path) -> N
 
         # the new root applies at once to agents
         scope = configurable.make_scope()
-        body = {"model": {"account": "echo-box"}, "scope": str(scope), "knowledge": ["me"]}
+        body = {
+            "model": {"account": "echo-box"},
+            "scope": str(scope),
+            "knowledge": [{"folder": "me"}],
+        }
         assert c.post("/v1/agents", json=body).status_code == 201
 
         assert c.put("/v1/knowledge/root", json={"root": None}).json()["source"] == "default"
@@ -167,7 +220,7 @@ def test_a_folder_changed_since_the_save_fails_the_start(
     its save."""
     name = f"notes-{uuid.uuid4().hex[:6]}"
     (root / name).mkdir()
-    agent = daemon.create_ad_hoc("fake", daemon.make_scope(), knowledge=[name])
+    agent = daemon.create_ad_hoc("fake", daemon.make_scope(), knowledge=[{"folder": name}])
     replace(root / name)
     error = _start_fails(daemon, agent)
     assert name in error

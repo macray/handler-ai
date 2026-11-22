@@ -4,9 +4,9 @@ for the folder picker."""
 import asyncio
 import contextlib
 import os
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import Response
 
 from handler_contracts import (
@@ -17,10 +17,12 @@ from handler_contracts import (
     CreateDirectoryRequest,
     CreateKnowledgeFolderRequest,
     HarnessDescriptor,
+    HarnessImage,
     HarnessInfo,
     Health,
     SandboxRuntime,
     SetKnowledgeRootRequest,
+    is_within,
 )
 from handler_harness import addons as addon_catalog
 from handler_harness import catalog, images
@@ -37,6 +39,7 @@ from .. import (
     toolbox,
     webui,
 )
+from ..apps import AppError
 from ..builds import BuildStore
 from ..settings import Settings
 from .common import (
@@ -108,11 +111,17 @@ def add_catalog_routes(app: FastAPI, ctx: Context) -> None:
         return dump(Health(status="ok", version=__version__, display=display.available()))
 
     @app.get("/v1/harnesses", dependencies=authed)
-    async def list_harnesses() -> Response:
+    def list_harnesses() -> Response:
+        """The harnesses' descriptors (B.1): no runtime call, for every screen naming them."""
+        return dump([harness_info(h) for h in catalog.all_harnesses()])
+
+    @app.get("/v1/harness-images", dependencies=authed)
+    async def list_harness_images() -> Response:
+        """Each harness's image (D.4), asked of the runtime: for the screens that show it."""
         # one runtime process per image: run together, not one after another
         harnesses = catalog.all_harnesses()
         return dump(
-            list(await asyncio.gather(*(asyncio.to_thread(harness_info, h) for h in harnesses)))
+            list(await asyncio.gather(*(asyncio.to_thread(harness_image, h) for h in harnesses)))
         )
 
     @app.get("/v1/addons", dependencies=authed)
@@ -159,10 +168,26 @@ def add_directory_routes(app: FastAPI, ctx: Context) -> None:
     """The folder pickers' (D.13): a folder's sub-folders, those changed last, a new folder."""
     authed = [Depends(ctx.require_auth)]
 
-    @app.get("/v1/directories", dependencies=authed)
-    def list_directories(path: str | None = None) -> Response:
+    def roots(for_: Literal["app"] | None) -> list[str]:
+        """The work folders; for an app's folder (H.9), the notes root too, when it may be given
+        to an app (inside the home, never Handler's own folders)."""
+        found = folders.roots(ctx.settings)
+        if for_ != "app":
+            return found
+        notes = os.path.realpath(knowledge.root(ctx.settings)[0])
         try:
-            return dump(webui.list_directories(folders.roots(ctx.settings), path))
+            ctx.apps.check_folder(notes)
+        except AppError:
+            return found
+        inside = any(is_within(notes, r) for r in found)
+        return found if inside or not os.path.isdir(notes) else [*found, notes]
+
+    @app.get("/v1/directories", dependencies=authed)
+    def list_directories(
+        path: str | None = None, for_: Literal["app"] | None = Query(None, alias="for")
+    ) -> Response:
+        try:
+            return dump(webui.list_directories(roots(for_), path))
         except webui.OutsideRootsError as e:
             raise ProblemError(403, "path not allowed", str(e)) from None
 
@@ -171,11 +196,12 @@ def add_directory_routes(app: FastAPI, ctx: Context) -> None:
         return dump(webui.recent_directories(folders.roots(ctx.settings)))
 
     @app.post("/v1/directories", dependencies=authed)
-    async def create_directory(request: Request) -> Response:
+    async def create_directory(
+        request: Request, for_: Literal["app"] | None = Query(None, alias="for")
+    ) -> Response:
         body = parse_body(CreateDirectoryRequest, await request.body())
         try:
-            roots = folders.roots(ctx.settings)
-            return dump(webui.create_directory(roots, body.parent, body.name), status=201)
+            return dump(webui.create_directory(roots(for_), body.parent, body.name), status=201)
         except webui.OutsideRootsError as e:
             raise ProblemError(403, "path not allowed", str(e)) from None
         except webui.DirectoryExistsError as e:
@@ -191,15 +217,11 @@ def addon_infos(settings: Settings, builds: BuildStore) -> list[AddonInfo]:
 
 
 def harness_info(h: catalog.Harness) -> HarnessInfo:
-    """What `:latest` of the harness image holds — blocking calls to the runtime."""
-    latest = runtime.inspect(images.ref(h.descriptor.image, images.LATEST))
+    """What the harness's descriptor says (B.1)."""
     return HarnessInfo(
         name=h.name,
         product=h.descriptor.product,
         image=h.descriptor.image,
-        image_present=latest is not None,
-        version=runtime.version(latest.id, images.version_file(h)) if latest else None,
-        built_at=latest.created if latest else None,
         provider_protocols=list(h.descriptor.provider_protocols),
         login=h.descriptor.login,
         login_file=login_file(h.descriptor),
@@ -208,6 +230,18 @@ def harness_info(h: catalog.Harness) -> HarnessInfo:
             mode: m.session_mode for mode, m in h.descriptor.permissions.items() if m.session_mode
         },
         account_connectors=h.descriptor.account_connectors is not None,
+    )
+
+
+def harness_image(h: catalog.Harness) -> HarnessImage:
+    """What `:latest` of the harness image holds — blocking calls to the runtime."""
+    latest = runtime.inspect(images.ref(h.descriptor.image, images.LATEST))
+    return HarnessImage(
+        name=h.name,
+        image=h.descriptor.image,
+        image_present=latest is not None,
+        version=runtime.version(latest.id, images.version_file(h)) if latest else None,
+        built_at=latest.created if latest else None,
     )
 
 
@@ -230,6 +264,8 @@ def addon_info(settings: Settings, builds: BuildStore, name: str) -> AddonInfo:
     info = AddonInfo(
         name=m.name,
         description=m.description,
+        connect=addon.connect,
+        connection_check=m.connection_check,
         image=m.image,
         commands=m.commands,
         needs=m.needs,

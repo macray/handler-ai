@@ -42,7 +42,8 @@
   };
   // what a confirmation lists: a cache (its colour; none: what a removed one left) and its size
   type Line = { name: string; color: string | null; size: number };
-  type Ask = { title: string; lines: Line[]; note: string; label: string; danger: boolean; action: () => Promise<void> };
+  // emptied: the folders the action leaves empty (0 bytes, not measured again)
+  type Ask = { title: string; lines: Line[]; note: string; label: string; danger: boolean; emptied: string[]; action: () => Promise<void> };
 
   // one colour per cache, in the toolbox's order (the dataviz reference palette's)
   const PALETTE = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#6250d6", "#0e9fb3", "#c4532b", "#7a8a1e"];
@@ -190,15 +191,18 @@
     if (!ask) return;
     busy = true;
     askError = null;
+    const emptied = ask.emptied;
     try {
       await ask.action();
       asking = false;
+      // what was emptied takes nothing: measuring every folder again would take seconds
+      if (sizes) sizes = { ...sizes, ...Object.fromEntries(emptied.map((f) => [f, 0])) };
     } catch (e) {
       askError = (e as Error).message;
+      await measure(); // some may be emptied (freeing a cache's leftovers in several places)
     } finally {
       busy = false;
     }
-    await measure();
   }
 
   function remove(c: CacheInfo): void {
@@ -209,6 +213,7 @@
       note: `New sessions start without ${c.target}.${left ? ` Its files (${formatBytes(left)}) stay until freed.` : ""}`,
       label: "Stop keeping",
       danger: true,
+      emptied: [],
       action: async () => {
         info = await api.setCaches(own().filter((d) => d.target !== c.target));
       },
@@ -226,6 +231,7 @@
       note: "Tools download and build them again when needed.",
       label: `Empty ${formatBytes(totalOf(p))}`,
       danger: true,
+      emptied: [...Object.values(p.caches), ...Object.values(p.removed)],
       action: p.emptyAll,
     });
   }
@@ -237,6 +243,7 @@
       note: "Tools download and build it again when needed.",
       label: `Empty ${formatBytes(sizeOf(p.caches[cache] ?? ""))}`,
       danger: true,
+      emptied: [p.caches[cache] ?? ""],
       action: () => p.emptyOne(cache),
     });
   }
@@ -249,6 +256,7 @@
       note: `${cache} is no longer kept. Other caches stay.`,
       label: `Free ${formatBytes(size)}`,
       danger: false,
+      emptied: where.map((w) => w.place.removed[cache] ?? ""),
       action: async () => {
         for (const w of where) await w.place.emptyOne(cache);
         info = await api.caches();

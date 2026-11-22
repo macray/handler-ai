@@ -10,6 +10,8 @@ An **automation** is *when this happens, run that*. **When**: a session stops, o
   folder. A finding that comes back often is the one to fix.
 - **one of your agents** (an agent with a form and a result): every hour, review this project's
   code. Its result comes to your **inbox**.
+- **one of your apps' jobs**: every Thursday, the CV app's job looks at your CV and asks you what
+  is missing. Its result comes to your inbox and goes back to the app.
 - **a route of one of your apps**: every weekday at 08:30, the coach app reads your agenda and
   notifies you.
 
@@ -35,7 +37,7 @@ It is saved as `~/.config/handler-ai/automations/<name>/automation.toml`: a file
 for you to read and edit. **Change** on its page opens it in the same form again (saving there
 replaces what you wrote in the file by hand, comments too); one that is on stays on.
 **Library → Automations** lists every automation, a row each: when, what it runs (an agent by its
-name, an app's route, your script), where (its project, its app, every project), its last result,
+name, an app's job or route, your script), where (its project, its app, every project), its last result,
 and a switch (off at once; on from its page, which says what it will do first). Filter them by
 what they run; **Pause all** turns every one off. A project's **Automations** tab lists the same
 rows for those that run its agents, then, faintly, those that also run on it (a script read when
@@ -49,7 +51,7 @@ handler automation examples                    # what handler ships
 handler automation new env-issues --from env-issues
 ```
 
-or the web UI: **Library → Automations → Get more** → the example → **Use it**. It is copied to
+or the web UI: **Library → Automations → Community** → the example → **Use it**. It is copied to
 `~/.config/handler-ai/automations/env-issues/`, **off**. Then:
 
 1. Edit `automation.toml` in your editor: the model it calls (`services.llm`, one of your
@@ -99,12 +101,13 @@ name another agent, and Handler reads that name again.
 it, what runs and what it may reach, where results go. Turning it on is your approval; while it
 is on, your edits of its files apply at its next run. Only you turn one on (the web UI, `handler`):
 never an agent, never anything in a sandbox, and no agent can write its files (Handler never gives a
-sandbox its own config folder).
+sandbox its own config folder). An app's suggested automations are turned on at its install, those
+you left switched on on its install page ([apps](apps.md#automations-it-suggests)).
 
 ## At a time
 
 ```toml
-when = { every = "1h" }                          # "30m", "2h": at least 5 minutes
+when = { every = "1h" }                          # "30m", "2h", "1d": at least 5 minutes
 when = { at = "08:30" }                          # every day, your local time
 when = { at = "08:30", days = ["mon", "fri"] }   # those days only
 ```
@@ -153,8 +156,8 @@ session of the agent, started by the automation: open it from the run to see wha
 **A host blocked by the network filter.** A run that failed after the filter blocked a host says
 so: "pypi.org:443 was blocked by the network filter", not the agent's guess. One that completed
 without some hosts says "Completed, with 1 host refused", how many times, what the agent did
-instead, and needs a look. The run and its inbox message offer **Allow and run again** (the host
-allowed for the agent, then a try) and **Keep blocked**.
+instead, and needs a look. The run and its inbox message offer **Allow pypi.org:443 for Reviewer, run
+again** (the host allowed for the agent, then a try) and **Keep blocked**.
 
 **One run at a time.** While the agent is already running (another automation's run, one you
 started), this one waits for it, then runs; after 30 minutes of waiting it fails, and your inbox
@@ -178,6 +181,21 @@ accounts screen, per vendor, after Handler read their terms:
 - **refused**: it does not run (today: a Claude subscription, which Handler uses for interactive
   sessions only): give the agent a provider (an API key) first.
 
+## Running one of your apps' jobs
+
+```toml
+when = { at = "09:00", days = ["thu"] }
+run = { app = "cv", job = "enhance", input = { fields = {} } }   # its form, as the app says
+```
+
+An app's [job](apps.md#its-jobs) runs by the Who works you chose for it on the app's page, with
+what the app lets it reach (its *Can do*), on its own and unattended; its result comes to your
+inbox, opening the app, and goes back to the app. Its model follows the same terms as an agent's
+(below): a subscription that refuses runs nobody follows cannot run it, so choose an API key as
+its Who works. While a run of the app writes the same folder, it waits for its turn. Such an
+automation is made from the app's page (*Runs by itself*: the ones it suggests, **Make it**), or
+written in its file; its page in the Library turns it on and off, as any other.
+
 ## Calling one of your apps
 
 ```toml
@@ -190,8 +208,8 @@ automation's name); an error answer is a failed run. What the app notifies comes
 
 ## Your inbox
 
-What Handler tells you, newest first: your apps' notifications, your agents' results (run by an
-automation, or by one of your apps on your request), the runs that failed (not a script's try:
+What Handler tells you, newest first: your apps' notifications and what they ask you to do, your
+agents' results (run by an automation), your apps' jobs' results, the runs that failed (not a script's try:
 you watched it), the [plans](plans.md) that stopped, and the hosts the network filter blocked while
 you were away (*Allow* or *Keep blocked*: the agent is told your answer). A message tied to an app has a button that opens it. The **Inbox** page in the
 web UI (reached from the bell, which counts the runs that failed), `handler inbox`, your paired phone; a message for you is also shown on your desktop and pushed, content-free, to

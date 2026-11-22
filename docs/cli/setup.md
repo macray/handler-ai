@@ -16,7 +16,11 @@ handler setup [--no-build] [--yes] [--program NAME] [--runtime NAME] [--engine p
 
 It goes through, in order:
 
-1. installs `handlerd` as a user service and starts it (systemd; launchd on macOS) ([`daemon install`](daemon.md));
+1. installs `handlerd` as a user service and starts it (systemd; launchd on macOS) ([`daemon install`](daemon.md)).
+   With systemd, a `warn` line says what would stop it besides you, with the fix: logging out
+   (or closing your last SSH session) when lingering is off (`sudo loginctl enable-linger
+   $USER`), and on WSL, Linux stopping after its last window closes (`instanceIdleTimeout=-1`
+   in `.wslconfig`, [Windows](../windows.md#2-keep-linux-running-when-its-window-closes));
 2. on a Mac, before the images are first built: asks where agents run, when more than one can run
    them there: Apple's `container` (the default, each sandbox a virtual machine of its own) and
    Docker (Docker Desktop or OrbStack, when it runs), each with what a sandbox is there. Enter
@@ -27,14 +31,17 @@ It goes through, in order:
    pull: `pacman -S docker-buildx`): fix each `FAIL` line, then run it again. A
    `warn` line names what only some agents need (fewer subordinate ids than 65535: agents that run
    containers, and apps), and setup goes on;
-4. builds the network filter if it is missing (about 240 MB, a minute or two);
+4. builds the network filter if it is missing (about 240 MB, a minute or two); with `--no-build`,
+   only says it is missing: `handlerd` builds it by itself in the background when it starts;
 5. builds the images if the toolbox or no agent program is built yet: first asks which
    engine agents that run containers use, Podman (the default) or Docker, and which agent program
    you want first (Claude Code, Codex, pi or Mistral Vibe); then the toolbox and that program
    only: about 1 GB, from a minute on a fast network to a quarter of an hour on a slow one. It
    prints one line per image with a time estimate, `toolbox 1/2 · ~3 min`, and writes the full log
    to a file it names. Each other agent program is built the first time an agent needs it (the
-   session's *Prepare now*), or in Settings → Expert → Sandboxes (`handler image rebuild NAME`);
+   session's *Prepare now*), or in Settings → Expert → Sandboxes (`handler image rebuild NAME`).
+   Run from a script, with no terminal to ask on, it builds them only with `--yes`: without it,
+   it says setup is not finished and exits 1;
 6. prints where the web UI is.
 
 Without a systemd user session (a server, `su`, a container, WSL without systemd), systemd only
@@ -46,7 +53,7 @@ one for the machine check only, and stops it after.
 
 | Option | |
 |---|---|
-| `--no-build` | skip the images; build them later with `handler setup` again |
+| `--no-build` | build nothing now, nor wait for the network filter `handlerd` builds by itself; build the images later with `handler setup` again |
 | `--yes` | build the images without asking (the runtime in use, unless `--runtime`; Podman for agents that run containers, unless `--engine`; Claude Code, unless `--program`) |
 | `--program NAME` | the agent program to build first: `claude-code`, `codex`, `pi` or `vibe`. Used while no agent program is built yet; later, [`handler image rebuild NAME`](image.md) builds another |
 | `--runtime NAME` | where agents run, chosen without asking: `apple` or `docker` on a Mac, `podman` or `docker` on Linux (`handler runtime list` names them; Docker needs its buildx plugin, [runtime](runtime.md)) |

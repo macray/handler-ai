@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -85,6 +86,12 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     return one
 
 
+@pytest.mark.rule(
+    "network.filtered-fails-closed",
+    "sandbox.hardened-by-default",
+    "sandbox.work-folder-at-the-same-path",
+    "sandbox.runs-as-the-host-user",
+)
 def test_a_filtered_sandbox_has_no_network_and_runs_through_the_relay(sandbox: Sandbox) -> None:
     args = sandbox.args()
     for expected in (
@@ -125,6 +132,7 @@ def test_a_filtered_sandbox_has_no_network_and_runs_through_the_relay(sandbox: S
     assert command[3:7] == ["--user", uid, "--host", launch.HOST_SOCKET]
 
 
+@pytest.mark.rule("sandbox.runs-as-the-host-user")
 def test_an_open_sandbox_without_secrets_has_the_relay_only_become_the_user(
     sandbox: Sandbox,
 ) -> None:
@@ -141,6 +149,7 @@ def test_an_open_sandbox_without_secrets_has_the_relay_only_become_the_user(
     ]  # fmt: skip
 
 
+@pytest.mark.rule("runtime.an-image-id-is-a-reference")
 def test_a_sandbox_of_an_image_id_runs_it_by_its_name(
     sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -181,6 +190,7 @@ def test_an_ended_sandbox_is_not_one_waiting_for_its_attach(
     assert launch.Apple().status("x") == seen
 
 
+@pytest.mark.rule("sandbox.stdio-is-the-agent-s-stream")
 def test_a_terminal_s_exit_code_is_the_one_its_attach_got(
     monkeypatch: pytest.MonkeyPatch, sandbox: Sandbox
 ) -> None:
@@ -233,6 +243,7 @@ def test_a_memory_limit_below_the_minimum_is_raised_to_it(
     assert ("raised to 200m" in capsys.readouterr().err) == said
 
 
+@pytest.mark.rule("sandbox.gives-its-files-tools-and-kept-files")
 def test_handler_s_own_folders_hold_their_files_and_mount_points(sandbox: Sandbox) -> None:
     """The paste helper and handler-sandbox-env at their paths, the paste folder's mount point:
     no image has these folders, the instance's are mounted read-only before what is in them."""
@@ -257,6 +268,7 @@ def test_handler_s_own_folders_hold_their_files_and_mount_points(sandbox: Sandbo
     assert f"type=bind,source={opt},target=/opt/handler,readonly" in order
 
 
+@pytest.mark.rule("sandbox.refuses-what-it-cannot-enforce")
 def test_a_kept_file_must_be_alone_in_its_folder(tmp_path: Path) -> None:
     """U2b: its folder is mounted, so it must hold nothing else (A.1), else refused (A1)."""
     (tmp_path / "login").mkdir()
@@ -269,6 +281,7 @@ def test_a_kept_file_must_be_alone_in_its_folder(tmp_path: Path) -> None:
         check_enforceable(launch.Apple(), spec(tmp_path, keptFiles=kept))
 
 
+@pytest.mark.rule("sandbox.gives-its-files-tools-and-kept-files")
 def test_a_kept_file_is_its_folder_mounted_and_a_link(sandbox: Sandbox) -> None:
     folder = Path(sandbox.spec.workdir).parent / "config_json"
     folder.mkdir()
@@ -287,7 +300,6 @@ def test_a_kept_file_is_its_folder_mounted_and_a_link(sandbox: Sandbox) -> None:
 @pytest.mark.parametrize(
     ("change", "said"),
     [
-        ({"isolation": "nested"}, ": nested "),
         ({"isolation": "privileged"}, ": privileged "),
         ({"display": True}, ": display "),
     ],
@@ -297,6 +309,13 @@ def test_what_it_cannot_give_yet_is_refused(
 ) -> None:
     with pytest.raises(UnenforceableError, match=said):
         check_enforceable(launch.Apple(), spec(tmp_path, **change))
+
+
+@pytest.mark.rule("runtime.declares-only-what-it-gives")
+def test_nested_is_given(tmp_path: Path) -> None:
+    """Each sandbox is a VM of its own: an engine inside loosens only that one (A.5)."""
+    assert launch.Apple().abilities() == frozenset({"nested"})
+    check_enforceable(launch.Apple(), spec(tmp_path, isolation="nested"))
 
 
 @pytest.mark.rule("runtime.an-image-verb-says-what-it-did")
@@ -319,7 +338,7 @@ def test_buildkit_progress_becomes_steps(
             return 0
 
     monkeypatch.setattr(images.subprocess, "Popen", lambda *a, **k: Proc())
-    assert images._build(["."]) == 0
+    assert images._build(["."])[0] == 0
     out = capsys.readouterr().out.splitlines()
     assert "STEP 2/3: RUN pacman -Syu" in out and "STEP 3/3: COPY bin /bin" in out
     assert "STEP 1/3: FROM docker.io/library/fedora:latest" in out
@@ -392,6 +411,7 @@ def answering(
     monkeypatch.setattr(module, "container", run)
 
 
+@pytest.mark.rule("sandbox.sweep-spares-live-launchers")
 def test_a_sandbox_s_labels_are_read_from_list() -> None:
     """sweep's labels: which launcher made it, its sandbox."""
     filt, agent = recorded("list.json")
@@ -400,6 +420,7 @@ def test_a_sandbox_s_labels_are_read_from_list() -> None:
     assert container.labels_of(filt)[launch.LAUNCHER_LABEL].startswith("13087:")
 
 
+@pytest.mark.rule("runtime.removes-only-an-unused-image")
 def test_the_image_a_running_container_runs_from_is_read_from_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -457,6 +478,7 @@ def test_an_image_s_env_and_entrypoint_are_this_mac_s_variant(
     assert launch.Apple()._entrypoint("x") == entrypoint
 
 
+@pytest.mark.rule("network.the-computer-is-reachable-by-name")
 def test_the_mac_s_address_is_read_from_the_default_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -487,6 +509,7 @@ def test_a_socket_path_too_long_is_said(monkeypatch: pytest.MonkeyPatch, tmp_pat
         ("26.1", "x86_64", False, "needs a Mac with Apple silicon; use Docker Desktop"),
     ],
 )
+@pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
 def test_check_says_what_to_do_on_a_mac_apple_container_cannot_use(
     macos: str, machine: str, ok: bool, says: str | None
 ) -> None:
@@ -494,6 +517,93 @@ def test_check_says_what_to_do_on_a_mac_apple_container_cannot_use(
     item = check.macos_item(macos, machine)
     assert item.ok is ok and item.required
     assert (says or "") in item.detail and ("handler runtime use docker" in item.detail) is not ok
+
+
+@pytest.mark.parametrize(("hv_support", "ok"), [("1\n", True), ("0\n", False), ("", True)])
+@pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
+def test_check_fails_on_a_mac_that_cannot_run_virtual_machines(hv_support: str, ok: bool) -> None:
+    """macOS in a virtual machine (no nested virtualization for macOS guests): every build would
+    fail with Apple's "Virtualization is not available"; the check says so before, not "Ready".
+    A Mac whose sysctl does not answer is not said to fail."""
+    item = check.virtualization_item(hv_support)
+    assert item.ok is ok and item.required
+    assert ("is it a virtual machine itself?" in item.detail) is not ok
+
+
+@pytest.mark.parametrize(
+    ("running", "elsewhere", "says"),
+    [
+        (True, False, "running;"),
+        (False, True, "running in another session"),
+        (False, False, "not running: `container system start`"),
+    ],
+)
+@pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
+def test_check_says_when_apple_s_service_runs_where_handler_does_not_reach_it(
+    running: bool, elsewhere: bool, says: str
+) -> None:
+    """Started over SSH, the service runs in launchd's `user/<uid>` session, which handlerd (in
+    the desktop's) does not reach: said so, with how to bring it here, not "start it", the very
+    command the person just ran."""
+    item = check.service_item(running, elsewhere)
+    assert item.ok is running and item.required and says in item.detail
+
+
+@pytest.mark.parametrize(
+    ("wants", "installed", "ok"),
+    [(True, True, True), (True, False, False), (False, False, True), (False, True, True)],
+)
+@pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
+def test_check_asks_for_rosetta_only_where_apple_s_builder_needs_it(
+    wants: bool, installed: bool, ok: bool
+) -> None:
+    """A fresh Mac has no Rosetta, and Apple container's builder (its `build.rosetta`, on by
+    default) refuses to start without: the first build failed "Rosetta is not installed"."""
+    item = check.rosetta_item(wants, installed)
+    assert item.ok is ok and item.required
+    assert ("softwareupdate --install-rosetta" in item.detail) is not ok
+
+
+@pytest.mark.parametrize(
+    ("listed", "wants"),
+    [
+        ('{"build": {"rosetta": true, "cpus": 2}}', True),
+        ('{"build": {"rosetta": false}}', False),
+        ('{"build": {}}', True),  # Apple's default
+        ("not json", True),
+        (None, True),  # `container` did not answer
+    ],
+)
+def test_whether_apple_s_builder_wants_rosetta_is_read_from_its_properties(
+    monkeypatch: pytest.MonkeyPatch, listed: str | None, wants: bool
+) -> None:
+    def run(*argv: str) -> subprocess.CompletedProcess[str] | None:
+        assert argv == ("container", "system", "property", "list", "--format", "json")
+        return None if listed is None else subprocess.CompletedProcess(argv, 0, listed, "")
+
+    monkeypatch.setattr(check, "_quiet_run", run)
+    assert check._builder_wants_rosetta() is wants
+
+
+@pytest.mark.rule("runtime.an-image-verb-says-what-it-did")
+def test_a_failed_build_says_apple_s_innermost_reason() -> None:
+    """Apple's error nests its causes three deep: the reason said is the Virtualization
+    framework's own, as it came on a Mac without virtualization (a macOS virtual machine)."""
+    reason = images.AppleReason()
+    reason.feed(
+        'Error: internalError: "failed to bootstrap container" (cause: "internalError: "failed to '
+        'bootstrap container buildkit (cause: "unknown: "Error Domain=VZErrorDomain Code=2 '
+        '"Virtualization is not available on this hardware." UserInfo={NSLocalizedFailure=Invalid '
+        "virtual machine configuration., NSLocalizedFailureReason=Virtualization is not available "
+        'on this hardware.}"")"")\n'
+    )
+    reason.feed("handler-sandbox-apple: the network filter's build failed\n")  # not an error line
+    assert reason.said("the network filter's build failed") == (
+        "the network filter's build failed: Virtualization is not available on this hardware"
+    )
+    other = images.AppleReason()
+    other.feed("Error: no space left on device\n")  # nothing nested: as it is
+    assert other.text == "no space left on device"
 
 
 @pytest.mark.rule("runtime.removes-only-an-unused-image")
@@ -530,6 +640,7 @@ def test_a_later_build_prunes_old_unused_images_only_a_build_tag_names(
     assert deleted == [("image", "delete", "localhost/handler-ai-build:1")]
 
 
+@pytest.mark.rule("runtime.a-start-the-engine-refused-says-what-to-do")
 def test_a_folder_in_a_place_macos_protects_is_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -555,6 +666,7 @@ def test_a_folder_in_a_place_macos_protects_is_found(
     assert launch.protected(spec(tmp_path / "code" / "app")) == []
 
 
+@pytest.mark.rule("runtime.a-start-the-engine-refused-says-what-to-do")
 @pytest.mark.parametrize(
     ("in_icloud", "status", "says"),
     [(True, "waiting", True), (True, "running", False), (False, "waiting", False)],
@@ -580,6 +692,37 @@ def test_a_start_refused_a_protected_folder_says_what_to_do(
         assert str(folder) in why and "iCloud Drive" in why and "Files & Folders" in why
 
 
+@pytest.mark.rule("runtime.apple-service-started-with-handlerd")
+@pytest.mark.parametrize(
+    ("running", "fails", "said"),
+    [
+        (True, False, None),  # running: left alone, nothing said
+        (False, False, "Apple's container service started"),
+        (False, True, "could not be started: container system failed: no kernel"),
+    ],
+)
+def test_handlerd_s_start_starts_apple_s_service_when_it_is_not_running(
+    monkeypatch: pytest.MonkeyPatch, running: bool, fails: bool, said: str | None
+) -> None:
+    """After a restart of the Mac, Apple's service is gone: handlerd's `start-engine` starts it,
+    never asking nor downloading a kernel; one that runs is not touched; a start that fails is
+    said, for handlerd's log."""
+    calls: list[tuple[str, ...]] = []
+
+    def run(*args: str, **kwargs: Any) -> str:
+        calls.append(args)
+        if fails:
+            raise container.ContainerError("container system failed: no kernel")
+        return ""
+
+    monkeypatch.setattr(launch, "service_running", lambda: running)
+    monkeypatch.setattr(launch, "container", run)
+    answer = launch.Apple().start_engine()
+    assert (answer is None) if said is None else (answer is not None and said in answer)
+    assert calls == ([] if running else [("system", "start", "--disable-kernel-install")])
+
+
+@pytest.mark.rule("runtime.a-start-the-engine-refused-says-what-to-do")
 @pytest.mark.parametrize("ran", [True, False])
 def test_a_sandbox_apple_s_service_stopped_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ran: bool
@@ -598,15 +741,25 @@ def test_a_launch_first_sweeps_what_dead_launchers_left(
     monkeypatch: pytest.MonkeyPatch, sandbox: Sandbox
 ) -> None:
     """A sandbox Apple's stopped service kept its launcher from deleting is gone at the next
-    launch, not only at handlerd's next start; a live launcher's is kept."""
+    launch, not only at handlerd's next start, its disk merged into its caches then removed; a
+    live launcher's are kept."""
+    owners = (("handler-dead", "1:0"), ("handler-live", launcher_label()))
     listed = [
         {"configuration": {"labels": {
             launch.MANAGED_LABEL: "1", launch.SANDBOX_LABEL: name, launch.LAUNCHER_LABEL: owner,
         }}}
-        for name, owner in (("handler-dead", "1:0"), ("handler-live", launcher_label()))
+        for name, owner in owners
+    ]  # fmt: skip
+    disks = [
+        (f"{name}-disk", {launch.LAUNCHER_LABEL: owner, launch.SANDBOX_LABEL: name,
+                          launch.CACHES_LABEL: '["/c"]'})
+        for name, owner in owners
     ]  # fmt: skip
     calls: list[tuple[str, ...]] = []
+    merged: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(launch, "containers", lambda: listed)
+    monkeypatch.setattr(launch, "disks", lambda: disks)
+    monkeypatch.setattr(launch, "merge_and_remove", lambda d, s: merged.append((d, s)))
     monkeypatch.setattr(launch, "quiet", lambda *args: calls.append(args))
     monkeypatch.setattr(launch, "container", lambda *args, **kwargs: calls.append(args) or "")
     monkeypatch.setattr(launch, "protected", lambda spec: [])
@@ -616,6 +769,7 @@ def test_a_launch_first_sweeps_what_dead_launchers_left(
         ("delete", "--force", "handler-dead"),
         ("delete", "--force", "handler-dead-proxy"),
     ]
+    assert merged == [("handler-dead-disk", ["/c"])]
     assert calls[2][0] == "create" and not any("handler-live" in c for c in calls)
 
 
@@ -651,6 +805,7 @@ def test_a_socket_folder_is_the_vm_s_own_its_sockets_through_the_relay(
     assert apple.relay_serves == {"s0/app.sock": source / "app.sock"}
 
 
+@pytest.mark.rule("sandbox.refuses-what-it-cannot-enforce")
 def test_a_socket_folder_whose_paths_are_too_long_for_macos_is_refused(tmp_path: Path) -> None:
     """If this fails: the launcher's listener cannot be made, and the sandbox starts unreachable."""
     deep = tmp_path / ("x" * 100)
@@ -659,6 +814,7 @@ def test_a_socket_folder_whose_paths_are_too_long_for_macos_is_refused(tmp_path:
         launch.Apple().refuse(spec(tmp_path, socketFolders=[folder]))
 
 
+@pytest.mark.rule("image.the-network-filter-is-built-when-missing")
 @pytest.mark.parametrize(
     "case",
     [
@@ -666,26 +822,32 @@ def test_a_socket_folder_whose_paths_are_too_long_for_macos_is_refused(tmp_path:
         pytest.param((False, None, False), id="relay-missing"),
         pytest.param((True, None, False), id="relay-of-an-earlier-handler"),
         pytest.param((True, "other", False), id="relay-of-other-sources"),
+        pytest.param(("handler-relay",), id="overlay-program-missing"),
     ],
 )
 def test_the_filter_counts_as_built_only_with_its_current_relay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    case: tuple[bool, str | None, bool],
+    case: tuple[bool, str | None, bool] | tuple[str],
 ) -> None:
     """The image is per account, the relay per HOME, and a relay from an earlier Handler may
-    lack a flag the launcher gives it (`--serve`): either missing, handlerd builds both (D.4).
+    lack a flag the launcher gives it (`--serve`), or the caches' overlay program beside it:
+    either missing, handlerd builds both (D.4).
     If this fails: every session fails with "handler-relay is missing", or an app with
-    "flag provided but not defined"."""
-    relay_file, digest, built = case
+    "flag provided but not defined", or a sandbox with caches cannot mount them."""
+    if len(case) == 1:  # only these files, from the current sources
+        files, digest, built = case, "current", False
+    else:
+        files = images.RELAY_FILES if case[0] else ()
+        digest, built = case[1], case[2]
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setattr(
         images, "info_of", lambda ref: {"id": "a" * 64, "created": "2026-11-10T00:00:00Z"}
     )
     launch.relay_dir().mkdir(parents=True)
-    if relay_file:
-        (launch.relay_dir() / "handler-relay").touch()
+    for name in files:
+        (launch.relay_dir() / name).touch()
     if digest is not None:
         value = images.relay_source_digest() if digest == "current" else "0" * 64
         (launch.relay_dir() / images.RELAY_SOURCE).write_text(value + "\n")
@@ -719,6 +881,7 @@ def test_a_file_is_given_by_a_link_in_a_folder_holding_only_it(
     assert launch.protected(one.spec) == []  # Apple's helper never reads where it is
 
 
+@pytest.mark.rule("sandbox.a-file-given-outlives-its-sandbox")
 def test_removing_a_sandbox_given_a_file_leaves_the_file(sandbox: Sandbox, tmp_path: Path) -> None:
     """Its folder is made read-only (no file replaced nor added in it), then removed with the
     instance: the link goes, the file stays, its mode untouched.
@@ -777,6 +940,7 @@ def test_a_file_that_cannot_be_given_alone_is_refused(
         launch.Apple().refuse(spec(tmp_path, folders=folders))
 
 
+@pytest.mark.rule("app-need.a-file-given-is-that-file")
 def test_a_file_in_a_folder_holding_another_mount_gets_its_mount_point_parents_first(
     sandbox: Sandbox, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -801,3 +965,31 @@ def test_a_file_in_a_folder_holding_another_mount_gets_its_mount_point_parents_f
     linked = one.dir / "given" / "0"
     assert sorted(p.name for p in linked.iterdir()) == ["data", "todo.md"]  # its mount point
     assert not any((linked / "data").iterdir())
+
+
+@pytest.mark.rule("cache.on-apple-additions-merged-even-after-a-crash")
+def test_a_disk_is_merged_by_one_launcher_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two launchers sweeping at once both find a dead launcher's disk. If this fails: the
+    second's merge VM makes the disk again, empty (`container run --volume` makes a missing
+    one), and it stays on the Mac."""
+    import fcntl  # noqa: PLC0415
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    merged: list[str] = []
+    monkeypatch.setattr(launch, "_merge_and_remove", lambda d, s: merged.append(d))
+    present = [("d-disk", {})]
+    monkeypatch.setattr(launch, "disks", lambda: present)
+    lock_dir = launch.runtimes_dir() / "disks"
+    lock_dir.mkdir(parents=True)
+    with (lock_dir / "d-disk.lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)  # another launcher merging it
+        launch.merge_and_remove("d-disk", ["/c"])
+    assert merged == []
+    present.clear()  # merged and removed meanwhile
+    launch.merge_and_remove("d-disk", ["/c"])
+    assert merged == []
+    present.append(("d-disk", {}))
+    launch.merge_and_remove("d-disk", ["/c"])
+    assert merged == ["d-disk"]

@@ -1,5 +1,5 @@
-"""App routes: install an app file and export one (H.15), give its needs (secrets, folders,
-agents), deploy, roll back, stop, open, log (H). An app from a source: sources.py (D.26)."""
+"""App routes: install an app file and export one (H.15), give its needs (secrets, folders) and
+who works on its jobs, deploy, roll back, stop, open, log (H). An app from a source: sources.py (D.26)."""
 
 import contextlib
 from collections.abc import Iterator
@@ -10,14 +10,19 @@ from fastapi.responses import Response
 
 from handler_contracts import (
     ActionRequest,
+    AppAskRequest,
     AppLink,
     AppLog,
+    AppOpenRequest,
     AutomationAppCall,
-    SetAppAgentRequest,
-    SetAppAskableRequest,
+    AutomationJobRun,
+    NudgeOffRequest,
+    NudgeSettingRequest,
+    NudgeWhenRequest,
     SetAppFileRequest,
     SetAppPersonsRequest,
     SetAppSecretRequest,
+    WhoWorks,
 )
 
 from ..apps import AppError, AppNotFoundError, DeployError, InputError
@@ -40,21 +45,42 @@ def app_problems(title: str) -> Iterator[None]:
 
 
 def add_app_action_routes(app: FastAPI, ctx: Context) -> None:
-    """An app's actions, what the person asks it (H.12): done now, or its agent's run read
+    """An app's actions, what the person asks it (H.12): done now, or its job's run read
     again."""
     authed = [Depends(ctx.require_auth)]
 
-    @app.put("/v1/apps/{name}/askable", dependencies=authed)
-    async def set_app_askable(name: str, request: Request) -> Response:
-        body = parse_body(SetAppAskableRequest, await request.body())
+    @app.put("/v1/apps/{name}/ask", dependencies=authed)
+    async def set_app_ask(name: str, request: Request) -> Response:
+        body = parse_body(AppAskRequest, await request.body())
         with app_problems("app"):
-            return dump(ctx.apps.set_askable(name, body.askable))
+            return dump(ctx.apps.set_ask(name, body.not_in_ask))
 
     @app.post("/v1/apps/{name}/actions/{action}", dependencies=authed)
     async def act(name: str, action: str, request: Request) -> Response:
         body = parse_body(ActionRequest, await request.body())
         with app_problems("cannot ask this app"):
-            return dump(await ctx.apps.act(name, action, body.fields))
+            return dump(await ctx.apps.act(name, action, body.fields, body.nudge))
+
+    @app.put("/v1/apps/{name}/nudges/{nudge}", dependencies=authed)
+    async def set_nudge_setting(name: str, nudge: str, request: Request) -> Response:
+        """How that nudge reminds you (H.17): held for its next ones."""
+        body = parse_body(NudgeSettingRequest, await request.body())
+        with app_problems("app"):
+            return dump(ctx.apps.set_nudge_setting(name, nudge, body.setting))
+
+    @app.put("/v1/apps/{name}/nudges/{nudge}/off", dependencies=authed)
+    async def set_nudge_off(name: str, nudge: str, request: Request) -> Response:
+        """That nudge turned off, or on again (H.17)."""
+        body = parse_body(NudgeOffRequest, await request.body())
+        with app_problems("app"):
+            return dump(ctx.apps.set_nudge_off(name, nudge, body.off))
+
+    @app.put("/v1/apps/{name}/nudges/{nudge}/when", dependencies=authed)
+    async def set_nudge_when(name: str, nudge: str, request: Request) -> Response:
+        """When handlerd sends that nudge (H.17): yours replacing the app's, null the app's."""
+        body = parse_body(NudgeWhenRequest, await request.body())
+        with app_problems("app"):
+            return dump(ctx.apps.set_nudge_when(name, nudge, body.when))
 
     @app.get("/v1/apps/{name}/actions/{action}/runs/{run_id}", dependencies=authed)
     def action_run(name: str, action: str, run_id: str) -> Response:
@@ -82,8 +108,6 @@ def add_app_code_routes(app: FastAPI, ctx: Context) -> None:
             raise ProblemError(409, "not a draft", "this session works on no app's draft")
         with app_problems("cannot use this draft"):
             app, new = ctx.apps.add_draft(Path(record.scope), record.app_draft.get("app"))
-        if (opened := ctx.apps.preview_of(session_id)) is not None:
-            await ctx.apps.close_draft(opened)
         await ctx.sessions.delete(session_id)
         return dump(ctx.apps.view(app.name), status=201 if new else 200)
 
@@ -121,6 +145,13 @@ def add_app_routes(app: FastAPI, ctx: Context) -> None:
         with app_problems("app"):
             return dump(ctx.apps.view(name))
 
+    @app.get("/v1/apps/{name}/runs", dependencies=authed)
+    def app_runs(name: str) -> Response:
+        """Its runs handlerd keeps (H.11: its last 50), newest first, for its page."""
+        with app_problems("app"):
+            ctx.apps.get(name)
+            return dump(ctx.apps.runs.recent(name))
+
     @app.delete("/v1/apps/{name}", dependencies=authed)
     async def remove_app(name: str) -> Response:
         with app_problems("cannot uninstall this app"):
@@ -132,6 +163,12 @@ def add_app_routes(app: FastAPI, ctx: Context) -> None:
     async def deploy_app(name: str) -> Response:
         with app_problems("cannot deploy"):
             return dump(await ctx.apps.deploy(name))
+
+    @app.post("/v1/apps/{name}/update", dependencies=authed)
+    async def update_app(name: str) -> Response:
+        """The version its source offers taken, then deployed (H.6)."""
+        with app_problems("cannot update"):
+            return dump(await ctx.apps.update(name))
 
     @app.post("/v1/apps/{name}/rollback", dependencies=authed)
     async def rollback_app(name: str) -> Response:
@@ -160,11 +197,25 @@ def add_app_routes(app: FastAPI, ctx: Context) -> None:
         with app_problems("cannot give this folder"):
             return dump(await ctx.apps.set_file(name, need, body.path, body.create))
 
-    @app.put("/v1/apps/{name}/agents/{need}", dependencies=authed)
-    async def set_app_agent(name: str, need: str, request: Request) -> Response:
-        body = parse_body(SetAppAgentRequest, await request.body())
-        with app_problems("cannot give this agent"):
-            return dump(ctx.apps.set_agent(name, need, body.agent_id))
+    @app.put("/v1/apps/{name}/who-works", dependencies=authed)
+    async def set_app_who_works(name: str, request: Request) -> Response:
+        """Who runs its jobs (H.2): a program on an account or provider, or the model alone."""
+        body = parse_body(WhoWorks, await request.body())
+        with app_problems("cannot choose who works"):
+            return dump(ctx.apps.set_who_works(name, body))
+
+    @app.put("/v1/apps/{name}/jobs/{job}/who-works", dependencies=authed)
+    async def set_job_who_works(name: str, job: str, request: Request) -> Response:
+        """Who runs that job instead of the app's Who works (H.2)."""
+        body = parse_body(WhoWorks, await request.body())
+        with app_problems("cannot choose who works"):
+            return dump(ctx.apps.set_job_who_works(name, job, body))
+
+    @app.delete("/v1/apps/{name}/jobs/{job}/who-works", dependencies=authed)
+    def unset_job_who_works(name: str, job: str) -> Response:
+        """That job run by the app's Who works again (H.2)."""
+        with app_problems("cannot choose who works"):
+            return dump(ctx.apps.set_job_who_works(name, job, None))
 
     @app.put("/v1/apps/{name}/persons", dependencies=authed)
     async def set_app_persons(name: str, request: Request) -> Response:
@@ -173,9 +224,10 @@ def add_app_routes(app: FastAPI, ctx: Context) -> None:
             return dump(ctx.apps.set_persons(name, body.persons))
 
     @app.post("/v1/apps/{name}/open", dependencies=authed)
-    def open_app(name: str) -> Response:
+    async def open_app(name: str, request: Request) -> Response:
+        path = parse_body(AppOpenRequest, await request.body() or b"{}").path  # none: its home
         with app_problems("cannot open"):
-            return dump(AppLink(url=ctx.apps.open_link(name)))
+            return dump(AppLink(url=ctx.apps.open_link(name, path)))
 
     @app.get("/v1/apps/{name}/log", dependencies=authed)
     def app_log(name: str) -> Response:
@@ -184,14 +236,11 @@ def add_app_routes(app: FastAPI, ctx: Context) -> None:
 
 
 async def remove_parts(ctx: Context, app: str) -> None:
-    """An app uninstalled takes its parts along (H.14): the agents set up for it, and the
-    automations that run them or call its routes. The files you gave it stay."""
-    parts = [a for a in ctx.registry.agents.values() if a.app == app]
-    ids = {a.id for a in parts}
+    """An app uninstalled takes its parts along (H.14): the automations that run its jobs or call
+    its routes (its jobs' runs and harness state go with the app, `AppRuns.forget`). The files
+    you gave it stay."""
     for view in ctx.automations.views():
         run = view.definition.run if view.definition else None
-        if view.agent_id in ids or (isinstance(run, AutomationAppCall) and run.app == app):
+        if isinstance(run, AutomationAppCall | AutomationJobRun) and run.app == app:
             with contextlib.suppress(AutomationError):
                 await ctx.automations.delete(view.name)
-    for agent in parts:
-        await ctx.agents.delete(agent, with_home=True)

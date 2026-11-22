@@ -3,7 +3,7 @@
 
 import re
 from datetime import date
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AfterValidator, Field, model_validator
 
@@ -108,7 +108,9 @@ class LoginRecipe(Document):
       is a folder handler gives it for its state instead of the person's home; the file it writes
       there becomes the account's login."""
 
-    subscription: NonEmpty  # what people call the plan it signs in to, e.g. "Claude Pro or Max"
+    subscription: (
+        NonEmpty  # what people call the subscription it signs in to, e.g. "Claude Pro or Max"
+    )
     # whether the vendor's terms allow its subscription to run unattended (an automation's agent
     # run, I.7), as read in `terms` on `checked` (absent: not read yet): "allowed", "check-terms"
     # (unclear or not read yet: allowed with a warning), "refused"
@@ -127,11 +129,11 @@ class LoginRecipe(Document):
     env: EnvMap = {}  # a file login's
     hosts: list[EgressEntry] = []  # what a session logged in with it reaches (A.3)
     help: str | None = None  # one line for the person logging in
-    # the subscription's plans an account of it may name (`plan`), and the env var the harness
-    # reads it from: a token login leaves it unknown to the harness (Claude Code then says
+    # the subscriptions an account of it may name (its `subscription`: "pro", "max"), and the env
+    # var the harness reads it from: a token login leaves it unknown to the harness (Claude Code then says
     # "Claude API" and picks an API user's default model)
-    plans: list[NonEmpty] = []
-    plan_env: EnvName | None = None
+    subscriptions: list[NonEmpty] = []
+    subscription_env: EnvName | None = None
 
     @model_validator(mode="after")
     def _token_or_file(self) -> Self:
@@ -154,8 +156,8 @@ class LoginRecipe(Document):
                 )
             if not any("{dir}" in v for v in self.env.values()):
                 raise ValueError("a file login writes its file into '{dir}': give it in 'env'")
-        if bool(self.plans) != (self.plan_env is not None):
-            raise ValueError("'plans' and 'planEnv' go together")
+        if bool(self.subscriptions) != (self.subscription_env is not None):
+            raise ValueError("'subscriptions' and 'subscriptionEnv' go together")
         return self
 
     @property
@@ -221,17 +223,24 @@ def _cache_bin(path: str) -> str:
     return path
 
 
+CacheKind = Literal["folder", "images"]
+"""A cache's kind (B.6): a folder tools read and write, or a container engine's images."""
+
+
 class CacheDeclaration(StrictDocument):
     """A cache (B.6): the home path it is mounted at, which is what it is whoever declares it;
     what it holds, in people's words (shown first): a short name, then after ": " more if
     needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
     writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
-    PATH after the image's (`bin` for `~/.cargo/bin`)."""
+    PATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write
+    (most), or a container engine's images (`images`), which a runtime may give as a store of
+    the sandbox's own and the images' downloads shared (contract A.9)."""
 
     target: Annotated[HomePath, AfterValidator(_cache_target)]
     about: Annotated[str, Field(min_length=1, max_length=200)]
     general: bool = False
     bin: Annotated[str, AfterValidator(_cache_bin)] | None = None
+    kind: CacheKind = "folder"
 
 
 def _distinct_caches(caches: list[CacheDeclaration]) -> list[CacheDeclaration]:
@@ -246,6 +255,20 @@ def _distinct_caches(caches: list[CacheDeclaration]) -> list[CacheDeclaration]:
 
 
 Caches = Annotated[list[CacheDeclaration], AfterValidator(_distinct_caches)]
+
+
+def _folders_only(caches: list[CacheDeclaration]) -> list[CacheDeclaration]:
+    for cache in caches:
+        if cache.kind != "folder":
+            raise ValueError(
+                f"{cache.target}: a container engine's images are its system package's"
+            )
+    return caches
+
+
+FolderCaches = Annotated[Caches, AfterValidator(_folders_only)]
+"""Caches of folders only: the user's own and the addons' (an engine's images are declared by
+the system package installing it)."""
 
 # A command of the toolbox, as `command -v` finds it ("python3", "g++", "wl-paste").
 Command = Annotated[str, Field(pattern=r"^[A-Za-z0-9_][A-Za-z0-9._+-]*$")]
@@ -312,7 +335,7 @@ class ToolboxManifest(StrictDocument):
 
     distro: DistroName
     system_packages: dict[SystemPackageName, SystemPackageChoice] = {}
-    caches: Caches = []
+    caches: FolderCaches = []
 
 
 class HarnessDescriptor(Document):
@@ -340,7 +363,14 @@ class HarnessDescriptor(Document):
     # the harness ignores session/new's MCP servers and reads them from this file instead (the
     # common mcp.json format): `render` writes it, read-only
     mcp_config_file: HomePath | None = None
+    # what its adapter reads in the `_meta` of session/new|load|resume (its own extensions: what
+    # is added to its system prompt, say): given to every session (P10)
+    session_meta: dict[str, Any] = {}
     env: EnvMap | None = None
+    # added to `env` in a run's sandbox only (a job's run, a plan's step: a session with a result
+    # to give, D.18), never a session someone follows: what makes it wait for its own work
+    # before its turn ends, which ends the run (Claude Code's: no background command)
+    unattended_env: EnvMap | None = None
     account_connectors: AccountConnectors | None = None
     terminal: TerminalCommand | None = None  # none: no `handler terminal` for it
     needs: list[Command] = []  # what its recipe and its agent run from the toolbox (B.6)
@@ -383,12 +413,14 @@ class HarnessDescriptor(Document):
 
 
 class SessionDefaults(Document):
-    """Applied by the control plane to every session: MCP servers added to `session/new`,
-    `session/load` and `session/resume` (P8); mode and options right after `session/new` (P7)."""
+    """Applied by the control plane to every session: MCP servers and the harness's `_meta`
+    added to `session/new`, `session/load` and `session/resume` (P8, P10); mode and options right
+    after `session/new` (P7)."""
 
     mode_id: NonEmpty | None = None  # → session/set_mode
     config_options: dict[str, str] | None = None  # → session/set_config_option, one per entry
     mcp_servers: list[McpServer] | None = None  # → params.mcpServers (P8)
+    meta: dict[str, Any] | None = None  # → params._meta, its keys over the client's (P10)
 
 
 class HarnessLaunch(Document):

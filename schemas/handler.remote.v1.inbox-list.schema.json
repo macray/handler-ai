@@ -2,8 +2,31 @@
   "$id": "urn:handler.remote/v1/inbox-list",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "AppManifestNudgeRemind": {
+      "additionalProperties": false,
+      "description": "How often an open nudge alerts again, by default (the person tones it per nudge, H.17):\nevery `every`, `times` times after its first alert.",
+      "properties": {
+        "every": {
+          "pattern": "^[1-9]\\d{0,3}[mhd]$",
+          "title": "Every",
+          "type": "string"
+        },
+        "times": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Times",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "every"
+      ],
+      "title": "AppManifestNudgeRemind",
+      "type": "object"
+    },
     "InboxMessage": {
-      "description": "What handler tells a person (the person's inbox, like mail): an app's notification\n(H.9), an automation's result or failure (I.3), a plan stopped or a step that completed\nwith hosts refused (D.27), the hosts refused to a session while nobody could answer (F.9).\nShown on the computer and pushed to the person's phones (content-free: the text travels\nencrypted when the phone asks for it).",
+      "description": "What handler tells a person (the person's inbox, like mail): an app's notification\n(H.9), an automation's result or failure (I.3), a plan stopped or a step that completed\nwith hosts refused (D.27), the hosts refused to a session while nobody could answer (F.9),\ndocuments of a read-write notes folder not as their schema says (D.5), an ask that failed\nor that no app does (D.24).\nShown on the computer and pushed to the person's phones (content-free: the text travels\nencrypted when the phone asks for it).",
       "properties": {
         "id": {
           "title": "Id",
@@ -14,7 +37,9 @@
             "app",
             "automation",
             "plan",
-            "session"
+            "session",
+            "notes",
+            "ask"
           ],
           "title": "Source",
           "type": "string"
@@ -177,6 +202,26 @@
           "default": false,
           "title": "Read",
           "type": "boolean"
+        },
+        "kind": {
+          "default": "message",
+          "enum": [
+            "message",
+            "nudge"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "nudge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InboxNudge"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -188,6 +233,211 @@
         "at"
       ],
       "title": "InboxMessage",
+      "type": "object"
+    },
+    "InboxNudge": {
+      "description": "What makes an inbox message a nudge (H.17): something an app asks the person to do, open\nuntil its action succeeds, its app says it is done, the person dismisses it, or it expires.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "state": {
+          "default": "open",
+          "enum": [
+            "open",
+            "done",
+            "dismissed",
+            "expired"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open"
+        },
+        "form": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "remind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppManifestNudgeRemind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "setting": {
+          "default": "default",
+          "enum": [
+            "default",
+            "once",
+            "silent"
+          ],
+          "title": "Setting",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ownWhen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "off": {
+          "default": false,
+          "title": "Off",
+          "type": "boolean"
+        },
+        "ifIgnored": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ifignored"
+        },
+        "alerts": {
+          "default": 0,
+          "title": "Alerts",
+          "type": "integer"
+        },
+        "nextAlertAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nextalertat"
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runid"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "InboxNudge",
       "type": "object"
     },
     "RefusedHost": {
@@ -224,6 +474,64 @@
         "count"
       ],
       "title": "RefusedHost",
+      "type": "object"
+    },
+    "Schedule": {
+      "additionalProperties": false,
+      "description": "A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.",
+      "properties": {
+        "every": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9]\\d{0,3}[mhd]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Every"
+        },
+        "at": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At"
+        },
+        "days": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri",
+                  "sat",
+                  "sun"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Days"
+        }
+      },
+      "title": "Schedule",
       "type": "object"
     }
   },

@@ -10,6 +10,7 @@ from .test_cli import handler
 MANIFEST = 'apiVersion = "handler.tool/v1"\nname = "memo"\negress = ["memo.example.com:443"]\n'
 
 
+@pytest.mark.rule("source.adding-one-is-confirmed")
 def test_sources_list_what_they_offer(daemon: Daemon) -> None:
     out = handler(daemon, "source", "list").stdout
     assert "official ·" in out and "Handler's" in out
@@ -18,6 +19,21 @@ def test_sources_list_what_they_offer(daemon: Daemon) -> None:
     assert "source:official/fake-shop" in handler(daemon, "tool", "list").stdout
     added = handler(daemon, "source", "add", "https://example.invalid/acme")  # asked: no terminal
     assert added.returncode == 1 and "Handler does not check" in added.stdout
+
+
+def test_from_takes_a_source_s_id_or_its_url_and_names_one_you_have_not(daemon: Daemon) -> None:
+    """`--from` (tool add, app add, project import-agents): a URL with its slashes once made the
+    daemon answer a bare 405."""
+    url = handler(daemon, "source", "list").stdout.splitlines()[0].split(" · ")[1]
+    for given in ("official", url, url.rstrip("/") + "/"):
+        asked = handler(daemon, "tool", "add", "fake-browser", "--from", given)
+        assert asked.returncode == 1 and "fake-browser" in asked.stdout, given  # previewed, asked
+    for command in (("tool", "add", "fake-browser"), ("app", "add", "tracker")):
+        refused = handler(daemon, *command, "--from", "https://example.invalid/acme.git")
+        assert refused.returncode != 0
+        assert "no source https://example.invalid/acme.git" in refused.stderr
+        assert f"your sources: official ({url})" in refused.stderr
+        assert "handler source add" in refused.stderr
 
 
 @pytest.mark.rule("tool.installed-as-previewed")

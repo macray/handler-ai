@@ -1,0 +1,22 @@
+{
+  "$id": "urn:handler.control/v1/notes-undo-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "folder": {
+      "minLength": 1,
+      "title": "Folder",
+      "type": "string"
+    },
+    "commit": {
+      "minLength": 1,
+      "title": "Commit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "folder",
+    "commit"
+  ],
+  "title": "NotesUndoRequest",
+  "type": "object"
+}

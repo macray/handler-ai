@@ -70,6 +70,7 @@ def test_a_folder_the_agent_made_read_only_is_removed_with_its_sandbox(
             (locked / "deeper").chmod(0o700)
 
 
+@pytest.mark.rule("sandbox.leaves-nothing-behind")
 def test_a_folder_not_removed_keeps_its_launcher_s_file_for_the_sweep(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

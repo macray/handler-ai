@@ -9,7 +9,8 @@ colleague's, a company's, your own.
 
 ## Installing from one
 
-Each shelf of the **Library** has **Get more**: what the sources offer of its kind. Each card
+Each shelf of the **Library** has **Community** (beside *Yours*, at the head of its list): what the
+sources offer of its kind, Handler's own included. Each card
 says where it comes from (*from Handler*, or the source's name) and what it does in a few words
 (in amber when it lets something reach more: a site, an image built on your computer). Its name
 opens its page: what it is (its README), what it may do and what it needs from you, before
@@ -17,9 +18,9 @@ anything is installed.
 
 | Kind | Where | On the command line |
 |---|---|---|
-| an app | **Library → Apps → Get more** → **Install** | `handler app add NAME --from SOURCE` |
-| agents | **Library → Agents → Get more** → **Set up…** (or a project's ⋯ → **Get agents…**) | `handler project import-agents NAME --from SOURCE` |
-| a tool | **Library → Tools → Get more** → **Install** | `handler tool add NAME` (`--from SOURCE` for one you added) |
+| an app | **Library → Apps → Community** → **Install** | `handler app add NAME --from SOURCE` |
+| agents | **Library → Agents → Community** → **Set up…** (or a project's ⋯ → **Get agents…**) | `handler project import-agents NAME --from SOURCE` |
+| a tool | **Library → Tools → Community** → **Install** | `handler tool add NAME` (`--from SOURCE` for one you added) |
 
 Installing goes through the same page as for a file: an app's install page (what it may touch,
 what it needs from you), the agents' set-up page (each one's model, what it will be allowed to
@@ -29,7 +30,7 @@ connection is installed and connected in Library → Tools first), a tool's prev
 computer, and the system packages it adds to the toolbox, with their install scripts). Nothing is installed or updated by itself.
 
 When a source holds a new version of something you installed from it, Handler offers it: **Get
-it** in Library → Apps → Get more, *See the update* in a tool's ⋯. Agents set up from a source are yours: the
+it** in Library → Apps → Community, *See the update* in a tool's ⋯. Agents set up from a source are yours: the
 source changes nothing in them afterwards.
 
 ## Adding one
@@ -59,7 +60,7 @@ system-packages/<name>/  a system package its tools need: package.toml, install-
 ```
 
 Each folder is named as what it holds (the `name` in its `app.toml`, `agents.toml` or
-`tool.toml`), and may have a `README.md`: its page (a card's name, in Get more) shows it. Handler reads the last
+`tool.toml`), and may have a `README.md`: its page (a card's name, in Community) shows it. Handler reads the last
 commit of the default branch, and nothing else of the repository (its own README, CI files). A file that is a link, or a submodule, is never read: the item
 holding one is not offered, and Settings → Expert → Sources says why.
 

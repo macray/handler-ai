@@ -4,6 +4,7 @@ import json
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -242,7 +243,7 @@ def test_named_agents_of_one_folder(daemon: Daemon) -> None:
     "agent.it-reaches-only-the-hosts-of-what-it-uses",
     "save.new-agents-start-with-only-the-sites-they-need",
 )
-@pytest.mark.rule("save.a-host-is-allowed-or-kept-blocked")
+@pytest.mark.rule("save.a-host-is-in-one-list-and-never-a-required-one-blocked")
 def test_update_ad_hoc_agent(daemon: Daemon, tmp_path: Path) -> None:
     """PUT replaces an ad-hoc agent's settings and keeps its id (and so its sessions); the hosts
     its addons require are listed with what requires them."""
@@ -284,6 +285,14 @@ def test_update_ad_hoc_agent(daemon: Daemon, tmp_path: Path) -> None:
         assert r.status_code == 422 and "allowed and kept blocked at once: a.test:443" in r.text
         r = c.put(url, json=both | {"blocked": ["b.test:443"]})
         assert r.status_code == 200 and r.json()["blocked"] == ["b.test:443"]
+        # nor one its tools require: kept blocked wins at the filter, the agent could not work
+        tool = both | {"addons": [{"addon": "app-builder"}]}
+        for kept in ("registry.npmjs.org:443", "*.npmjs.org:443"):
+            r = c.put(url, json=tool | {"blocked": [kept]})
+            assert r.status_code == 400, r.text
+            assert "registry.npmjs.org:443 is required by the app-builder tool" in r.text
+        r = c.put(url, json=tool | {"blocked": ["*.npmjs.org:80"]})  # another port
+        assert r.status_code == 200, r.text
         assert c.put("/v1/agents/nope", json=body).status_code == 404
 
 
@@ -327,9 +336,11 @@ def test_egress_patch_needs_a_filtered_run(daemon: Daemon) -> None:
         assert c.patch(f"/v1/agents/{ad_hoc['id']}", json={"egress": "log-only"}).status_code == 409
 
 
-def _wait(predicate: object, timeout: float = 60) -> None:
+def _wait(predicate: Callable[[], object], timeout: float = 60, what: str = "") -> None:
+    """Until `predicate()` holds; fails saying what it waited for, past `timeout`."""
     deadline = time.monotonic() + timeout
-    while not predicate() and time.monotonic() < deadline:  # ty: ignore[call-non-callable]
+    while not predicate():
+        assert time.monotonic() < deadline, f"not within {timeout} s: {what or predicate}"
         time.sleep(0.2)
 
 
@@ -372,7 +383,10 @@ def _route(sandbox: str) -> str:
     own internal network alone, its proxy the only way out), "direct", or "none"."""
     fmt = "{{.HostConfig.NetworkMode}} {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}"
     inspect = ["podman", "container", "inspect", sandbox, "--format", fmt]
-    _wait(lambda: subprocess.run(inspect, capture_output=True, check=False).returncode == 0)
+    _wait(
+        lambda: subprocess.run(inspect, capture_output=True, check=False).returncode == 0,
+        what=f"the container {sandbox} (its launcher makes it)",
+    )
     mode, *networks = subprocess.run(
         inspect, capture_output=True, text=True, check=True
     ).stdout.split()

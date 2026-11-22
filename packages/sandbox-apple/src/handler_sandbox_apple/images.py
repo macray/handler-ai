@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath
 
 from handler_contracts import ImageInfo, ProxyImage
 from handler_sandbox_kit import egress, image_archive, relay
+from handler_sandbox_kit.engine_output import Reason
 
 from .container import (
     FILTER_IMAGE,
@@ -42,6 +43,16 @@ READ_LIMIT = 1 << 20  # A.7: `read` gives a file of at most 1 MiB
 # BuildKit's step line, "#5 [linux/arm64 2/4] RUN …" (a stage or platform first, or none), not a
 # RUN's own output ("#5 0.21 [ 1/33] …": dnf's)
 STEP = re.compile(r"^#\d+ \[\s*(?:\S+\s+)?(\d+)/(\d+)\]\s*(.*)")
+# Apple's errors nest their causes ("internalError: … (cause: … NSLocalizedFailureReason=Rosetta
+# is not installed}…"): the innermost reason the Virtualization framework gave is the one to say
+_FAILURE_REASON = re.compile(r"NSLocalizedFailureReason=([^}\"]+?)\.?[}\"]")
+
+
+class AppleReason(Reason):
+    """An engine's reason, Apple's innermost failure reason when its error carries one."""
+
+    def reason_in(self, error: str) -> str:
+        return m[1].strip() if (m := _FAILURE_REASON.search(error)) else error
 
 
 def _fail(message: str) -> int:
@@ -49,21 +60,24 @@ def _fail(message: str) -> int:
     return 1
 
 
-def _build(argv: list[str]) -> int:
-    """Run `container build`, its output turned into the contract's `STEP n/m: …` lines (A.7)."""
+def _build(argv: list[str]) -> tuple[int, Reason]:
+    """Run `container build`, its output turned into the contract's `STEP n/m: …` lines (A.7); its
+    exit code, and the reason it gave when it failed."""
     proc = subprocess.Popen(
         ["container", "build", "--progress", "plain", *argv],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )  # fmt: skip
     assert proc.stdout is not None
     seen: set[tuple[str, str]] = set()
+    reason = AppleReason()
     for line in proc.stdout:
+        reason.feed(line)
         if (m := STEP.search(line)) and (m[1], m[2]) not in seen:
             seen.add((m[1], m[2]))
             print(f"STEP {m[1]}/{m[2]}: {m[3].strip()}", flush=True)
         else:
             print(line, end="", flush=True)
-    return proc.wait()
+    return proc.wait(), reason
 
 
 def build(
@@ -80,8 +94,9 @@ def build(
     argv += [a for arg in build_args for a in ("--build-arg", arg)]
     argv += ["--pull"] if pull else []
     argv += ["--no-cache"] if no_cache else []
-    if _build([*argv, str(context)]) != 0:
-        return _fail("build failed")
+    code, reason = _build([*argv, str(context)])
+    if code:
+        return _fail(reason.said("build failed"))
     info = image_info(tag)
     if info is None:
         return _fail(f"built, but {tag} is not found")
@@ -226,12 +241,16 @@ def pull(ref: str) -> int:
 
 
 RELAY_SOURCE = "handler-relay.source"  # beside it: the digest of the source it was built from
+# what its build exports: the relay, and the caches' overlay program it starts (launch.OVERLAY)
+RELAY_FILES = ("handler-relay", "fuse-overlayfs")
 
 
 def relay_source_digest() -> str:
     with resources.as_file(relay.source_dir()) as source:
         files = sorted(
-            p for p in source.iterdir() if p.name in ("go.mod", "main.go", "Containerfile")
+            p
+            for p in source.iterdir()
+            if p.suffix == ".go" or p.name in ("go.mod", "Containerfile")
         )
         return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
@@ -240,7 +259,7 @@ def relay_current() -> bool:
     """handler-relay exported, from the source this Handler has (an older one may lack a flag
     the launcher gives it)."""
     built = relay_dir() / RELAY_SOURCE
-    return (relay_dir() / "handler-relay").exists() and (
+    return all((relay_dir() / name).exists() for name in RELAY_FILES) and (
         built.exists() and built.read_text().strip() == relay_source_digest()
     )
 
@@ -262,16 +281,18 @@ def build_relay() -> int:
     ):
         out = ["--no-cache", "--output", f"type=local,dest={tmp}"]
         source = ["--file", str(relay_source / "Containerfile"), str(relay_source)]
-        if _build([*out, *source]) != 0:
-            return _fail("handler-relay's build failed")
-        # container 1.6.1 writes it at <dest>/out.tar/linux_arm64/: a folder per platform
-        built = next(Path(tmp).rglob("handler-relay"), None)
-        if built is None:
-            return _fail("handler-relay's build gave no /handler-relay")
+        code, reason = _build([*out, *source])
+        if code:
+            return _fail(reason.said("handler-relay's build failed"))
         relay_dir().mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(built, relay_dir() / "handler-relay.new")
-        (relay_dir() / "handler-relay.new").chmod(0o755)
-        (relay_dir() / "handler-relay.new").replace(relay_dir() / "handler-relay")
+        for name in RELAY_FILES:
+            # container 1.6.1 writes it at <dest>/out.tar/linux_arm64/: a folder per platform
+            built = next(Path(tmp).rglob(name), None)
+            if built is None:
+                return _fail(f"handler-relay's build gave no /{name}")
+            shutil.copyfile(built, relay_dir() / f"{name}.new")
+            (relay_dir() / f"{name}.new").chmod(0o755)
+            (relay_dir() / f"{name}.new").replace(relay_dir() / name)
         (relay_dir() / RELAY_SOURCE).write_text(relay_source_digest() + "\n")
     return 0
 
@@ -281,8 +302,9 @@ def build_proxy() -> int:
     handler-relay (build_relay)."""
     with resources.as_file(egress.proxy_dir()) as proxy_dir:
         argv = ["--tag", FILTER_IMAGE, "--pull", "--no-cache"]
-        if _build([*argv, "--file", str(proxy_dir / "Containerfile"), str(proxy_dir)]) != 0:
-            return _fail("the network filter's build failed")
+        code, reason = _build([*argv, "--file", str(proxy_dir / "Containerfile"), str(proxy_dir)])
+        if code:
+            return _fail(reason.said("the network filter's build failed"))
     if (code := build_relay()) != 0:
         return code
     check = subprocess.run(

@@ -10,7 +10,7 @@
   import { api } from "../lib/api";
   import type { Agent, ModelAccess, Session } from "../lib/contracts.gen";
   import { fieldsOf, fieldValues, skillField, type Schema } from "../lib/runs";
-  import ModelChoice from "./ModelChoice.svelte";
+  import WhoWorksChoice from "./WhoWorksChoice.svelte";
   import RunFields from "./RunFields.svelte";
 
   let {
@@ -52,7 +52,7 @@
 <form class="space-y-4" onsubmit={start} data-testid="run-form">
   <RunFields {fields} bind:values />
   <div class="flex flex-wrap items-center gap-3 border-t pt-3">
-    <ModelChoice {agent} bind:value={model} {ondefault} />
+    <WhoWorksChoice {agent} bind:value={model} {ondefault} unattended={!!iface?.result} />
     {@render chips?.()}
     <Button type="submit" class="ml-auto" disabled={busy || missing} data-testid="run-start"><Play />{iface?.result ? "Start the run" : "Start"}</Button>
   </div>

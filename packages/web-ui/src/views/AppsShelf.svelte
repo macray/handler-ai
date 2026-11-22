@@ -2,7 +2,7 @@
   // The Library's Apps shelf (contract H, apps design): get and manage apps; they open from Apps.
   // Yours: a row each (where it comes from, its version, its state; a new version to deploy, or
   // what it still needs, amber, with Fix: its page), then the drafts of new apps being written
-  // with the App creator (H.15). Get more: what the sources offer (D.26, SourceShelf), making your
+  // with the App creator (H.15). Community: what the sources offer (D.26, SourceShelf), making your
   // own with the App creator (on a draft kept by Handler, lib/drafts.ts) and installing an app
   // file (an export: a new app, or the next version of one you have). Installing goes through its
   // install page (AppInstallView).
@@ -14,17 +14,18 @@
   import { Button } from "$lib/components/ui/button";
   import LoadingCards from "../components/LoadingCards.svelte";
   import HelperCard from "../components/HelperCard.svelte";
+  import ShelfBar from "../components/ShelfBar.svelte";
   import SourceShelf from "../components/SourceShelf.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
-  import { missing } from "../lib/apps";
+  import { appTitle, missing } from "../lib/apps";
   import { api } from "../lib/api";
   import type { App, Session, Source } from "../lib/contracts.gen";
   import { continueDraft, draftsOf, startDraft, throwAway, useDraft } from "../lib/drafts";
-  import { LIBRARY_WIDTH } from "../lib/library";
+  import { LIBRARY_WIDTH, type ShelfLists } from "../lib/library";
   import { href, navigate } from "../lib/router.svelte";
   import { fromSourceWords } from "../lib/sources";
 
-  let { more = false }: { more?: boolean } = $props();
+  let { more = false, lists }: { more?: boolean; lists?: ShelfLists } = $props();
 
   let apps = $state<App[] | null>(null);
   let sources = $state<Source[]>([]);
@@ -61,7 +62,7 @@
     installing = true;
     try {
       const { app, added } = await api.addApp(file);
-      navigate(added ? { view: "install-app", name: app.name } : { view: "apps", app: app.name });
+      navigate(added ? { view: "install-app", name: app.name } : { view: "apps", app: app.name, tab: "settings" });
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -87,6 +88,7 @@
 
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full {LIBRARY_WIDTH} space-y-6 px-8 py-6" data-testid="apps-shelf">
+    <ShelfBar {lists} />
     {#if error}<p class="text-sm text-danger" data-testid="apps-error">{error}</p>{/if}
 
     {#if more}
@@ -135,17 +137,18 @@
             {@const notGiven = missing(app)}
             <li class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="library-app">
               <span class="flex size-9 shrink-0 items-center justify-center rounded-lg {app.state === 'failed' ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}"><AppWindow class="size-4" /></span>
-              <a class="min-w-0 flex-1 text-foreground no-underline" href={href({ view: "apps", app: app.name })} data-testid="app-manage">
-                <span class="block font-medium hover:underline">{app.name}</span>
+              <a class="min-w-0 flex-1 text-foreground no-underline" href={href({ view: "apps", app: app.name, tab: "settings" })} data-testid="app-manage">
+                <span class="block font-medium hover:underline">{appTitle(app)}</span>
                 <span class="fact block truncate">{fromSourceWords(app.fromSource, sources) ?? "made by you"} · {app.current ? app.current.version : "not installed"}</span>
               </a>
               {#if notGiven.length}
                 <span class="inline-flex items-center gap-1 text-xs text-warn" title={`Not given yet: ${notGiven.join(", ")}`} data-testid="app-needs-missing"><TriangleAlert class="size-3" />Incomplete</span>
-                <Button size="sm" variant="outline" href={href({ view: "apps", app: app.name })} data-testid="app-fix">Fix</Button>
+                <Button size="sm" variant="outline" href={href({ view: "apps", app: app.name, tab: "settings" })} data-testid="app-fix">Fix</Button>
               {:else if !app.current}
                 <Button size="sm" variant="outline" href={href({ view: "install-app", name: app.name })} data-testid="app-install">Install</Button>
               {:else}
-                {#if newVersion(app)}<a class="text-xs text-primary no-underline hover:underline" href={href({ view: "apps", app: app.name })} data-testid="app-update">{app.source.version} to deploy</a>{/if}
+                {#if app.offered && app.current}<a class="text-xs text-primary no-underline hover:underline" href={href({ view: "apps", app: app.name, tab: "settings" })} data-testid="app-update">{app.offered.version} available</a>
+                {:else if newVersion(app)}<a class="text-xs text-primary no-underline hover:underline" href={href({ view: "apps", app: app.name, tab: "settings" })} data-testid="app-update">{app.source.version} to deploy</a>{/if}
                 <StatusBadge status={app.state} />
               {/if}
             </li>

@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/speech-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "`POST /v1/voice/transcribe` (and the device's `transcribe`): a recording to write down\nwith the chosen model, never kept.",
+  "description": "`POST /v1/voice/transcribe` (and the device's `transcribe`): a recording to write down\nwith the chosen model, never kept (its text is, once asked: Ask's history).",
   "properties": {
     "audio": {
       "minLength": 1,
@@ -31,6 +31,17 @@
       ],
       "default": null,
       "title": "Language"
+    },
+    "via": {
+      "default": "web",
+      "enum": [
+        "web",
+        "phone",
+        "cli",
+        "key"
+      ],
+      "title": "Via",
+      "type": "string"
     }
   },
   "required": [

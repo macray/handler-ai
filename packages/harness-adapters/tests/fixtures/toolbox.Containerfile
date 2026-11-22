@@ -30,7 +30,7 @@ RUN --mount=type=bind,source=system-packages/chromium,target=/run/handler-packag
     . /etc/os-release && test "$ID" = fedora \
     && cd /run/handler-package && sh -eu install-fedora.sh
 
-# system package podman 1
+# system package podman 4
 RUN --mount=type=bind,source=system-packages/podman,target=/run/handler-package \
     . /etc/os-release && test "$ID" = fedora \
     && cd /run/handler-package && sh -eu install-fedora.sh

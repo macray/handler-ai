@@ -15,6 +15,7 @@ ON_SKILL = AgentInterface(
 )
 
 
+@pytest.mark.rule("form.its-schemas-are-checked-when-saved")
 def test_schemas_are_checked() -> None:
     interfaces.check(AgentInterface(result=RESULT, fields={"type": "object"}))
     with pytest.raises(interfaces.InterfaceError, match="fields"):
@@ -70,7 +71,7 @@ def test_inputs_are_checked(tmp_path: Path) -> None:
         interfaces.check_input(ON_SKILL, SessionInput(fields={"target": "nope"}), tmp_path)
 
 
-@pytest.mark.rule("form.the-subject-is-read-only")
+@pytest.mark.rule("form.the-skill-it-names-is-given-read-only")
 def test_a_subject_is_mounted_read_only_with_its_digest(tmp_path: Path) -> None:
     folder = tmp_path / "tidy"
     folder.mkdir()

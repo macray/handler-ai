@@ -8,7 +8,7 @@ the files given there, mounted at the file's folder: read-only when they are, th
 0555 (a file written in place both ways, none replaced nor added), the mount points of what is
 mounted inside it made there. A file the host replaces (an editor saving by rename) stays the old
 one for the sandbox, as with a bind mount on Linux, whose mount holds the old file
-(rule `need.a-file-given-is-that-file`).
+(rule `app-need.a-file-given-is-that-file`).
 """
 
 import itertools
@@ -61,10 +61,11 @@ def check(spec: SandboxSpec, runtime: str) -> None:
 
 
 def _target(mount: str) -> str:
-    """A `--mount` value's target (Apple's `target=`, Docker's `destination=`)."""
-    for key in ("target=", "destination=", "dst="):
-        if key in mount:
-            return mount.split(key, 1)[1].split(",", maxsplit=1)[0]
+    """A `--mount` value's target (Apple's `target=`, Docker's and podman's `destination=`)."""
+    for field in mount.split(","):
+        key, _, value = field.partition("=")
+        if key in ("target", "destination"):
+            return value
     raise ValueError(f"no target in {mount}")
 
 

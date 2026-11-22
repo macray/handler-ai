@@ -92,7 +92,18 @@ def open_envelope(
     return plaintext
 
 
-def pairing_fragment(gateway_url: str, host_id: str, device_id: str, key: bytes, name: str) -> str:
-    """`pair=<base64url JSON>`, put after `#` so it never reaches a server."""
-    payload = {"v": 1, "g": gateway_url, "h": host_id, "d": device_id, "k": b64(key), "n": name}
+def pairing_fragment(
+    gateway_url: str, host_id: str, device_id: str, key: bytes, *, name: str, computer: str
+) -> str:
+    """`pair=<base64url JSON>`, put after `#` so it never reaches a server: `n` the device's
+    name, `c` the computer's (what the phone calls it)."""
+    payload = {
+        "v": 1,
+        "g": gateway_url,
+        "h": host_id,
+        "d": device_id,
+        "k": b64(key),
+        "n": name,
+        "c": computer,
+    }
     return "pair=" + b64(json.dumps(payload, separators=(",", ":")).encode())

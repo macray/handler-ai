@@ -13,6 +13,7 @@ from handler_contracts import (
     Addon,
     HarnessLaunch,
     HostFolder,
+    Injection,
     SystemPackageDaemon,
 )
 from handler_control import compose
@@ -78,6 +79,7 @@ def spec(tmp_path: Path, **settings: Any) -> Any:
     )
 
 
+@pytest.mark.rule("agent.it-reaches-only-the-hosts-of-what-it-uses")
 def test_sandbox_spec(tmp_path: Path) -> None:
     s = spec(tmp_path)
     assert s.workdir == str(tmp_path)
@@ -115,7 +117,7 @@ DOCKERD = SystemPackageDaemon(
 )
 
 
-@pytest.mark.rule("toolbox.a-daemon-only-where-its-ability-is")
+@pytest.mark.rule("toolbox.a-daemon-only-for-agents-given-its-ability")
 def test_the_toolbox_s_daemons_start_before_the_program_where_their_abilities_are(
     tmp_path: Path,
 ) -> None:
@@ -129,7 +131,7 @@ def test_the_toolbox_s_daemons_start_before_the_program_where_their_abilities_ar
     assert compose.DAEMONS_TOOL not in [t.target for t in strict.tools]
 
 
-@pytest.mark.rule("toolbox.a-daemon-only-where-its-ability-is")
+@pytest.mark.rule("toolbox.a-daemon-only-for-agents-given-its-ability")
 def test_the_daemons_command_starts_each_then_runs_the_program(tmp_path: Path) -> None:
     script = tmp_path / "handler-daemons"
     script.write_text(compose.DAEMONS_SCRIPT)
@@ -153,13 +155,14 @@ def test_the_daemons_command_starts_each_then_runs_the_program(tmp_path: Path) -
     subprocess.run(["pkill", "-f", str(daemon)], check=False)
 
 
-@pytest.mark.rule("toolbox.a-daemon-only-where-its-ability-is")
+@pytest.mark.rule("toolbox.a-daemon-only-for-agents-given-its-ability")
 def test_a_daemon_s_env_set_by_the_harness_too_is_refused(tmp_path: Path) -> None:
     clashing = DOCKERD.model_copy(update={"env": {"A": "2"}})
     with pytest.raises(compose.DaemonConflictError, match="A"):
         spec(tmp_path, confinement="nested", daemons=[clashing])
 
 
+@pytest.mark.rule("tool.checked-against-its-manifest")
 def test_addon_check_runs_as_agents_get_the_addon() -> None:
     """G.4: the addon image mounted in the toolbox, confined like an agent, no network; on PATH
     only when asked (to see first what the toolbox alone provides)."""
@@ -181,6 +184,45 @@ def test_addon_check_runs_as_agents_get_the_addon() -> None:
     assert compose.addon_check_spec(**common, path=bin_dir).addons[0].path == bin_dir
 
 
+@pytest.mark.rule("connection.its-check-runs-as-an-agent-would")
+def test_a_connection_check_gets_what_an_agent_of_it_gets_no_more() -> None:
+    """G.2: the tool's folder on PATH in the toolbox, the env given (its secrets' phantoms), the
+    network filtered and enforced to the tool's egress alone with the injections swapping them
+    back, an empty folder to work in, confined like an agent."""
+    tool = Addon(
+        source="/data/addons/shopify/abc",
+        target="/opt/tools/shopify",
+        path="/opt/tools/shopify/bin",
+    )
+    injection = Injection(
+        name="connections/shop/theme_token",
+        phantom="shptka_00000000000000000000000000",
+        value="shptka_1234567890abcdef1234567890",
+        hosts=["theme-kit-access.shopifyapps.com:443"],
+    )
+    spec = compose.connection_check_spec(
+        name="handler-check-2",
+        toolbox="localhost/handler-ai-toolbox:latest",
+        scope="/state/image-check/connection-shop-x",
+        argv=["shopify", "theme", "list"],
+        tool=tool,
+        env={"SHOPIFY_FLAG_STORE": "a.myshopify.com", "SHOPIFY_CLI_THEME_TOKEN": injection.phantom},
+        egress=["theme-kit-access.shopifyapps.com:443", "*.myshopify.com:443"],
+        injections=[injection],
+    )
+    assert (spec.image, spec.isolation) == ("localhost/handler-ai-toolbox:latest", "strict")
+    assert spec.argv == ["shopify", "theme", "list"] and spec.addons == [tool]
+    assert spec.env["SHOPIFY_CLI_THEME_TOKEN"] == injection.phantom  # never the value
+    assert injection.value not in spec.env.values()
+    network = spec.network
+    assert network.mode == "filtered" and network.enforcement == "enforce"
+    assert network.allow == ["*.myshopify.com:443", "theme-kit-access.shopifyapps.com:443"]
+    assert network.injections == [injection]
+    assert (spec.workdir, spec.work_folder.path) == ("/state/image-check/connection-shop-x",) * 2
+    assert spec.folders == [] and spec.caches == []  # no project, no notes, nothing kept
+
+
+@pytest.mark.rule("terminal.only-what-you-paste")
 def test_a_terminal_reads_what_is_pasted_as_its_clipboard(tmp_path: Path) -> None:
     """D.16: the paste need, its folder the client's; not without a paste folder."""
     pasted = spec(tmp_path, paste="/run/user/1000/handler-ai/terminals/handler-x")
@@ -189,6 +231,7 @@ def test_a_terminal_reads_what_is_pasted_as_its_clipboard(tmp_path: Path) -> Non
     assert spec(tmp_path).paste is None
 
 
+@pytest.mark.rule("files.access-lists-what-the-sandbox-sees")
 def test_what_a_session_sees_is_each_by_what_it_is(tmp_path: Path) -> None:
     """F.8: its folder, the harness's state, skills, knowledge, a subject, an addon's tools."""
     known = [HostFolder(source="/n", target="/notes/n", writable=False)]
@@ -204,3 +247,41 @@ def test_what_a_session_sees_is_each_by_what_it_is(tmp_path: Path) -> None:
         ("subject", "/subject/x", True, True),
         ("tools", "/opt/tools/i", True, False),
     ]
+
+
+@pytest.mark.rule("agent.its-env-reaches-each-start")
+def test_the_agent_s_own_variables_reach_its_sandbox(tmp_path: Path) -> None:
+    s = spec(tmp_path, agent_env={"ASTRO_TELEMETRY_DISABLED": "1"})
+    assert s.env["ASTRO_TELEMETRY_DISABLED"] == "1" and s.env["A"] == "1"  # the harness's kept
+
+
+@pytest.mark.rule("agent.its-env-never-sets-what-others-own")
+def test_the_agent_s_own_variables_never_replace_another_s(tmp_path: Path) -> None:
+    """Checked again at start: what the save could not see (a session on another model, a tool
+    given by its project since, a toolbox daemon, a terminal)."""
+    with pytest.raises(compose.AgentEnvConflictError, match="A"):
+        spec(tmp_path, agent_env={"A": "2"})  # its harness's
+    tools = compose.AddonLaunch(env={"SHOP": "x"})
+    with pytest.raises(compose.AgentEnvConflictError, match="SHOP"):
+        spec(tmp_path, addons=tools, agent_env={"SHOP": "y"})
+    dockerd = {"daemons": [DOCKERD], "confinement": "nested"}
+    with pytest.raises(compose.AgentEnvConflictError, match="DOCKER_HOST"):
+        spec(tmp_path, **dockerd, agent_env={"DOCKER_HOST": "tcp://elsewhere"})
+
+
+@pytest.mark.rule("knowledge.schemas-read-only")
+def test_an_agent_s_schemas_are_read_only_files_its_command_finds(tmp_path: Path) -> None:
+    """D.29: the files of its knowledge uses' schemas, read-only in its home, `SMD_SCHEMAS`
+    their folder (no flag for the format's command); none: neither."""
+    s = spec(tmp_path, schemas={"contacts@1.schema.json": "{}\n"})
+    assert s.env["SMD_SCHEMAS"] == "/home/agent/.smd-schemas"
+    [given] = [f for f in s.files if f.target.startswith("/home/agent/.smd-schemas/")]
+    assert (given.target, given.content, given.mode, given.writable) == (
+        "/home/agent/.smd-schemas/contacts@1.schema.json",
+        "{}\n",
+        "0444",
+        False,
+    )
+    assert "SMD_SCHEMAS" not in spec(tmp_path).env
+    with pytest.raises(compose.AgentEnvConflictError, match="SMD_SCHEMAS"):
+        spec(tmp_path, schemas={"a@1.schema.json": "{}"}, agent_env={"SMD_SCHEMAS": "/tmp"})

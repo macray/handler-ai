@@ -6,6 +6,7 @@ Needs podman and the toolbox image (the test addon is built in it, like real one
 the echo-box test harness (a container that only echoes), inspected from outside.
 """
 
+import functools
 import json
 import subprocess
 import time
@@ -32,6 +33,7 @@ name = "handler-test"
 image = "{REPO}"
 commands = ["handler-hello"]
 check = ["handler-hello"]
+connectionCheck = ["handler-hello", "check"]
 egress = ["example.net:443"]
 [env]
 HANDLER_TEST_STATIC = "static"
@@ -47,7 +49,10 @@ CONTAINERFILE = f"""
 ARG TOOLBOX_IMAGE={TOOLBOX}
 FROM ${{TOOLBOX_IMAGE}} AS build
 RUN mkdir -p {TARGET}/bin \\
-    && printf '#!/bin/sh\\necho "hello $HANDLER_TEST_GREETING"\\n' > {TARGET}/bin/handler-hello \\
+    && printf '%s\\n' '#!/bin/sh' 'echo "hello $HANDLER_TEST_GREETING"' \\
+        '[ "$1" = check ] || exit 0' \\
+        '[ "$HANDLER_TEST_ADDON_TOKEN" = "{TOKEN}" ] && echo "token: real" || echo "token: stand-in"' \\
+        '[ "$HANDLER_TEST_GREETING" != fail ]' > {TARGET}/bin/handler-hello \\
     && chmod 755 {TARGET}/bin/handler-hello \\
     && echo "handler-test $(date +%s%N)" > {TARGET}/version
 FROM scratch
@@ -55,6 +60,7 @@ COPY --from=build {TARGET} /
 """
 
 
+@functools.cache  # asked by every file importing it, on every worker: podman is slow under load
 def podman_ok() -> bool:
     try:
         return subprocess.run(["podman", "image", "exists", TOOLBOX], check=False).returncode == 0
@@ -63,6 +69,7 @@ def podman_ok() -> bool:
 
 
 pytestmark = [
+    pytest.mark.shared_images,
     pytest.mark.skipif(not podman_ok(), reason=f"podman or {TOOLBOX} missing"),
     pytest.mark.timeout(dev_env.IMAGE_TIMEOUT),
 ]
@@ -189,7 +196,8 @@ def test_check_refuses_an_image_that_does_not_match_its_manifest(
         if not addon(c)["imagePresent"]:
             assert rebuild(c)["state"] == "succeeded"
     before = current(daemon)
-    toml.write_text(original.replace('commands = ["handler-hello"]', 'commands = ["other"]'))
+    mismatched = original.replace('commands = ["handler-hello"]', 'commands = ["other"]')
+    toml.write_text(mismatched.replace('["handler-hello", "check"]', '["other", "check"]'))
     try:
         with daemon.http() as c:
             build = rebuild(c)
@@ -256,6 +264,43 @@ def test_g4_agent_gets_the_addon(daemon: Daemon, bindings: Path) -> None:
         assert write.returncode != 0  # read-only
     finally:
         client.close()
+
+
+@pytest.mark.rule(
+    "connection.its-check-runs-as-an-agent-would",
+    "connection.a-failed-check-never-refuses-the-save",
+)
+def test_a_connection_is_checked_as_an_agent_of_it_gets_the_tool(
+    daemon: Daemon, bindings: Path
+) -> None:
+    """G.2: its tool's connectionCheck, with the connection's settings and a stand-in for its
+    secret; what it printed kept with the connection while handlerd runs. One that fails is an
+    answer: the connection stays as it was saved."""
+    (bindings / "failing.toml").write_text(
+        'apiVersion = "handler.connection/v1"\ntool = "handler-test"\n'
+        'settings = { greeting = "fail" }\n'
+        'secrets = { token = { env = "HANDLER_TEST_ADDON_TOKEN_SOURCE" } }\n'
+    )
+    try:
+        with daemon.http() as c:
+            if not addon(c)["imagePresent"]:
+                assert rebuild(c)["state"] == "succeeded"
+            r = c.post("/v1/bindings/test/check", timeout=300)
+            assert r.status_code == 200, r.text
+            works = r.json()
+            assert works["ok"] and works.get("error") is None, works
+            assert "hello from the binding" in works["output"]
+            assert "token: stand-in" in works["output"]  # never the value itself
+            assert TOKEN not in r.text
+
+            failed = c.post("/v1/bindings/failing/check", timeout=300).json()
+            assert not failed["ok"] and "exited with 1" in failed["error"]
+            assert "hello fail" in failed["output"]
+            listed = {b["name"]: b for b in c.get("/v1/bindings").json()}
+            assert listed["test"]["checked"]["ok"] and not listed["failing"]["checked"]["ok"]
+            assert listed["failing"].get("error") is None  # still a valid connection
+    finally:
+        (bindings / "failing.toml").unlink()
 
 
 @pytest.mark.rule("tool.runs-from-a-read-only-folder")

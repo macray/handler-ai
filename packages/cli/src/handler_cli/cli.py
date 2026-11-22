@@ -35,10 +35,11 @@ What exists (`handler NOUN -h` for each):
     handler source list | add | refresh | rm     where apps, agents and tools come from
     handler connection list                      tools with their settings and secrets
     handler notes list                           notes folders an agent can get
+    handler schema list | show | add | rm        schemas: the kinds of structured notes
     handler image list | rebuild                 the images agents run in
     handler toolbox [packages | add | rm | lines]
                                                  the system every agent works in
-    handler app …                                apps: install, deploy, open
+    handler app …                                apps: install, deploy, update, open
     handler automation …                         when a session stops or at a time, run a script,
                                                  an agent or an app's route
     handler plan check | run | list | show | cancel | delete
@@ -48,6 +49,7 @@ What exists (`handler NOUN -h` for each):
                                                  agents' results, failed runs
     handler ask "…"                              say what you want: Handler picks which of
                                                  your apps does it, and runs it
+    handler ask --listen [--toggle]              say it aloud (--toggle: for a key)
 
 Handler itself:
     handler setup [--no-build] [--yes] [--program NAME] [--runtime NAME] [--engine PACKAGE]
@@ -74,6 +76,9 @@ accept-edits (file edits allowed) or bypass (unsupervised); the session can chan
 sandbox your Wayland display, e.g. to watch the browser of the playwright tool, and its
 clipboard (the agent can then read what you copy); nothing else of your desktop. Pasting an image
 in `handler terminal` (Ctrl+V) does not need it.
+--env sets an environment variable in the agent's sandbox (ASTRO_TELEMETRY_DISABLED=1); NAME=
+removes it. Its value is kept in the agent's settings as typed: for a key or a token, use a
+tool's connection instead.
 
 An ACCOUNT runs its own harness; a PROVIDER runs the harness --harness names (or the only one
 that speaks its protocol). --model picks the model (default: the harness's or the provider's).
@@ -97,7 +102,7 @@ import os
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from . import (
     account_commands,
@@ -114,6 +119,7 @@ from . import (
     project_commands,
     provider_commands,
     runtime_commands,
+    schema_commands,
     secret_commands,
     session_commands,
     setup,
@@ -169,8 +175,16 @@ def add_agent_options(s: argparse.ArgumentParser) -> None:
     s.add_argument(
         "--notes",
         action="append",
-        metavar="FOLDER",
-        help="a folder of the notes root, mounted read-only at /notes/<name>; repeatable",
+        metavar="FOLDER[=write]",
+        help="a folder of the notes root, at /notes/<name>: read-only, or read-write with "
+        "=write (the agent can change or delete any file there); repeatable",
+    )
+    s.add_argument(
+        "--schema",
+        action="append",
+        metavar="ID[=write]",
+        help="a schema of the Library it reads (handler schema list), or writes with =write: "
+        "its documents in its notes folders; repeatable",
     )
     s.add_argument(
         "--permissions",
@@ -188,6 +202,13 @@ def add_agent_options(s: argparse.ArgumentParser) -> None:
         help="give the sandbox your Wayland display and its clipboard (watch a browser)",
     )
     s.add_argument(
+        "--env",
+        action="append",
+        metavar="NAME=VALUE",
+        help="an environment variable in the agent's sandbox (NAME= removes it); repeatable; "
+        "never a secret: a tool's connection gives those",
+    )
+    s.add_argument(
         "--save",
         action="store_true",
         help="save the flags that differ from the agent's settings to it, without being asked "
@@ -201,7 +222,7 @@ def acp(d: Daemon, args: argparse.Namespace) -> int:
     found = session_commands.project_agent(d, args.access, os.path.abspath(args.scope), args)
     if found is not None:
         agent, model = found
-        body: dict[str, Any] = {"agentId": agent["id"]}
+        body: dict[str, Any] = {"agentId": agent["id"], "origin": "editor"}
         if model is not None:
             body["model"] = session_commands.access_of(model)
         return run_session_bridge(d, d.call("POST", "/v1/sessions", body))
@@ -222,7 +243,7 @@ def terminal(d: Daemon, args: argparse.Namespace) -> int:
 
 def terminal_identity(d: Daemon, model: dict[str, Any]) -> str:
     """Who the harness runs as (the model of this terminal), from handler's own files: the harness's
-    terminal cannot tell (a token login says neither the email nor the plan)."""
+    terminal cannot tell (a token login says neither the email nor the subscription)."""
     if provider := model.get("provider"):
         harness = model["harness"]
         return f"handler: {harness} · provider {provider} (its endpoint and key, no subscription)"
@@ -230,8 +251,10 @@ def terminal_identity(d: Daemon, model: dict[str, Any]) -> str:
     account = next((a for a in d.call("GET", "/v1/accounts") if a["name"] == name), {})
     harness = model.get("harness") or account.get("harness")  # a model it does not list: none
     described = f" ({account['description']})" if account.get("description") else ""
-    plan = account.get("plan")
-    subscription = f"{plan} subscription" if plan else "subscription, plan not set in the account"
+    kind = account.get("subscription")
+    subscription = (
+        f"{kind} subscription" if kind else "subscription, which one not set in the account"
+    )
     return f"handler: {harness} · account {name}{described} · {subscription}"
 
 
@@ -261,13 +284,26 @@ def print_connections(d: Daemon) -> None:
     table(rows)
 
 
+def check_connection(d: Daemon, name: str) -> int:
+    """Its tool's connection check (G.2), run as an agent of it gets the tool: 0 when it works."""
+    # its sandbox starts, maybe its image first, then the tool's command runs
+    result = d.call("POST", f"/v1/bindings/{quote(name, safe='')}/check", {}, timeout=300)
+    print(f"{name}: works" if result["ok"] else f"{name}: fails: {result.get('error')}")
+    if output := result.get("output"):
+        print(output)
+    return 0 if result["ok"] else 1
+
+
 def open_ui(*, print_only: bool) -> int:
     """A one-time link: the browser opening it is signed in, and keeps it (a bookmark opens the
     UI from then on); the token itself never reaches the browser."""
     url = Daemon().call("POST", "/v1/ui/open", {})["url"]
-    print(url)
-    if not print_only:
-        browser.open_url(url)
+    if print_only:
+        print(url)
+        return 0
+    print("Opening the web UI in your browser. If it does not open, copy this link into it")
+    print(f"(it signs that browser in, once, within two minutes):\n{url}")
+    browser.open_url(url)
     return 0
 
 
@@ -300,7 +336,11 @@ def parser() -> argparse.ArgumentParser:
     for name, help_text in (("connection", "tools with their settings and secrets"),
                             ("notes", "notes folders")):  # fmt: skip
         noun = sub.add_parser(name, help=help_text)
-        noun.add_subparsers(dest=f"{name}_cmd", required=True).add_parser("list")
+        verbs = noun.add_subparsers(dest=f"{name}_cmd", required=True)
+        verbs.add_parser("list")
+        if name == "connection":
+            check = verbs.add_parser("check", help="check it works, as an agent of it would")
+            check.add_argument("name", metavar="NAME")
     ui = sub.add_parser("ui", help="open the web UI, signed in")
     ui.add_argument("--print", action="store_true", help="only print the URL")
     return p
@@ -313,6 +353,7 @@ NOUNS: dict[str, Any] = {
     "account": account_commands,
     "provider": provider_commands,
     "secret": secret_commands,
+    "schema": schema_commands,
     "tool": tool_commands,
     "source": source_commands,
     "image": image_commands,
@@ -334,6 +375,8 @@ def dispatch(args: argparse.Namespace) -> int:
     if args.cmd == "ui":
         return open_ui(print_only=args.print)
     d = Daemon()
+    if args.cmd == "connection" and args.connection_cmd == "check":
+        return check_connection(d, args.name)
     if args.cmd == "connection":
         print_connections(d)
     elif args.cmd == "notes":

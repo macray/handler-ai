@@ -1,3 +1,4 @@
+import { ask } from "./ask.svelte";
 // Plans (D.27), in words: how far one went, from where it may run again; on review, who runs it
 // and the fix offered. Drafts: New plan (a draft for a project, the plan builder's session on it),
 // continued, thrown away.
@@ -46,7 +47,7 @@ export function runnerFix(read: PlanRead): "switch" | "create" | null {
  *  project's folder, on what the project's default agent runs as (a model of its area), else on
  *  any agent program of the project's; saved by you, in the new-agent form. */
 export function planRunner(project: Project): AgentSpec {
-  const programs = project.agents.filter((a) => !a.modelAlone && !a.app);
+  const programs = project.agents.filter((a) => !a.modelAlone);
   const like = programs.find((a) => a.id === project.defaultAgent) ?? programs[0];
   const name = freeName("plan-runner", project.agents.map(agentLabel));
   return {
@@ -83,12 +84,14 @@ export function areaRefused(e: unknown): boolean {
 /** Open a draft's builder session again. */
 export async function continueBuilder(sessionId: string): Promise<void> {
   const session = await api.session(sessionId);
+  if (!session.agentId) throw new Error("this session is no agent's");
   navigate({ view: "session", key: sessions.open(session, await api.agent(session.agentId)).key });
 }
 
 /** Throw a draft away, once confirmed: its text goes; its builder session stays. */
 export async function throwAwayDraft(d: PlanDraft): Promise<boolean> {
-  if (!confirm(`Throw away the draft${d.title ? ` "${d.title}"` : ""}? Its text goes; plans approved from it stay.`)) return false;
+  const title = `Throw away the draft${d.title ? ` "${d.title}"` : ""}?`;
+  if (!(await ask({ title, detail: "Its text goes; plans approved from it stay.", yes: "Throw away", danger: true }))) return false;
   await api.deletePlanDraft(d.id);
   return true;
 }

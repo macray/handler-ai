@@ -5,6 +5,7 @@ from fastapi.responses import Response
 
 from handler_contracts import (
     PairDeviceRequest,
+    SetComputerNameRequest,
     SetRemoteGatewayRequest,
 )
 
@@ -22,12 +23,21 @@ def add_remote_routes(app: FastAPI, ctx: Context) -> None:
     @app.put("/v1/remote/gateway", dependencies=authed)
     async def set_gateway(request: Request) -> Response:
         body = parse_body(SetRemoteGatewayRequest, await request.body())
-        ctx.remote.set_gateway(body.gateway_url, body.host_token)
+        await ctx.remote.set_gateway(body.gateway_url, body.host_token)
         return dump(ctx.remote.status())
 
     @app.delete("/v1/remote/gateway", dependencies=authed)
     async def clear_gateway() -> Response:
         ctx.remote.clear_gateway()
+        return dump(ctx.remote.status())
+
+    @app.put("/v1/remote/computer-name", dependencies=authed)
+    async def set_computer_name(request: Request) -> Response:
+        body = parse_body(SetComputerNameRequest, await request.body())
+        try:
+            ctx.remote.set_computer_name(body.computer_name)
+        except RemoteError as e:
+            raise ProblemError(409, "cannot name this computer", str(e)) from None
         return dump(ctx.remote.status())
 
     @app.post("/v1/remote/devices", dependencies=authed)

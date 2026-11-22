@@ -1,28 +1,36 @@
 <script lang="ts">
   // The Library's Tools shelf (G; in the files and the API, addons): what agents are given to
   // reach a system (a store, a browser), with your connections to them (D.15, bindings). Yours: a
-  // row each (its connections and the sites it reaches, who uses it, its state in a word: a broken
-  // one says so in amber with Fix, its message in the dialog), Handler's own folded, then what you
-  // could get. Get more: what the sources offer (SourceShelf), and a tool from a folder or an
-  // archive (AddonInstaller, which previews before anything is installed). Installed, a tool's
-  // page opens (ToolView), where it is connected. `install`: that source's preview open (G.5).
+  // card each, its state in a word (a broken one says so in amber with Fix, its message in the
+  // dialog), its connections under it (what each holds, who it is given to; Connect another, the
+  // tool's page with a new connection's form open), or who it is given to when it needs no
+  // connection; a connection whose tool is gone listed apart (Get <tool>, Delete); Handler's own
+  // folded, then what you could get. Community: what the sources offer (SourceShelf), and a tool
+  // from a folder or an archive (AddonInstaller, which previews before anything is installed).
+  // Installed, a tool's page opens (ToolView), where it is connected. `install`: that source's
+  // preview open (G.5).
+  import { ask } from "../lib/ask.svelte";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import FolderInput from "@lucide/svelte/icons/folder-input";
+  import Link from "@lucide/svelte/icons/link";
+  import Plus from "@lucide/svelte/icons/plus";
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import Wrench from "@lucide/svelte/icons/wrench";
   import { Button } from "$lib/components/ui/button";
   import AddonInstaller from "../components/AddonInstaller.svelte";
   import Dialog from "../components/Dialog.svelte";
   import LoadingCards from "../components/LoadingCards.svelte";
+  import ShelfBar from "../components/ShelfBar.svelte";
   import SourceShelf from "../components/SourceShelf.svelte";
   import { api } from "../lib/api";
   import type { AddonInfo, BindingInfo, Source } from "../lib/contracts.gen";
-  import { LIBRARY_WIDTH } from "../lib/library";
+  import { LIBRARY_WIDTH, type ShelfLists } from "../lib/library";
   import { href, navigate } from "../lib/router.svelte";
+  import { hasSlots } from "../lib/setup";
   import { offered } from "../lib/sources";
-  import { brokenBecause, sitesWords, TOOL_STATE, toolState } from "../lib/tools";
+  import { brokenBecause, connectionFacts, connectionUsers, givenWords, shelfOf, sitesWords, TOOL_STATE, toolOrigin, toolState, toolUsers } from "../lib/tools";
 
-  let { more = false, install }: { more?: boolean; install?: string } = $props();
+  let { more = false, install, lists }: { more?: boolean; install?: string; lists?: ShelfLists } = $props();
 
   let tools = $state<AddonInfo[]>([]);
   let connections = $state<BindingInfo[]>([]);
@@ -31,10 +39,8 @@
   let loaded = $state(false);
   let error = $state<string | null>(null);
   let installer = $state<AddonInstaller | null>(null);
-  // what is broken, its message shown: a tool (or one of its connections), or a connection
-  // whose tool is not installed
-  type Fixing = { name: string; messages: string[]; tool?: AddonInfo; connection?: string };
-  let fixing = $state<Fixing | null>(null);
+  // a broken tool (or one of its connections), its messages shown
+  let fixing = $state<{ tool: AddonInfo; messages: string[] } | null>(null);
   let looked: string | undefined;
 
   $effect(() => {
@@ -50,7 +56,7 @@
       error = null;
       for (const t of tools)
         api.uses("addon", t.name).then(
-          (u) => (usedBy = { ...usedBy, [t.name]: [...new Set((u.usedBy ?? []).filter((r) => r.kind === "agent" || r.kind === "project").map((r) => r.label))] }),
+          (u) => (usedBy = { ...usedBy, [t.name]: toolUsers(u.usedBy) }),
           () => undefined,
         );
     } catch (e) {
@@ -68,17 +74,17 @@
     );
   });
 
-  const yours = $derived(tools.filter((t) => !t.builtin));
-  const handlers = $derived(tools.filter((t) => t.builtin));
+  const shelf = $derived(shelfOf(tools, connections));
+  const yours = $derived(shelf.tools.filter((t) => !t.tool.builtin));
+  const handlers = $derived(shelf.tools.filter((t) => t.tool.builtin));
+  const orphans = $derived(shelf.orphans);
   const toGet = $derived(offered(sources, "addon").filter((o) => !o.item.installed));
-  const of = (t: AddonInfo) => connections.filter((c) => c.addon === t.name);
-  const orphans = $derived(connections.filter((c) => !tools.some((t) => t.name === c.addon)));
 
-  /** Installed: its page, its first connection's form open when it has settings. Updated: the
-   *  shelf again, its connections kept. */
+  /** Installed: its page, a new connection's form open when it has settings and no connection
+   *  yet (one kept from before is its again). Updated: the shelf again, its connections kept. */
   async function installed(_message: string, name: string, updated: boolean): Promise<void> {
     if (updated) await load();
-    else navigate({ view: "tool", name, connect: true });
+    else navigate({ view: "tool", name, connect: !connections.some((c) => c.addon === name) });
   }
 
   function retry(t: AddonInfo): void {
@@ -86,11 +92,17 @@
     void installer?.look(t.source ?? "");
   }
 
+  /** A connection's tool, got again: its preview from the source offering it, else Community. */
+  function getTool(tool: string): void {
+    const found = offered(sources, "addon").find((o) => o.item.name === tool);
+    if (found) void installer?.look(`source:${found.source.id}/${found.item.name}`);
+    else navigate({ view: "library", shelf: "tools", more: true });
+  }
+
   async function forget(connection: string): Promise<void> {
-    if (!confirm(`Delete the connection ${connection} and its secrets?`)) return;
+    if (!(await ask({ title: `Delete the connection ${connection} and its secrets?`, yes: "Delete", danger: true }))) return;
     try {
       await api.deleteBinding(connection);
-      fixing = null;
       await load();
     } catch (e) {
       error = (e as Error).message;
@@ -100,35 +112,63 @@
   const TONE = { broken: "text-warn", "not-set-up": "text-warn", "not-ready": "text-warn", preparing: "text-muted-foreground", ready: "text-ok" } as const;
 </script>
 
-{#snippet row(t: AddonInfo)}
-  {@const mine = of(t)}
+{#snippet card(t: AddonInfo, mine: BindingInfo[])}
   {@const state = toolState(t, mine)}
-  {@const users = usedBy[t.name] ?? []}
-  <li class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="addon-card">
-    <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Wrench class="size-4" /></span>
-    <a class="min-w-0 flex-1 basis-56 text-foreground no-underline" href={href({ view: "tool", name: t.name })} data-testid="tool-open">
-      <span class="block font-medium hover:underline">{t.name}</span>
-      <span class="fact block truncate" data-testid="addon-contents"
-        >{#if mine.length}{mine.map((c) => `${t.name}: ${c.name}`).join(", ")} · {/if}{#if !mine.length && t.description}<span class="font-sans">{t.description}</span> · {/if}{sitesWords(t)}</span
-      >
-    </a>
-    <span class="hidden max-w-48 truncate text-xs text-muted-foreground md:block" title={users.join(", ")} data-testid="tool-used-by">{users.length ? users.join(", ") : "nobody yet"}</span>
-    {#if state === "broken"}
-      <span class="inline-flex w-24 items-center gap-1 text-xs text-warn" data-testid="addon-state"><TriangleAlert class="size-3" />Broken</span>
-      <Button size="sm" variant="outline" onclick={() => (fixing = { name: t.name, messages: brokenBecause(t, mine), tool: t })} data-testid="tool-fix">Fix</Button>
-    {:else}
-      <span class="inline-flex w-24 items-center gap-1.5 text-xs {TONE[state]}" data-testid="addon-state"><span class="size-1.5 rounded-full bg-current"></span>{TOOL_STATE[state]}</span>
-      {#if state === "not-set-up"}
-        <Button size="sm" variant="outline" href={href({ view: "tool", name: t.name })} data-testid="tool-set-up">Set up</Button>
+  {@const slots = hasSlots(t)}
+  <li class="overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel" data-testid="addon-card">
+    <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+      <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Wrench class="size-4" /></span>
+      <a class="min-w-0 flex-1 basis-56 text-foreground no-underline" href={href({ view: "tool", name: t.name })} data-testid="tool-open">
+        <span class="block font-medium hover:underline">{t.name}</span>
+        <span class="block truncate text-xs text-muted-foreground" title={t.egress?.join(", ")} data-testid="addon-contents"
+          >{[t.description, `reaches ${sitesWords(t)}`, !slots && !t.error && "no settings, no connection needed", toolOrigin(t)].filter(Boolean).join(" · ")}</span
+        >
+      </a>
+      {#if state === "broken"}
+        <span class="inline-flex w-24 items-center gap-1 text-xs text-warn" data-testid="addon-state"><TriangleAlert class="size-3" />Broken</span>
+        <Button size="sm" variant="outline" onclick={() => (fixing = { tool: t, messages: brokenBecause(t, mine) })} data-testid="tool-fix">Fix</Button>
       {:else}
-        <Button size="sm" variant="ghost" href={href({ view: "tool", name: t.name })} data-testid="tool-edit">Edit</Button>
+        <span class="inline-flex w-24 items-center gap-1.5 text-xs {TONE[state]}" data-testid="addon-state"><span class="size-1.5 rounded-full bg-current"></span>{TOOL_STATE[state]}</span>
+        {#if state === "not-set-up"}
+          <Button size="sm" variant="outline" href={href({ view: "tool", name: t.name })} data-testid="tool-set-up">Set up</Button>
+        {:else}
+          <Button size="sm" variant="ghost" href={href({ view: "tool", name: t.name })} data-testid="tool-edit">Open</Button>
+        {/if}
       {/if}
+    </div>
+    {#if mine.length || (slots && !t.error)}
+      <div class="border-t bg-muted/30 px-4 py-2.5" data-testid="tool-connections">
+        <p class="pb-1 text-xs font-medium text-muted-foreground">Its connections</p>
+        <ul>
+          {#each mine as c (c.name)}
+            {@const facts = connectionFacts(c)}
+            <li class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 py-1.5" data-testid="tool-connection">
+              <Link class="size-3.5 shrink-0 text-muted-foreground" />
+              <span class="font-medium">{c.name}</span>
+              {#if c.error}
+                <span class="min-w-0 flex-1 truncate text-xs text-danger" title={c.error}>Broken: {c.error}</span>
+              {:else}
+                {#if facts.length}<span class="min-w-0 truncate text-xs text-muted-foreground" title={Object.entries(c.settings ?? {}).map(([k, v]) => `${k}=${v}`).join("  ")}>{facts.join(" · ")}</span>{/if}
+                <span class="ml-auto text-xs text-muted-foreground" data-testid="connection-given">{givenWords(connectionUsers(c.usedBy))}</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if slots && !t.error}
+          <a class="mt-1 inline-flex items-center gap-1.5 py-1 text-sm font-medium text-link no-underline hover:underline" href={href({ view: "tool", name: t.name, connect: true })} data-testid="tool-connect"
+            ><Plus class="size-3.5" />{mine.length ? "Connect another" : "Connect"}</a
+          >
+        {/if}
+      </div>
+    {:else if !slots && !t.error}
+      <p class="border-t bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground first-letter:uppercase" data-testid="tool-used-by">{givenWords(usedBy[t.name] ?? [])}</p>
     {/if}
   </li>
 {/snippet}
 
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full {LIBRARY_WIDTH} space-y-5 px-8 py-6" data-testid="addons-page">
+    <ShelfBar {lists} />
     {#if error}<p class="text-sm text-danger" data-testid="binding-error">{error}</p>{/if}
 
     {#if more}
@@ -149,20 +189,9 @@
     {:else if !loaded}
       <LoadingCards />
     {:else}
-      {#if yours.length || orphans.length}
-        <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel" data-testid="addons">
-          {#each yours as t (t.name)}{@render row(t)}{/each}
-          {#each orphans as c (c.name)}
-            <li class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="binding-row">
-              <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Wrench class="size-4" /></span>
-              <span class="min-w-0 flex-1 basis-56">
-                <span class="block font-medium">{c.name}</span>
-                <span class="fact block truncate">a connection to {c.addon ?? "a tool"}, not installed</span>
-              </span>
-              <span class="inline-flex w-24 items-center gap-1 text-xs text-warn"><TriangleAlert class="size-3" />Broken</span>
-              <Button size="sm" variant="outline" onclick={() => (fixing = { name: c.name, messages: [c.error ?? `its tool ${c.addon} is not installed`], connection: c.name })} data-testid="tool-fix">Fix</Button>
-            </li>
-          {/each}
+      {#if yours.length}
+        <ul class="space-y-3" data-testid="addons">
+          {#each yours as { tool, connections: mine } (tool.name)}{@render card(tool, mine)}{/each}
         </ul>
       {:else}
         <div class="rounded-[10px] border border-dashed px-6 py-8 text-center text-sm text-muted-foreground" data-testid="addons-steps">
@@ -170,14 +199,35 @@
         </div>
       {/if}
 
+      {#if orphans.length}
+        <section data-testid="connections-without-tool">
+          <h2 class="mb-1.5 text-sm font-semibold text-muted-foreground">{orphans.length === 1 ? "A connection without its tool" : "Connections without their tool"}</h2>
+          <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
+            {#each orphans as c (c.name)}
+              <li class="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="binding-row">
+                <Link class="size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0 flex-1 basis-56">
+                  <span class="block font-medium">{c.name}</span>
+                  <span class="block text-xs break-words text-danger" title={c.error ?? undefined} data-testid="binding-error-message"
+                    >{c.addon ? `Its tool "${c.addon}" isn't installed any more: agents given it don't get it.` : c.error}</span
+                  >
+                </span>
+                {#if c.addon}<Button size="sm" variant="outline" onclick={() => getTool(c.addon ?? "")} data-testid="connection-get">Get {c.addon}</Button>{/if}
+                <Button size="sm" variant="ghost" onclick={() => forget(c.name)} data-testid="binding-delete">Delete</Button>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+
       {#if handlers.length}
         <details class="group rounded-[10px] bg-muted/50" data-testid="tools-from-handler">
           <summary class="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground">
             <ChevronRight class="size-4 transition-transform group-open:rotate-90" />From Handler
-            <span class="fact ml-auto">{handlers.map((t) => t.name).join(", ")}</span>
+            <span class="fact ml-auto">{handlers.map((t) => t.tool.name).join(", ")}</span>
           </summary>
-          <ul class="divide-y overflow-hidden rounded-b-[10px] border-t bg-card text-sm">
-            {#each handlers as t (t.name)}{@render row(t)}{/each}
+          <ul class="space-y-3 px-2 pb-2">
+            {#each handlers as { tool, connections: mine } (tool.name)}{@render card(tool, mine)}{/each}
           </ul>
         </details>
       {/if}
@@ -187,7 +237,7 @@
           <Wrench class="size-4 text-muted-foreground" />
           <span>{toGet.length} more tool{toGet.length === 1 ? "" : "s"}</span>
           {#each toGet.slice(0, 3) as { item } (item.name)}<span class="rounded-md border px-1.5 py-0.5 text-xs">{item.name}</span>{/each}
-          <Button size="sm" variant="outline" class="ml-auto" href={href({ view: "library", shelf: "tools", more: true })}>Get more</Button>
+          <Button size="sm" variant="outline" class="ml-auto" href={href({ view: "library", shelf: "tools", more: true })}>Community</Button>
         </div>
       {/if}
     {/if}
@@ -196,7 +246,7 @@
 
 <AddonInstaller bind:this={installer} oninstalled={installed} />
 
-<Dialog bind:open={() => fixing !== null, (v) => (v ? null : (fixing = null))} title={fixing ? `${fixing.name} is broken` : ""} testid="tool-fix-dialog">
+<Dialog bind:open={() => fixing !== null, (v) => (v ? null : (fixing = null))} title={fixing ? `${fixing.tool.name} is broken` : ""} testid="tool-fix-dialog">
   {#if fixing}
     {@const f = fixing}
     <div class="space-y-4 text-sm">
@@ -204,11 +254,8 @@
         {#each f.messages as m (m)}<li>{m}</li>{/each}
       </ul>
       <div class="flex flex-wrap justify-end gap-2 border-t pt-4">
-        {#if f.connection}
-          <Button size="sm" variant="ghost" class="text-destructive hover:text-destructive" onclick={() => forget(f.connection ?? "")} data-testid="binding-delete">Delete the connection</Button>
-        {/if}
-        {#if f.tool?.source}<Button size="sm" variant="outline" onclick={() => f.tool && retry(f.tool)} data-testid="tool-reinstall">Install it again</Button>{/if}
-        {#if f.tool}<Button size="sm" href={href({ view: "tool", name: f.tool.name })} onclick={() => (fixing = null)}>Its page</Button>{/if}
+        {#if f.tool.source}<Button size="sm" variant="outline" onclick={() => retry(f.tool)} data-testid="tool-reinstall">Install it again</Button>{/if}
+        <Button size="sm" href={href({ view: "tool", name: f.tool.name })} onclick={() => (fixing = null)}>Its page</Button>
       </div>
     </div>
   {/if}

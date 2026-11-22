@@ -1,11 +1,13 @@
 <script lang="ts">
   // Notes (D.5; in the files and the API, knowledge), the Library's Notes shelf: the notes root
   // (where it is, changed here unless HANDLER_NOTES_DIR sets it), its folders (browse, create)
-  // and their notes, read-only. There is nothing to set up: the default root is made by handlerd.
+  // and their notes, read-only; a folder some agent may write shows its history (Undo). There is
+  // nothing to set up: the default root is made by handlerd.
   // A folder's _index.md, when there is one, is shown first: its summary, then its overview. Each
   // agent gets the folders selected in its settings (only there). The root is changed, and a
   // folder made, in a dialog; the root's is one path, its button saying what it will do
   // (Use this folder / Create this folder, from GET /v1/knowledge/check).
+  import NotesHistoryPanel from "../components/NotesHistoryPanel.svelte";
   import UsesPanel from "../components/UsesPanel.svelte";
   import BookOpen from "@lucide/svelte/icons/book-open";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -136,7 +138,7 @@
         {#if listing}
           <p class="fact">
             {#if listing.source === "env"}where your notes are, set by HANDLER_NOTES_DIR{:else}where your notes are{listing.source === "default" ? ", the default place" : ", chosen here"}{/if}
-            · {#if listing.exists}{listing.folders.length} folder{listing.folders.length === 1 ? "" : "s"} · agents get them in their settings, read only{:else}<span class="text-danger">this folder does not exist</span>{/if}
+            · {#if listing.exists}{listing.folders.length} folder{listing.folders.length === 1 ? "" : "s"} · agents get them in their settings, read only or read-write{:else}<span class="text-danger">this folder does not exist</span>{/if}
           </p>
         {/if}
       </div>
@@ -195,7 +197,7 @@
               {/if}
               {#if shown.meta.length > 1 || (shown.meta.length === 1 && !summary)}
                 <dl class="fact grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-                  {#each shown.meta.filter(([k]) => k !== "summary") as [k, v] (k)}<dt>{k}</dt><dd class="text-foreground">{v}</dd>{/each}
+                  {#each shown.meta.filter(([k]) => k !== "summary") as [k, v] (k)}<dt>{k}</dt><dd class="whitespace-pre-line text-foreground">{v}</dd>{/each}
                 </dl>
               {/if}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -235,6 +237,7 @@
             {:else}
               <p class="text-sm text-muted-foreground">This folder is empty.</p>
             {/if}
+            <NotesHistoryPanel {folder} />
           {/if}
         </article>
       </div>

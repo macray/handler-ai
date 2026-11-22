@@ -3,8 +3,8 @@
   // of the section (a dropdown in a narrow window); the menu stays as on every page. The everyday
   // ones: model access (accounts D.9 and providers D.12, ModelAccess); Handler's helpers (its
   // needs, D.18; one helper's page, `helper`); the work folders (D.13); your phone (D.7);
-  // appearance. Then Expert, folded until opened once, a dot on it when something inside needs
-  // fixing (this computer's sandboxes, a secret that needs you): areas (D.19); the secrets (D.14,
+  // appearance. Then Expert, folded until opened once, a dot on it only when something inside is a
+  // risk the person can fix (an agent reads a secret's real value today, E1): areas (D.19); the secrets (D.14,
   // E3); Voice (speaking to Ask, D.25); the caches (D.8); the sandboxes (D.2, D.4); the sources
   // (D.26).
   import CachesSettings from "../components/CachesSettings.svelte";
@@ -36,9 +36,8 @@
   import { needLabel } from "../lib/helpers";
   import { LIGHT_LABEL, lightTone, remote } from "../lib/remote.svelte";
   import { href } from "../lib/router.svelte";
-  import { runtime } from "../lib/runtime.svelte";
   import { menuUse } from "../lib/menuuse.svelte";
-  import { needsYou } from "../lib/secrets";
+  import { agentReads } from "../lib/secrets";
   import { expertOpened, openExpert, SETTINGS_EXPERT, SETTINGS_MAIN, SETTINGS_SECTIONS, type SettingsSection } from "../lib/settings";
 
   const ICONS: Record<SettingsSection, typeof KeyRound> = {
@@ -68,17 +67,18 @@
     opened = true;
     openExpert();
   }
-  // what needs fixing inside Expert: this computer cannot run every sandbox (A.8); a secret is
-  // missing, or an agent reads one (D.14, E3), checked again on each section opened
+  // what needs fixing inside Expert (E1): only an agent reading a secret's real value today (D.14,
+  // E3), checked again on each section opened. Not what this computer lacks (A.8: a fact on
+  // Sandboxes' own page; one that stops every agent is said on every page, App)
   let secretsNeed = $state(false);
   $effect(() => {
     void section;
     api.secrets().then(
-      (list) => (secretsNeed = list.some(needsYou)),
+      (list) => (secretsNeed = list.some(agentReads)),
       () => {},
     );
   });
-  const fix = $derived<Partial<Record<SettingsSection, boolean>>>({ secrets: secretsNeed, sandboxes: !!runtime.last?.items.some((i) => !i.ok) });
+  const fix = $derived<Partial<Record<SettingsSection, boolean>>>({ secrets: secretsNeed });
   const expertFix = $derived(Object.values(fix).some(Boolean));
 
   const label = $derived(SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "");

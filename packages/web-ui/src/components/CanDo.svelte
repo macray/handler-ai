@@ -21,6 +21,7 @@
   import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
   import { isEgressEntry, normalizeEntry, withList } from "../lib/hosts";
   import type { AgentSpec } from "../lib/projects.svelte";
+  import { runtime } from "../lib/runtime.svelte";
   import { NETWORK_MODES, type NeededSite } from "../lib/safety";
   import NetworkMeter from "./NetworkMeter.svelte";
   import Switch from "./Switch.svelte";
@@ -32,6 +33,7 @@
     program,
     needed,
     gives,
+    engines,
     displayAvailable,
   }: {
     spec: AgentSpec;
@@ -40,10 +42,14 @@
     program: string; // its program, as named: "pi"
     needed: NeededSite[]; // the sites what it uses needs
     gives: RuntimeSupports | null; // what this computer's sandboxes give (unknown: nothing greyed)
+    engines: string[]; // the toolbox's container engines (none: podman, added when saved)
     displayAvailable: boolean; // the daemon found a display
   } = $props();
 
   const given = (level: RuntimeSupports["abilities"][number]) => gives === null || gives.abilities.includes(level);
+  // podman runs containers in a sandbox only with enough subordinate ids, which only you can add
+  // (root's command, in the check's item)
+  const fewIds = $derived(runtime.last?.items.some((i) => i.name === "subordinate ids" && !i.ok) ?? false);
   const noDisplay = $derived(gives !== null && !gives.abilities.includes("display"));
 
   // a site typed: allowed, or kept blocked
@@ -116,7 +122,7 @@
                 <Lock class="size-3.5 text-muted-foreground" /><span class="font-mono text-xs">{s.host}</span><span class="text-xs text-muted-foreground">{s.why}</span>
               </p>
             {:else}
-              <p class="text-xs text-muted-foreground">None{spec.model.account || spec.model.provider ? "" : " yet: choose what it runs on"}.</p>
+              <p class="text-xs text-muted-foreground">None{spec.model.account || spec.model.provider ? "" : " yet: choose who works"}.</p>
             {/each}
           </div>
           {#if spec.allow.length || spec.blocked.length}
@@ -203,7 +209,7 @@
       <Box class="size-4 {spec.confinement !== 'strict' ? '' : 'text-muted-foreground'}" />
       <span class={LABEL}>Runs containers</span>
       <span class={HINT}>
-        {spec.confinement === "privileged" ? "a privileged sandbox runs them too" : given("nested") ? "podman inside its sandbox" : "not on this computer (Settings → Sandboxes)"}
+        {spec.confinement === "privileged" ? "a privileged sandbox runs them too" : given("nested") ? `${engines.length ? engines.join(" and ") : "podman"} inside its sandbox` : fewIds ? "needs more subordinate ids on this computer (Settings → Sandboxes)" : "not on this computer (Settings → Sandboxes)"}
       </span>
       <Switch
         checked={spec.confinement !== "strict"}

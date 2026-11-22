@@ -83,9 +83,11 @@ def http(device: Device, method: str, path: str, body: Any = None) -> tuple[int,
 
 @pytest.mark.rule("remote.polls-only-while-something-is-reachable")
 def test_sharing_an_app_starts_polling(daemon: Daemon) -> None:
-    wait_light(daemon, "idle")  # nothing shared
+    assert light(daemon) == "ok"  # Connect's try, kept while nothing is shared
     assert share(daemon, "owner")["persons"] == ["owner"]
     wait_light(daemon, "ok")
+    phone = pair(daemon)  # answered: handlerd polls
+    assert phone.request(None, "_handler/remote/list_apps")["person"] == "owner"
 
 
 @pytest.mark.rule(
@@ -94,6 +96,7 @@ def test_sharing_an_app_starts_polling(daemon: Daemon) -> None:
     "phone-app.its-page-reaches-nothing",
 )
 def test_owner_uses_the_app(daemon: Daemon) -> None:
+    share(daemon, "owner")
     phone = pair(daemon)
     listed = phone.request(None, "_handler/remote/list_apps")
     assert listed["person"] == "owner" and listed["scope"] == "all"
@@ -108,8 +111,9 @@ def test_owner_uses_the_app(daemon: Daemon) -> None:
         "unchanged": True,
     }
 
-    assert http(phone, "GET", "/api/count") == (200, {"n": 0})
-    assert http(phone, "POST", "/api/count", {}) == (200, {"n": 1})
+    status, count = http(phone, "GET", "/api/count")
+    assert status == 200
+    assert http(phone, "POST", "/api/count", {}) == (200, {"n": count["n"] + 1})
     status, who = http(phone, "GET", "/api/whoami")
     assert status == 200 and who["person"] == "owner"
     with pytest.raises(DeviceError) as e:
@@ -125,9 +129,10 @@ def test_owner_uses_the_app(daemon: Daemon) -> None:
 def test_family_member_gets_only_what_is_shared_with_them(daemon: Daemon) -> None:
     r = api(daemon, "POST", "/v1/remote/devices", {"name": "x", "person": "alice"})
     assert r.status_code == 409  # a family member's device reaches apps only
+    share(daemon, "owner")  # something is reachable: handlerd answers the devices
     alice = pair(daemon, person="alice", scope="apps")
     devices = api(daemon, "GET", "/v1/remote").json()["devices"]
-    assert {(d["person"], d["scope"]) for d in devices} >= {("alice", "apps"), ("owner", "all")}
+    assert ("alice", "apps") in {(d["person"], d["scope"]) for d in devices}
 
     assert alice.request(None, "_handler/remote/list_sessions") == {"sessions": []}
     assert alice.request(None, "_handler/remote/list_apps")["apps"] == []

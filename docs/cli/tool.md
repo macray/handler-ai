@@ -28,7 +28,7 @@ handler tool rm NAME
 
 | Option | |
 |---|---|
-| `--from SOURCE` | `add` NAME from that source (its id in `handler source list`) |
+| `--from SOURCE` | `add` NAME from that source (its id in `handler source list`, or its URL) |
 | `--yes` | `add` without asking |
 | `--verbose` | `add`: the build's full log on the terminal, instead of one line per image and the log in a file |
 
@@ -39,7 +39,7 @@ handler tool list
 handler source list                       # what the sources offer
 handler tool add playwright
 # its connection: Library → Tools → playwright → Connect, named browser
-cd ~/code/my-site && handler run claude-perso --tool playwright=browser --display
+cd ~/code/my-site && handler run claude --tool playwright=browser --display
 ```
 
 ## See also

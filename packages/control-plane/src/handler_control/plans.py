@@ -24,7 +24,7 @@ import logging
 import re
 import secrets
 import shutil
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -254,11 +254,9 @@ def _text(lines: list[str] | None) -> str | None:
 
 def agent_problems(settings: Settings, agent: AgentRecord, mode: bool = True) -> list[str]:
     """Why `agent` cannot run a plan's steps: each one a fresh session nobody answers, working in
-    its folder (`plan.its-agent-its-settings`); without its mode, when `mode` is False (one you
+    its folder (`plan.each-step-a-session-of-its-runner-as-set-now`); without its mode, when `mode` is False (one you
     may switch on review)."""
     name = agent.name or agent.id
-    if agent.app is not None:
-        return [f"{name} is one of the app {agent.app}'s parts: started by its app only"]
     if agent.scope is None or agent.model_alone:
         return [f"{name} has no folder of its own: a plan's steps work in one"]
     found = []
@@ -385,6 +383,7 @@ class PlanStore:
         self.inbox = inbox
         self.root = settings.state_dir / "plans"
         self.runners: dict[str, asyncio.Task[None]] = {}  # a running plan's id → its runner
+        self.watchers: list[Callable[[], None]] = []  # told after each save (the web UI, D.30)
 
     # ── reading a file ──────────────────────────────────────────────────
 
@@ -400,22 +399,17 @@ class PlanStore:
         except OSError as e:
             raise PlanError(400, "cannot read the plan", f"{path}: {e.strerror}") from None
         digest = hashlib.sha256(data).hexdigest()
-        if size > MAX_BYTES:
-            return PlanRead(
-                path=path,
-                digest=digest,
-                step_timeout_sec=DEFAULT_STEP_TIMEOUT_SEC,
-                problems=[f"larger than {MAX_BYTES // 1024} KiB"],
-                text="",
-            )
+        unreadable = f"larger than {MAX_BYTES // 1024} KiB" if size > MAX_BYTES else None
         try:
-            text = data.decode()
+            text = data.decode() if unreadable is None else ""
         except UnicodeDecodeError:
+            text, unreadable = "", "not UTF-8 text"
+        if unreadable is not None:
             return PlanRead(
                 path=path,
                 digest=digest,
                 step_timeout_sec=DEFAULT_STEP_TIMEOUT_SEC,
-                problems=["not UTF-8 text"],
+                problems=[unreadable],
                 text="",
             )
         parsed = parse(text)
@@ -486,7 +480,7 @@ class PlanStore:
         """Its text read again: the same digest as the one you read, no problem
         (`plan.what-runs-is-what-you-approved`); its copy kept in handlerd's state, a new plan
         each time, never changed by its draft afterwards (`plan.a-draft-is-not-a-plan`); its
-        runner bound by id (`plan.its-agent-its-settings`), run from its first step."""
+        runner bound by id (`plan.each-step-a-session-of-its-runner-as-set-now`), run from its first step."""
         read = self.read(source, runner)
         if read.digest != digest:
             raise PlanError(
@@ -541,6 +535,8 @@ class PlanStore:
 
     def save_progress(self, plan_id: str, progress: Progress) -> None:
         write_private(self.root / plan_id / "state.json", json.dumps(asdict(progress), indent=2))
+        for watcher in self.watchers:
+            watcher()
 
     def running_of(self, agent_id: str) -> str | None:
         """The plan of that agent running, if any (one at a time per agent)."""
@@ -776,8 +772,8 @@ class PlanStore:
 
     def start_step(self, plan: Approved, progress: Progress, n: int) -> str:
         """Step `n`'s session: a fresh one of the plan's agent, with its settings as they are now
-        (`plan.its-agent-its-settings`), unattended, its first turn composed from the approved copy
-        (`plan.a-step-knows-only-its-notes`)."""
+        (`plan.each-step-a-session-of-its-runner-as-set-now`), unattended, its first turn composed from the approved copy
+        (`plan.a-step-knows-only-the-earlier-steps-notes`)."""
         agent = self.registry.get(plan.agent_id)
         if agent is None:
             raise PlanError(409, "its agent was deleted")

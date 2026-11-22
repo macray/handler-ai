@@ -17,7 +17,7 @@
   import { api } from "../lib/api";
   import type { AddonInfo, SourceItemDetail } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
-  import { actionWords, fromWords, itemFacts, takeItem, type KindPath, type OfferedKind } from "../lib/sources";
+  import { actionWords, belowTitle, fromWords, itemFacts, readmeTitle, takeItem, type KindPath, type OfferedKind } from "../lib/sources";
 
   let { source, kind, name }: { source: string; kind: KindPath; name: string } = $props();
 
@@ -36,6 +36,8 @@
   const ICON = { app: AppWindow, agents: Bot, addon: Puzzle };
   const facts = $derived(detail ? itemFacts(detail, addons) : { mayDo: [], needs: [] });
   const item = $derived(detail?.item);
+  // its display name: its README's leading `# …` (dropped from the README shown), else its name
+  const readme = $derived(detail?.readme ? readmeTitle(detail.readme) : null);
   const action = $derived(item ? actionWords(item) : null);
   const kindWords = $derived.by(() => {
     if (!detail || !item) return "";
@@ -61,7 +63,7 @@
   }
 </script>
 
-<PageHeader width="max-w-5xl" title={name} parent={kind === "agents" ? { label: "Projects", href: href({ view: "projects" }) } : { label: kind === "apps" ? "Library › Apps" : "Library › Tools", href: href({ view: "library", shelf: kind === "apps" ? "apps" : "tools", more: true }) }} />
+<PageHeader width="max-w-5xl" title={readme?.title ?? item?.title ?? name} parent={kind === "agents" ? { label: "Projects", href: href({ view: "projects" }) } : { label: kind === "apps" ? "Library › Apps" : "Library › Tools", href: href({ view: "library", shelf: kind === "apps" ? "apps" : "tools", more: true }) }} />
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full max-w-5xl space-y-6 px-8 py-10" data-testid="discover-item-page">
     {#if error}<p class="text-sm text-danger" data-testid="discover-item-error">{error}</p>{/if}
@@ -101,8 +103,8 @@
       {/if}
       <div class="grid items-start gap-7 lg:grid-cols-[1fr_20rem]">
         <div class="min-w-0 space-y-5">
-          {#if detail.readme}
-            <div class="md text-sm" data-testid="discover-item-readme">{@html markdown(detail.readme)}</div>
+          {#if readme?.body.trim()}
+            <div class="md text-sm" data-testid="discover-item-readme">{@html belowTitle(markdown(readme.body))}</div>
           {:else if item.description}
             <p class="text-sm text-muted-foreground">{item.description}</p>
           {/if}

@@ -5,13 +5,15 @@ image built and extracted on each runtime: tests/sandbox/conformance/test_addon_
 
 import io
 import json
+import platform
 import tarfile
 from pathlib import Path
 
 import pytest
 
-from handler_sandbox_kit.image_archive import unpack
+from handler_sandbox_kit.image_archive import ImageArchiveError, unpack
 
+ARCH = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
 Layer = list[tuple[str, str | None]]  # (path, content): None makes a folder; "->x" a link to x
 
 
@@ -38,8 +40,9 @@ def _layer(entries: Layer) -> bytes:
     return _tar(made)
 
 
-def archive(tmp_path: Path, *layers: Layer) -> Path:
-    """An image archive as `image save` writes it (OCI layout), these layers first to last."""
+def archive(tmp_path: Path, *layers: Layer, platforms: list[str] | None = None) -> Path:
+    """An image archive as `image save` writes it (OCI layout), these layers first to last;
+    `platforms`: under an index of these (`os/arch`), the layers the machine's, the others' empty."""
     blobs: list[tuple[str, bytes]] = []
 
     def blob(data: bytes) -> str:
@@ -48,7 +51,18 @@ def archive(tmp_path: Path, *layers: Layer) -> Path:
         return digest
 
     manifest = {"layers": [{"digest": blob(_layer(layer))} for layer in layers]}
-    index = {"manifests": [{"digest": blob(json.dumps(manifest).encode())}]}
+    top = {"digest": blob(json.dumps(manifest).encode())}
+    if platforms is not None:
+        mine = f"linux/{ARCH}"
+        entries = []
+        for p in platforms:
+            os_, arch = p.split("/")
+            other = {"digest": blob(json.dumps({"layers": []}).encode())}
+            entries.append(
+                (top if p == mine else other) | {"platform": {"os": os_, "architecture": arch}}
+            )
+        top = {"digest": blob(json.dumps({"manifests": entries}).encode())}
+    index = {"manifests": [top]}
     files = [(tarfile.TarInfo("index.json"), json.dumps(index).encode())]
     files += [(tarfile.TarInfo(f"blobs/{d.replace(':', '/')}"), data) for d, data in blobs]
     saved = tmp_path / "image.tar"
@@ -139,3 +153,17 @@ def test_a_whiteout_never_removes_a_file_outside_the_folder(tmp_path: Path, uppe
     folder.mkdir(parents=True)
     unpack(archive(tmp_path, [*BASE, ("opt/t/l", f"->{victim}")], upper), "/opt/t", folder)
     assert (victim / "f").read_text() == "mine"
+
+
+@pytest.mark.rule("runtime.reads-an-image-without-running-it")
+def test_an_index_of_platforms_gives_this_machine_s_image(tmp_path: Path) -> None:
+    """Apple's `image save` lists every platform of a pulled image, linux/386 first (1.7.1)."""
+    saved = archive(tmp_path, BASE, platforms=["linux/386", f"linux/{ARCH}", "linux/s390x"])
+    unpack(saved, "/opt/t", tmp_path / "out")
+    assert tree(tmp_path / "out") == ["a", "b", "sub", "sub/old"]
+    with pytest.raises(ImageArchiveError, match="no linux/"):
+        unpack(
+            archive(tmp_path, BASE, platforms=["linux/386", "linux/s390x"]),
+            "/opt/t",
+            tmp_path / "none",
+        )

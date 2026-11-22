@@ -8,7 +8,13 @@ action, its form filled), `needs` (one question) or `none`. A pick is checked ag
 form, then run as the owner (AppStore.act): its answer comes back with the pick, or, for an agent's
 action still running, is read again on the app (and reaches the inbox).
 
-Stateless: the client sends the whole exchange each time; a reply is one more turn.
+The client sends the whole exchange each time; a reply is one more turn. Each ask is kept in
+Ask's history (ask_history.py) as it ended, whatever answered it or failed; one that failed or
+that no app does is also told to the inbox. A job's action still running is read again when the
+history is, and its record says how it ended.
+
+A nudge's form (H.17) is filled the same way from what was said, its action alone offered: the
+filled form goes back to the person, who sends it; nothing runs from it.
 """
 
 import json
@@ -16,11 +22,22 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from handler_contracts import ActionOption, AskTurn, AssistantAnswer, SessionInput
+from handler_contracts import (
+    ActionOption,
+    AskHistory,
+    AskRecord,
+    AskTurn,
+    AskVia,
+    AssistantAnswer,
+    NudgeFill,
+    SessionInput,
+)
 
 from . import handler_needs, interfaces, save_rules
 from .agents import AgentRecord
-from .apps import AppError, AppStore
+from .apps import AppError, AppNotFoundError, AppStore
+from .ask_history import AskHistoryStore
+from .nudges import NudgeError
 from .sessions import SessionStore
 from .settings import Settings
 
@@ -36,10 +53,17 @@ class AssistantError(Exception):
 
 
 class Assistant:
-    def __init__(self, settings: Settings, apps: AppStore, sessions: SessionStore) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        apps: AppStore,
+        sessions: SessionStore,
+        history: AskHistoryStore,
+    ) -> None:
         self.settings = settings
         self.apps = apps
         self.sessions = sessions
+        self.history = history
 
     def router(self) -> AgentRecord:
         """The Ask router given (D.18); 409 when none is."""
@@ -56,17 +80,71 @@ class Assistant:
         )
 
     def options(self) -> list[tuple[str, str, dict[str, Any]]]:
-        """What can be asked now: (app, action, its view) of each installed, askable app."""
+        """What can be asked now: (app, action, its view) of each installed app's actions in Ask."""
         found: list[tuple[str, str, dict[str, Any]]] = []
         for app in self.apps.views():
-            if app.current is None or not app.askable:
+            if app.current is None:
                 continue
-            for action in app.actions:
-                view = action.model_dump(mode="json", by_alias=True, exclude_none=True)
+            for action in (a for a in app.actions if a.in_ask):
+                view = action.model_dump(
+                    mode="json", by_alias=True, exclude_none=True, exclude={"in_ask"}
+                )
                 found.append((app.name, action.name, view | {"app": app.description or ""}))
         return found
 
-    async def answer(self, turns: list[AskTurn], timezone: str | None) -> AssistantAnswer:
+    async def answer(
+        self, turns: list[AskTurn], timezone: str | None, via: AskVia, spoken: bool
+    ) -> AssistantAnswer:
+        """What was said, routed and run; kept in Ask's history as it ended, either way."""
+        try:
+            answer = await self.routed(turns, timezone)
+        except AssistantError as e:
+            self.kept(self.history.add(via, spoken, turns, error=str(e)))
+            raise
+        self.kept(self.history.add(via, spoken, turns, answer))
+        return answer
+
+    def unheard(self, via: AskVia, error: str) -> None:
+        """What was said could not be written down (D.25): an ask with no words, failed."""
+        self.kept(self.history.add(via, True, [], error=f"Nothing was written down: {error}"))
+
+    def kept(self, record: AskRecord) -> None:
+        """An ask that failed, or that no app does, also goes to the inbox."""
+        if record.outcome not in ("failed", "none"):
+            return
+        said = next((t.text for t in reversed(record.turns) if t.who == "you"), None)
+        answer = record.answer
+        picked = f"{answer.app} · {answer.action}" if answer and answer.app else None
+        title = {"none": "No app does that"}.get(record.outcome) or (
+            f"{picked} failed" if picked else "Ask could not answer"
+        )
+        self.apps.inbox.add(
+            source="ask",
+            name="Ask",
+            person="owner",
+            title=title,
+            status="failed",
+            summary=(f"“{said}”: " if said else "") + record.summary,
+            app=answer.app if answer and answer.run else None,
+        )
+
+    def history_view(self) -> AskHistory:
+        """Ask's history, a job's action still running read again: how it ended, once it did."""
+        for record in self.history.view().asks:
+            answer = record.answer
+            run = answer.run if answer else None
+            if answer is None or run is None or run.state != "running" or run.run_id is None:
+                continue
+            assert answer.app is not None and answer.action is not None
+            try:
+                now = self.apps.action_run(answer.app, answer.action, run.run_id)
+            except AppNotFoundError:  # the app or its run gone since
+                continue
+            if now.state != "running":
+                self.history.ended(record.id, answer.model_copy(update={"run": now}))
+        return self.history.view()
+
+    async def routed(self, turns: list[AskTurn], timezone: str | None) -> AssistantAnswer:
         options = self.options()
         listed = [
             ActionOption(app=a, action=k, description=v["description"]) for a, k, v in options
@@ -74,21 +152,51 @@ class Assistant:
         if not options:
             summary = "None of your apps can be asked anything yet."
             return AssistantAnswer(kind="none", summary=summary, actions=listed)
+        said = "\n".join(f"{'You' if t.who == 'you' else 'Handler'}: {t.text}" for t in turns)
+        value, run_id = await self.route(said, timezone, options)
+        return await self.act(value, options, listed, run_id)
+
+    async def route(
+        self, said: str, timezone: str | None, options: list[tuple[str, str, dict[str, Any]]]
+    ) -> tuple[dict[str, Any], str]:
+        """One run of the router (origin "ask") on what was said and the actions offered: (its
+        result, its session's id); 409 without a router or a usable model, 502 without a result."""
         router = self.router()
         try:
             runs = save_rules.session_model(self.settings, router, None)
         except save_rules.CheckError as e:
             raise AssistantError(409, f"the Ask router's model: {e}") from None
-        fields = {
-            "said": "\n".join(f"{'You' if t.who == 'you' else 'Handler'}: {t.text}" for t in turns),
-            "now": now_where(timezone),
-            "actions": catalog(options),
-        }
+        fields = {"said": said, "now": now_where(timezone), "actions": catalog(options)}
         rec = self.sessions.create(router, runs, origin="ask", run=SessionInput(fields=fields))
         value, why = await self.sessions.result_of(rec.id)
         if value is None:
             raise AssistantError(502, f"the Ask router gave no answer: {why}")
-        return await self.act(value, options, listed, rec.id)
+        return value, rec.id
+
+    async def fill(self, message_id: str, said: str, timezone: str | None) -> NudgeFill:
+        """What was said about an open nudge of the owner's (H.17), as its action's form filled:
+        one run of the router with that action alone offered; nothing runs from it."""
+        message = self.apps.nudges.get(message_id)
+        nudge = message.nudge
+        assert nudge is not None and message.app is not None
+        if nudge.action is None:
+            raise NudgeError(409, "this nudge opens a page, not a form")
+        action = next(
+            (a for a in self.apps.view(message.app).actions if a.name == nudge.action), None
+        )
+        if action is None:
+            raise NudgeError(409, f"{message.app} has no action {nudge.action} any more")
+        view = action.model_dump(mode="json", by_alias=True, exclude_none=True)
+        options = [(message.app, action.name, view | {"app": ""})]
+        already = json.dumps(nudge.fields or {}, ensure_ascii=False)
+        told = f"You: {said}\n(The form, as filled in so far: {already})"
+        value, _ = await self.route(told, timezone, options)
+        filled = value.get("fields") if value.get("kind") == "pick" else None
+        if not isinstance(filled, dict):
+            question = str(value.get("question") or value.get("summary") or "")
+            return NudgeFill(said=said, question=question or "I could not fill it in from that.")
+        found = interfaces.errors(action.fields, filled) if action.fields else []
+        return NudgeFill(said=said, fields=filled, question=found[0] if found else None)
 
     async def act(
         self,
@@ -132,7 +240,7 @@ class Assistant:
                 router_run=router_run,
             )
         try:
-            run = await self.apps.act(app, action, fields)
+            run = await self.apps.act(app, action, fields, asked=True)
         except AppError as e:
             raise AssistantError(409, f"{app} · {action}: {e}") from None
         return AssistantAnswer(

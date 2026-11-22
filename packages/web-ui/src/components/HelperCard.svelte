@@ -15,12 +15,14 @@
   import { api, toolboxChanges, type ToolboxChanges } from "../lib/api";
   import type { AddonInfo, Agent, HandlerNeed } from "../lib/contracts.gen";
   import { factsOf, featureOf, usesOf } from "../lib/helpers";
-  import { firstChoice, missing, needOrigin, outsideAgentBody, type Choice } from "../lib/setup";
+  import { helperBlocked } from "../lib/blocked";
+  import { firstChoice, needOrigin, outsideAgentBody, type Choice } from "../lib/setup";
   import { freeName } from "../lib/text";
   import { agentLabel } from "../lib/projects.svelte";
   import { sessions } from "../lib/sessions.svelte";
+  import DisabledReason from "./DisabledReason.svelte";
   import HelperIcon from "./HelperIcon.svelte";
-  import ModelChoice from "./ModelChoice.svelte";
+  import WhoWorksChoice from "./WhoWorksChoice.svelte";
   import NetworkMeter from "./NetworkMeter.svelte";
   import ToolboxConfirm from "./ToolboxConfirm.svelte";
 
@@ -47,7 +49,8 @@
   const feature = $derived(featureOf(name));
   const facts = $derived(need ? factsOf(name, need.definition) : []);
   const uses = $derived(need ? usesOf(name, need.definition, tools) : []);
-  const todo = $derived(need && choice ? missing(need.definition, choice, tools) : []);
+  // why Turn on waits, and its fix: Choose opens this card's Who works
+  const blocked = $derived(need && choice ? helperBlocked(need.definition, choice, tools, `[data-need="${name}"] [data-testid="model-choice-access"]`) : null);
   const fits = $derived((need?.fits ?? []).map((id) => agents.find((a) => a.id === id)).filter((a) => a !== undefined));
 
   $effect(() => {
@@ -107,7 +110,7 @@
       {@const c = choice}
       <div class="grid items-start gap-x-4 gap-y-3 text-sm sm:grid-cols-[6rem_1fr]">
         <span class="pt-1 text-muted-foreground">Who works</span>
-        <ModelChoice
+        <WhoWorksChoice
           agent={{ id: "", name: need.definition.agentName, model: c.model, area: null, modelAlone: need.definition.modelAlone ?? false }}
           own
           onchange={(m) => (c.model = accessOf(m))}
@@ -151,7 +154,8 @@
             {#each fits as a (a.id)}<option value={a.id}>{agentLabel(a)}</option>{/each}
           </select>
         {/if}
-        <Button size="sm" disabled={busy || todo.length > 0} onclick={() => turnOn()} data-testid="helper-turn-on">Turn on</Button>
+        {#if blocked}<DisabledReason {blocked} testid="helper-todo" />{/if}
+        <Button size="sm" disabled={busy || !!blocked} onclick={() => turnOn()} data-testid="helper-turn-on">Turn on</Button>
       </div>
     {:else if error}
       <p class="text-sm text-danger" data-testid="helper-error">{error}</p>

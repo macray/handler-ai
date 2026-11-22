@@ -3,6 +3,75 @@
 What each release lets you do, grouped by what you do. One release is one commit in the public
 repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+## 0.4.0
+
+An alpha: formats may still change from one release to the next. **Your files of 0.3 are not
+carried over**: move `~/.config/handler-ai/` and `~/.local/state/handler-ai/` aside and start
+with empty ones ([upgrading from 0.3](docs/configuration.md#upgrading-from-03)).
+
+### New
+
+- **Running**: every running session side by side (Grid, Columns or One), answered and typed in
+  where it is, filtered, reordered, full screen; **+** starts one there.
+- **Apps bring their jobs**: what an app needs a model for is one of its jobs, with its
+  instructions, form and what it may reach; you choose who works on it (an account or an API
+  key, and a model), and each run says what started it. Replaces the agents apps brought.
+- **An app's page: Activity and Settings**: its runs, the changes to its folders (**Undo**), what
+  it sent you, its versions; then everything you chose for it.
+- **Updating an app takes one click**: **Update to** tests and deploys the new version, saying
+  what it changes and what it may now reach; **Go back** returns to the one you had.
+- **Undo what an agent or an app changed in your notes**: a folder it can write (**Can write**,
+  `--notes FOLDER=write`) keeps its history out of their reach, each change with its lines and
+  **Undo**.
+- **Schemas**: documents of a known shape in your notes (a CV, contacts), read and written by
+  agents (the `knowledge` tool, `handler-smd`) and apps without inventing anything.
+- **Ask keeps its history**: every ask from anywhere, what came of it, **Open** where the app
+  did it; failures come to your inbox. `handler ask --listen` asks by voice, `--toggle` from a
+  key such as a Stream Deck's.
+- **An app asks you at your time**: a nudge may come "Fridays at 16:00", each can be turned off,
+  its reminders a plain choice.
+- **The phone has a new look**: tabs at the bottom, a light theme, pairing in three steps, safe
+  permissions answered on the card and risky ones with a slide, notifications when a shared
+  session needs you, and the last Home shown without a network.
+- **An agent's own environment variables** (`--env NAME=VALUE`), going with it when exported.
+- **Connecting a tool** shows how to get what it asks for (its `CONNECT.md`), and checks the
+  connection works.
+- **On a Mac with Apple's `container`, agents can run containers**, each in its own virtual
+  machine, their images shared through a cache.
+- **Automations every N days** (`every = "1d"`).
+
+### Changed
+
+- **The web UI says it in the person's words**: one name per thing (*Who works*, *On your
+  phone*), a disabled button says why and where to fix it, Who works is one control (account,
+  program, model), a model is connected from where you are, and *Set up Handler* guides you to
+  your first project.
+- **Apps is a launcher**, Library lists *Yours · Community*, an app is set up on its install page
+  in steps, its automations installed with it, and each of its actions in Ask or not.
+- **A new app starts with a finished look**: the app-builder's template styles plain HTML, light
+  and dark.
+- **Your notes are in `~/notes`**, no longer in Handler's data folder; an app can be given one
+  of your notes folders.
+- **A site you keep blocked stays blocked**, even under a wider site you allowed.
+- An account says its *subscription* (`--subscription`, was `--plan`).
+- **For app makers** (breaking): `[jobs.<name>]` and `runJob` replace `[needs.agents]` and
+  `runAgent`; new: `title`, `changes`, a nudge's `when`, `schemas`, `history()`, `listRuns()`,
+  `answeredNudge()`, `askedVia()` and an action's `open`.
+
+### Fixed
+
+- Handler stops at once with a page of the web UI open.
+- On a Mac: Apple's container service starts with Handler, `handler setup` runs again without
+  leaving Handler stopped, and the install script runs.
+- A failed image build, install or update says why, where it failed.
+- A session waiting for its program starts by itself once it is built; `handler run` prepares
+  it.
+- `--from` takes a source's URL; `handler app list` says where each app comes from; the command
+  line says times in your time zone.
+- The Podman cache no longer grows with every session, and agents running containers no longer
+  see each other's networks.
+- Many smaller fixes in the web UI, the phone, the command line and setup.
+
 ## 0.3.2
 
 ### Fixed
@@ -31,7 +100,7 @@ repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 ## 0.3.0
 
 An alpha: formats may still change from one release to the next. Coming from 0.2.0, some files
-are renamed by hand first: [upgrading from 0.2.0](docs/configuration.md#upgrading-from-020).
+are renamed by hand first: [upgrading from 0.2.0](https://github.com/macray/handler-ai/blob/v0.3.0/docs/configuration.md#upgrading-from-020).
 
 ### New
 
@@ -79,8 +148,10 @@ are renamed by hand first: [upgrading from 0.2.0](docs/configuration.md#upgradin
 ### Format changes
 
 - **By hand, from 0.2.0**: `addons/` → `tools/`, `bindings/` → `connections/`, `knowledge.toml` →
-  `notes.toml`, with their contents and environment variables; then rebuild your tools' images.
-  Every step: [upgrading from 0.2.0](docs/configuration.md#upgrading-from-020).
+  `notes.toml`, with their contents and environment variables, and `~/knowledge` → `~/notes`
+  before 0.3.0 first starts (renamed later: Library → Notes → **Change** to `~/notes`); then
+  rebuild your tools' images.
+  Every step: [upgrading from 0.2.0](https://github.com/macray/handler-ai/blob/v0.3.0/docs/configuration.md#upgrading-from-020).
 - **By Handler, at its first start**: the toolbox's `toolbox.toml` is rewritten; lines you had
   added to its `Containerfile` go in `custom.containerfile`, by hand.
 

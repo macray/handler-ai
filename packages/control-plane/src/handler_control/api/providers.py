@@ -18,7 +18,7 @@ from .. import (
     providers,
     secrets,
 )
-from .accounts import references
+from .accounts import in_use, references
 from .areas import check_areas
 from .common import Context, ProblemError, dump, log, parse_body
 
@@ -71,7 +71,7 @@ def add_provider_routes(app: FastAPI, ctx: Context) -> None:
         old = providers.get(settings.providers_dir, name)
         if not old.path.is_file():
             raise ProblemError(404, "provider not found", name)
-        if body.name != name and (users := references(ctx)["provider"].get(name)):
+        if body.name != name and (users := in_use(ctx, "provider", name)):
             raise ProblemError(409, "provider in use: cannot rename it", ", ".join(users))
         try:
             providers.save(settings.providers_dir, store, body, old)

@@ -1,9 +1,45 @@
 # An app (contract H, handler.app/v1). Change `name` (a-z, 0-9, '-': it becomes the app's
-# address, http://<name>.localhost:7430/) and `description`; raise `version` before each deploy.
+# address, http://<name>.localhost:7430/), `title` (what the person sees it called) and
+# `description`; raise `version` before each deploy.
 apiVersion = "handler.app/v1"
 name = "notes"
+title = "Notes"
 version = "0.1.0"
 description = "Short notes"
+
+# What the person can ask it in a sentence (its page's Try, Ask, a nudge's form). Done by its
+# code: a route, answering at once.
+[actions.add]
+description = "Add a note"
+examples = ["Note that the plumber comes on Tuesday"]
+route = "POST /api/actions/add"
+[actions.add.fields]
+type = "object"
+required = ["text"]
+properties.text = { type = "string", title = "Note" }
+
+# Done by one of its jobs: its form is the job's.
+[actions.draft]
+description = "Write a note for me about something"
+examples = ["Write me a note on how to descale the kettle"]
+job = "draft"
+
+# Work that needs a model, run by the Who works the person chooses. Its instructions are
+# jobs/draft.md. It reaches no folder, so it can even run on the model alone; it gives back
+# its note as its result, and `then` (its code) saves it.
+[jobs.draft]
+description = "Writes a note from what you ask"
+then = "POST /api/drafts/ended"
+[jobs.draft.fields]
+type = "object"
+required = ["request"]
+properties.request = { type = "string", title = "What about", "x-handler" = "long-text" }
+[jobs.draft.result]
+type = "object"
+required = ["status", "summary", "note"]
+properties.status = { enum = ["ok", "attention", "failed"], title = "Status" }
+properties.summary = { type = "string", title = "Summary" }
+properties.note = { type = "string", title = "Note" }
 
 # [server]
 # entry = "server/main.ts"     # default; its directory is installed whole
@@ -11,12 +47,25 @@ description = "Short notes"
 # dir = "ui/dist"              # default; built by `bun run build` in ui/
 # [needs]
 # egress = ["api.example.com:443"]   # hosts the backend may reach; none by default
+# notify = true                      # server/handler.ts: notify()
 # [needs.files.tasks]                # a folder of the person's, chosen when they install the app
 # description = "Where your tasks are kept"
 # mode = "rw"                        # server/handler.ts: files().tasks
-# [needs.agents.planner]             # a job it runs, given when the person installs the app
+# [jobs.plan]                        # a job working in that folder
 # description = "Tells you what to do next"
-# from = "agent"                     # its definition: agent/agent.toml, instructions.md, interface.json
-# worksIn = "tasks"                  # it works in the folder given for `tasks`
+# files = { tasks = "write" }        # "read" (mounted read-only) or "write" (a `rw` need)
+# worksIn = ["tasks"]                # it starts in it
+# timeout = "30m"
+# result = { type = "object", required = ["status", "summary"], properties = { status = { enum = ["ok", "attention", "failed"] }, summary = { type = "string" } } }
+# [[automations]]                   # it runs by itself: installed with the app, switched on
+# description = "What to do next, every 5 hours"   # at install unless optional
+# when = { every = "5h" }            # "30m", "2h", "1d"; or { at = "08:30", days = ["mon"] }
+# run = { job = "plan" }             # one of its [jobs]
+# optional = true                    # off until the person turns it on
+# [nudges.review]                    # it asks the person something (its action's form)
+# description = "Review this week's notes"
+# action = "add"
+# when = { at = "16:00", days = ["fri"] }   # Handler sends it then
+# until = "next"                     # still open next Friday: it expires (no pile-up)
 # [resources]
 # memory = "512m"

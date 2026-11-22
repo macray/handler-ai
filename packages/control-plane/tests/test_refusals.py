@@ -37,6 +37,7 @@ def test_a_host_is_counted_over_its_cards_unless_the_agent_decided_it(tmp_path: 
     assert [h.decision for h in refusals.decided(two, agent)] == [None, "kept blocked"]
 
 
+@pytest.mark.rule("plan.a-refused-host-is-reported", "automation.a-refused-host-is-reported")
 def test_the_agent_s_words_are_its_sentences_naming_a_host() -> None:
     hosts = [RefusedHost(host="pypi.org:443", count=2)]
     answer = (

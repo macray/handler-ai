@@ -16,6 +16,10 @@ from handler_control.agents import AgentRecord, RunsAs
 TOKEN = "sk-ant-oat01-" + "aB3-xY9_" * 10
 
 
+@pytest.mark.rule(
+    "injection.a-phantom-is-as-long-as-its-value",
+    "injection.a-phantom-reveals-at-most-its-vendor-prefix",
+)
 def test_phantom_keeps_length_form_and_vendor_prefix() -> None:
     made = secrets.phantom(TOKEN)
     assert made != TOKEN and len(made) == len(TOKEN)
@@ -28,6 +32,7 @@ def test_phantom_keeps_length_form_and_vendor_prefix() -> None:
     assert secrets.phantom(TOKEN) != made  # random each time
 
 
+@pytest.mark.rule("injection.a-phantom-reveals-at-most-its-vendor-prefix")
 def test_short_values_keep_no_prefix() -> None:
     """What follows a prefix must stay secret: with less than 24 characters after it, none is
     kept."""
@@ -35,6 +40,7 @@ def test_short_values_keep_no_prefix() -> None:
     assert len(made) == 12 and made[2] == "-" and made[7] == "-"
 
 
+@pytest.mark.rule("injection.a-stand-in-wherever-it-can-be")
 @pytest.mark.parametrize(
     ("network", "value", "hosts", "phantom", "injected"),
     [
@@ -72,6 +78,7 @@ def _keyed(tmp_path: Path) -> tuple[launcher.Settings, RunsAs]:
     return s, RunsAs(harness="codex", provider="keyed")
 
 
+@pytest.mark.rule("injection.the-sandbox-never-holds-a-secret")
 @pytest.mark.parametrize("network", ["filtered", "open"])
 def test_the_sandbox_holds_a_phantom_of_its_provider_key(
     tmp_path: Path, network: NetworkMode
@@ -90,6 +97,9 @@ def test_the_sandbox_holds_a_phantom_of_its_provider_key(
     assert i.value not in launch.model_dump_json()
 
 
+@pytest.mark.rule(
+    "injection.the-sandbox-never-holds-a-secret", "injection.a-stand-in-wherever-it-can-be"
+)
 def test_without_network_a_phantom_and_no_injection(tmp_path: Path) -> None:
     s, runs = _keyed(tmp_path)
     agent = AgentRecord(id="a1", model=runs, scope=str(tmp_path / "code" / "shop"), network="none")

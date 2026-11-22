@@ -5,11 +5,15 @@
   // Secret values go to the secret store and are never shown: empty keeps the one it has; a
   // hand-written reference (env, file, command) is kept as it is. One made invalid by an update of
   // its addon is fixed here: it saves only what the addon now declares.
+  // Its tool's CONNECT.md (how to make what it asks for: the account, its token) comes first,
+  // unfolded for a new connection, folded when editing one; its leading `# …` is the fold's label.
+  import { markdown } from "@handler/acp-view/lib/render";
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import type { AddonInfo, BindingInfo, BindingRequest } from "../lib/contracts.gen";
+  import { belowTitle, readmeTitle } from "../lib/sources";
 
   let {
     addon,
@@ -43,6 +47,8 @@
   // svelte-ignore state_referenced_locally
   let removed = $state<Record<string, boolean>>(Object.fromEntries((addon.secretSlots ?? []).map((s) => [s.name, false])));
   let saving = $state(false);
+
+  const guide = $derived(addon.connect?.trim() ? readmeTitle(addon.connect) : null);
 
   const bound = (slot: string) => editing?.secrets?.includes(slot) ?? false;
   const handWritten = (slot: string) => editing?.handWritten?.includes(slot) ?? false;
@@ -80,6 +86,12 @@
 {/snippet}
 
 <form class="space-y-6" onsubmit={(e) => (e.preventDefault(), void submit())} data-testid="binding-form">
+  {#if guide}
+    <details class="rounded-[10px] border bg-card px-4 py-3" open={!editing} data-testid="binding-guide">
+      <summary class="cursor-pointer text-sm font-medium">{guide.title ?? "Before you connect"}</summary>
+      <div class="md mt-3 text-sm">{@html belowTitle(markdown(guide.body))}</div>
+    </details>
+  {/if}
   {#if editing?.error}
     <p class="text-sm text-danger" data-testid="binding-invalid">Invalid: {editing.error}. Save it with what its tool asks for now.</p>
   {/if}

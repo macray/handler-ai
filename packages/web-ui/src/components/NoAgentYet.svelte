@@ -2,7 +2,7 @@
   // A project with no agent yet (made alone, or its last agent deleted): a ready suggestion,
   // described not named ("An agent to work with you here", to talk with, on what you used last
   // or the one model ready, with what a new agent starts with), added in one click as
-  // "Assistant"; then Set up an agent (the agent form) and Get agents… (Library → Agents → Get more
+  // "Assistant"; then Set up an agent (the agent form) and Get agents… (Library → Agents → Community
   // for this project: a source's, or an agents file). With no model
   // to suggest (none ready, or two or more and none used yet), only those two.
   import MessageSquare from "@lucide/svelte/icons/message-square";

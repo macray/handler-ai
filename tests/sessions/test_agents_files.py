@@ -48,6 +48,7 @@ def a_project_with_a_checked_job(daemon: Daemon) -> dict[str, Any]:
             "name": "Dev",
             "model": {"account": "fake"},
             "addons": [{"addon": "fake-browser", "binding": "browser"}],
+            "env": {"MY_FLAG": "1"},
         }
         body = {"folder": str(daemon.make_scope()), "skills": ["tidy"], "agents": [JUDGE, dev]}
         r = c.post("/v1/projects", json=body)
@@ -65,7 +66,7 @@ def a_project_with_a_checked_job(daemon: Daemon) -> dict[str, Any]:
 @pytest.mark.rule(
     "definition.only-the-origin-follows",
     "definition.an-export-leaves-out-what-is-yours",
-    "check.the-agent-s-not-its-settings",
+    "check.kept-beside-the-agent-not-in-its-settings",
 )
 def test_exported_from_a_project_then_set_up_again(daemon: Daemon) -> None:
     project = a_project_with_a_checked_job(daemon)
@@ -104,6 +105,7 @@ def test_exported_from_a_project_then_set_up_again(daemon: Daemon) -> None:
     assert (dev["part"], judge["part"]) == ("dev", "judge")
     assert "model" not in judge["definition"] and judge["definition"]["modelAlone"]
     assert dev["definition"]["skills"] == ["tidy"] and dev["definition"]["addons"]
+    assert dev["definition"]["env"] == {"MY_FLAG": "1"}  # how it works, not yours
     [check] = judge["checks"]
     assert check["input"] == {"draft": "Hi"} and check["answer"]["verdict"] == "send"
     assert "id" not in check and "fromRun" not in check

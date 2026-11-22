@@ -51,7 +51,7 @@ runs in it on the phone.
 | `POST /v1/device/down` `{id, nonce, ct}` | device | an envelope for its host → 202 |
 | `GET /v1/device/poll?after=&wait=` | device | long poll for envelopes, ids the host fetched, `hostSeen` |
 | `GET /v1/health` | anyone | |
-| `/` | anyone | the remote client's static files (`--client`), strict Content-Security-Policy |
+| `/` | anyone | the remote client's static files (`--client`), strict Content-Security-Policy; precompressed (`.br`/`.gz` written by its build) when the browser accepts it; `Cache-Control: no-cache` (kept, checked again on each use: a new client is used at the next launch), the API `no-store` |
 
 Auth: `Authorization: Bearer <hostId>.<secret>` (host) or `<deviceId>.<token>` (device), compared
 by SHA-256 hash. Limits: 20 requests/s per caller (burst 60), 256 KiB per command envelope, 8 MiB

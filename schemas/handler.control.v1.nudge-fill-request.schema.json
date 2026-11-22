@@ -1,0 +1,30 @@
+{
+  "$id": "urn:handler.control/v1/nudge-fill-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/inbox/{id}/fill`: what the person said (written down, D.25), to fill the form\nof the nudge's action (H.17).",
+  "properties": {
+    "said": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Said",
+      "type": "string"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timezone"
+    }
+  },
+  "required": [
+    "said"
+  ],
+  "title": "NudgeFillRequest",
+  "type": "object"
+}

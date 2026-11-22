@@ -1,36 +1,48 @@
 <script lang="ts">
   // The menu, the same on every page: Handler and its bell ("need you" for every project and app,
-  // Bell.svelte), then the places: Projects, Chat, Apps, Library; then Pinned, the projects and
+  // Bell.svelte), then the places: Projects, Running (with how many sessions run, in plain grey:
+  // only the bell says "needs you"), Chat, Apps, Library; then Pinned, the projects and
   // apps the person put there, mixed, in their order (D.28; reordered by dragging, unpinned with
-  // ×), each with one dot for its sessions (lib/menu.ts); Settings at its foot. It grows with the
-  // install (menuShows): Chat and Apps once a model is ready, Library once a project exists. The
+  // ×), each with one dot for its sessions (lib/menu.ts); Settings at its foot, and above it,
+  // until the first project exists, the Set up Handler card (E1, lib/firstrun): how far, the next
+  // step, its steps in a panel beside it (SetupSteps), each done in a dialog over the page; not on
+  // Projects, which shows them large then; gone once a project exists. Every place is
+  // there from day one (E1): one empty for want of a model says so on its page. The
   // other pages (Inbox, Automations, Plans, Discover…) open from the bell, the Library or their
   // project, and each still by its address. Remote has no row: a shared session shows a phone,
   // and a broken gateway is said only while a session is shared.
   import { untrack } from "svelte";
+  import Activity from "@lucide/svelte/icons/activity";
   import AppWindow from "@lucide/svelte/icons/app-window";
   import Folder from "@lucide/svelte/icons/folder";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Library from "@lucide/svelte/icons/library-big";
+  import ListChecks from "@lucide/svelte/icons/list-checks";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import Settings from "@lucide/svelte/icons/settings";
   import Smartphone from "@lucide/svelte/icons/smartphone";
   import X from "@lucide/svelte/icons/x";
   import * as Sidebar from "$lib/components/ui/sidebar";
-  import { appOf, isChat } from "../lib/agents";
+  import { isChat } from "../lib/agents";
   import { api } from "../lib/api";
   import { areas } from "../lib/areas.svelte";
+  import { connect } from "../lib/connect.svelte";
+  import { firstRun, showsCard, STEP_NAMES } from "../lib/firstrun.svelte";
   import type { Pin } from "../lib/contracts.gen";
   import { inbox } from "../lib/inbox.svelte";
-  import { menuShows, placeDot } from "../lib/menu";
+  import { placeDot } from "../lib/menu";
   import { menuUse } from "../lib/menuuse.svelte";
   import { pins } from "../lib/pins.svelte";
   import { projects } from "../lib/projects.svelte";
   import { remote } from "../lib/remote.svelte";
+  import { running } from "../lib/running.svelte";
   import { href, router } from "../lib/router.svelte";
   import { sessions } from "../lib/sessions.svelte";
+  import { addFolder } from "../lib/workfolders.svelte";
   import Bell from "./Bell.svelte";
   import Logo from "./Logo.svelte";
+  import Popover from "./Popover.svelte";
+  import SetupSteps from "./SetupSteps.svelte";
   import SessionStatus from "./SessionStatus.svelte";
 
   const route = $derived(router.route);
@@ -42,37 +54,66 @@
     untrack(() => sidebar.setOpenMobile(false));
   });
   // a model ready, Pinned: read again on each page change (changed in another tab, by the API)
+  // and once a model is connected here
   $effect(() => {
     void route;
+    void connect.changes;
     menuUse.load();
     void pins.load();
   });
-  const shows = $derived(menuShows({ projects: projects.list.length, modelReady: menuUse.modelReady }));
+  // the set-up, while there is no project: read again on each page change, once a model is
+  // connected or a folder added
+  const noProject = $derived(projects.loaded && projects.list.length === 0);
+  $effect(() => {
+    void route;
+    void connect.changes;
+    void addFolder.changes;
+    if (noProject) untrack(() => firstRun.load());
+  });
+  const setupCard = $derived(showsCard(projects.loaded, projects.list.length, firstRun.facts !== null, route.view));
+  let setupOpen = $state(false);
+  const inRunning = $derived(route.view === "running" || route.view === "session");
 
+  // a run's page is where its agent's is: the agent read from its session
+  let runAgent = $state<string | null>(null);
+  const pageAgent = $derived(route.view === "agent" ? route.id : route.view === "run" ? runAgent : null);
   // an agent's page is under its project, when it has one
-  const agentProject = $derived(route.view === "agent" ? projects.list.find((p) => p.agents.some((a) => a.id === route.id))?.id : undefined);
-  // an app's part (H.14) is under its app: its agent's page, its settings, setting one up; the
-  // settings of someone you talk to, under Chat
+  const agentProject = $derived(pageAgent ? projects.list.find((p) => p.agents.some((a) => a.id === pageAgent))?.id : undefined);
+  // a run of an app's job is under its app; the settings of someone you talk to, under Chat
   let routeApp = $state<string | null>(null);
   let routeChat = $state(false);
   $effect(() => {
     const r = route;
-    routeChat = r.view === "chat" || r.view === "ask";
-    if (r.view === "edit-ad-hoc" && r.app) routeApp = r.app;
-    else if ((r.view === "agent" || r.view === "edit-ad-hoc") && r.id)
-      api.agent(r.id).then(
-        (a) => ((routeApp = appOf(a)), (routeChat = isChat(a))),
-        () => (routeApp = null),
+    const whose = (id: string) =>
+      api.agent(id).then(
+        (a) => {
+          if (href(router.route) !== href(r)) return; // left meanwhile
+          routeChat = isChat(a);
+        },
+        () => {},
       );
-    else routeApp = null;
+    routeChat = r.view === "chat" || r.view === "ask";
+    runAgent = null;
+    routeApp = null;
+    if ((r.view === "agent" || r.view === "edit-ad-hoc") && r.id) void whose(r.id);
+    else if (r.view === "run")
+      api.session(r.id).then(
+        (s) => {
+          if (href(router.route) !== href(r)) return;
+          runAgent = s.agentId ?? null;
+          routeApp = s.agentId ? null : (s.app ?? null);
+          if (s.agentId) void whose(s.agentId);
+        },
+        () => {},
+      );
   });
   const current = $derived(
     route.view === "project" ? route.id : route.view === "edit-agent" ? route.project : agentProject,
   );
   const inApp = (name: string) => (route.view === "apps" && route.app === name) || (route.view === "install-app" && route.name === name) || routeApp === name;
-  const LIBRARY = ["library", "addons", "skills", "skill", "knowledge", "automations", "automation", "edit-automation", "tool", "discover-item"];
+  const LIBRARY = ["library", "skill", "knowledge", "automation", "edit-automation", "tool", "discover-item"];
   const inLibrary = $derived(LIBRARY.includes(route.view));
-  const inProjects = $derived(["projects", "agents", "plans", "plan", "review-plan"].includes(route.view) || (route.view === "agent" && !agentProject && !routeApp && !routeChat));
+  const inProjects = $derived(["projects", "agents", "plans", "plan", "review-plan"].includes(route.view) || (pageAgent !== null && !agentProject && !routeApp && !routeChat));
 
   // Pinned, as the person ordered it; a pin whose project is not listed (yet) is left out
   type Pinned = { pin: Pin; index: number; label: string; title: string; area?: string | null; active: boolean; dot: ReturnType<typeof placeDot> };
@@ -84,8 +125,8 @@
         const dot = placeDot(sessions.list.filter((s) => s.agent.projectId === p.id).map((s) => s.status));
         return [{ pin, index, label: p.name, title: p.folder, area: p.area, active: current === p.id, dot }];
       }
-      const dot = placeDot(sessions.list.filter((s) => s.agent.app === pin.id).map((s) => s.status));
-      return [{ pin, index, label: pin.id, title: pin.id, active: inApp(pin.id), dot }];
+      const dot = placeDot(sessions.list.filter((s) => s.info.app === pin.id).map((s) => s.status));
+      return [{ pin, index, label: menuUse.title(pin.id), title: menuUse.title(pin.id), active: inApp(pin.id), dot }];
     }),
   );
 
@@ -108,6 +149,7 @@
   });
   void areas.load();
   inbox.start();
+  running.start();
 </script>
 
 <!-- A place's sessions in one mark (lib/menu.ts): the most urgent one's dot, or how many need
@@ -124,11 +166,17 @@
   {/if}
 {/snippet}
 
-{#snippet place(view: string, label: string, active: boolean, testid: string, Icon: typeof Folder)}
+{#snippet place(view: string, label: string, active: boolean, testid: string, Icon: typeof Folder, count?: number)}
   <Sidebar.MenuItem>
     <Sidebar.MenuButton isActive={active}>
       {#snippet child({ props })}
-        <a href={`#/${view}`} {...props} data-testid={testid}><Icon /><span>{label}</span></a>
+        <a href={`#/${view}`} {...props} data-testid={testid}
+          ><Icon /><span>{label}</span>{#if count}<span
+              class="ml-auto rounded-full bg-sidebar-accent px-1.5 font-mono text-[11px] leading-4 text-muted-foreground tabular-nums"
+              title="{count} running"
+              data-testid="{testid}-count">{count}</span
+            >{/if}</a
+        >
       {/snippet}
     </Sidebar.MenuButton>
   </Sidebar.MenuItem>
@@ -147,9 +195,10 @@
     </div>
     <Sidebar.Menu>
       {@render place("projects", "Projects", inProjects, "projects-link", LayoutGrid)}
-      {#if shows.chat}{@render place("chat", "Chat", routeChat, "sidebar-chat", MessagesSquare)}{/if}
-      {#if shows.apps}{@render place("apps", "Apps", route.view === "apps" && !route.app, "apps-link", AppWindow)}{/if}
-      {#if shows.library}{@render place("library", "Library", inLibrary, "library-link", Library)}{/if}
+      {@render place("running", "Running", inRunning, "running-link", Activity, running.count)}
+      {@render place("chat", "Chat", routeChat, "sidebar-chat", MessagesSquare)}
+      {@render place("apps", "Apps", route.view === "apps" && !route.app, "apps-link", AppWindow)}
+      {@render place("library", "Library", inLibrary, "library-link", Library)}
     </Sidebar.Menu>
   </Sidebar.Header>
 
@@ -200,6 +249,34 @@
   </Sidebar.Content>
 
   <Sidebar.Footer>
+    {#if setupCard && firstRun.setup}
+      {@const setup = firstRun.setup}
+      <Popover bind:open={setupOpen} align="beside" label="Set up Handler" width="24rem" testid="setup-panel">
+        {#snippet trigger(props)}
+          <button
+            type="button"
+            {...props}
+            class="mb-1 min-w-0 flex-1 rounded-[10px] bg-card px-3 py-2.5 text-left text-[0.8125rem] shadow-panel transition-shadow hover:ring-1 hover:ring-border {setupOpen ? 'ring-[1.5px] ring-primary hover:ring-primary' : ''}"
+            data-testid="setup-card"
+          >
+            <span class="flex items-center gap-2"
+              ><ListChecks class="size-3.5 text-primary" /><b class="font-semibold">Set up Handler</b><span class="ml-auto text-xs text-muted-foreground tabular-nums" data-testid="setup-progress"
+                >{setup.done} of {setup.total}</span
+              ></span
+            >
+            <span class="mt-2 mb-1.5 block h-1 overflow-hidden rounded-full bg-muted" aria-hidden="true"
+              ><span class="block h-full bg-ok transition-[width] duration-(--dur-3) ease-(--ease)" style="width: {(100 * setup.done) / setup.total}%"></span></span
+            >
+            <span class="block text-xs text-muted-foreground" data-testid="setup-next">Next: {STEP_NAMES[setup.next]}</span>
+          </button>
+        {/snippet}
+        {#snippet children(close)}
+          <div class="flex items-baseline gap-2 px-2 pt-1.5 pb-2"><b class="text-sm font-semibold">Set up Handler</b><span class="text-xs text-muted-foreground">about 5 minutes</span></div>
+          <SetupSteps onaction={close} />
+          <p class="mt-1 border-t px-2 pt-2 pb-1 text-xs text-muted-foreground">Stays until your first project exists, then goes for good.</p>
+        {/snippet}
+      </Popover>
+    {/if}
     <!-- Remote is said in the menu only while it is used: a session shared, and the gateway broken -->
     {#if remoteBroken}
       <a
@@ -207,7 +284,7 @@
         class="mx-2 flex items-start gap-2 rounded-md bg-danger/8 px-2.5 py-2 text-xs text-danger no-underline hover:bg-danger/12"
         title={remote.status?.detail ?? undefined}
         data-testid="remote-problem"
-        ><Smartphone class="mt-px size-3.5 shrink-0" /><span>{remoteBroken} <span class="underline">Remote settings</span></span></a>
+        ><Smartphone class="mt-px size-3.5 shrink-0" /><span>{remoteBroken} <span class="underline">Settings → Your phone</span></span></a>
     {/if}
     <Sidebar.Menu>
       <Sidebar.MenuItem>

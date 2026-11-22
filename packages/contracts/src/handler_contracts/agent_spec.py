@@ -1,6 +1,6 @@
 """Contract E — what an agent runs as: a harness, the account (`handler.account/v1`, account.py) or
 the provider (`handler.provider/v1`, provider.py) its model calls use, and a model. An agent (D.8)
-names them; `AgentSpec` is them resolved (the account's login and plan, the provider and its files
+names them; `AgentSpec` is them resolved (the account's login and subscription, the provider and its files
 for this harness): what `render` takes (B.3)."""
 
 from typing import Annotated, Self
@@ -30,7 +30,7 @@ class AgentSpec(StrictDocument):
     # the account's credential file, when its harness's login leaves one and it exists (set by
     # the control plane, which keeps it); a token login is resolved at launch
     account_login: HostPath | None = None
-    account_plan: str | None = None  # the account's plan (told to the harness, B.3)
+    account_subscription: str | None = None  # the account's subscription (told to the harness, B.3)
     provider_spec: Provider | None = None
     files: dict[str, FileSource] | None = None  # the provider's for this harness (config slots)
     config: NeutralConfig = NeutralConfig()
@@ -60,7 +60,7 @@ class AgentSpec(StrictDocument):
             return cls(
                 harness=harness,
                 account=name,
-                account_plan=found.plan,
+                account_subscription=found.subscription,
                 config=NeutralConfig(model=model, account_connectors=found.connectors),
             )
         if provider is None:

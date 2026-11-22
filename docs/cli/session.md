@@ -27,7 +27,7 @@ handler session share SESSION [--off]
 | Subcommand | |
 |---|---|
 | `list` | running sessions, most recently active first: id, state (`starting`, `running`, `working`, `needs you` when it waits for your answer), project and agent, title, folder. `--all`: stopped ones too |
-| `show SESSION` | what it runs on, its folder, when it started and from where, how many clients are attached, whether it is shared, how to resume it once stopped, its link in the web UI |
+| `show SESSION` | who works (the program, the account or provider, and the model), its folder, when it started and from where, how many clients are attached, whether it is shared, how to resume it once stopped, its link in the web UI |
 | `stop SESSION` | stop its sandbox. The conversation and the folder stay: [`attach`](attach.md) resumes it |
 | `share SESSION` | share a running session with your paired devices (as `run --remote`); `--off` stops sharing. Sharing ends when the session stops |
 

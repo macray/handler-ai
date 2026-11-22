@@ -28,7 +28,10 @@ an undecided host a few seconds for the answer, and the card counts them down. A
 the agent was refused is told to it as a turn of Handler's own (`tell`): at once, or queued until
 its turn ends. Runs
 of one agent take turns (D.18): a run waits, in order, while another run of its agent goes on, at
-most `run_wait_timeout` (30 min); runs of other agents go on meanwhile.
+most `run_wait_timeout` (30 min); runs of other agents go on meanwhile. An app's job's run (H.11)
+has no agent: its app gives it a stand-in to launch as (`JobRun`); runs writing one folder take
+turns on it the same way (by its real path), a run writing several on all of them at once, and
+one only reading never waits (`turns`).
 
 Storage, one folder per session under <state>/sessions/<id>/ (F.2):
     session.json    the record
@@ -42,21 +45,25 @@ import contextlib
 import itertools
 import json
 import logging
+import re
 import secrets as pysecrets
 import shutil
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 from starlette.websockets import WebSocket
 
 from handler_contracts import (
     CONTAINER_HOST,
+    LAST_MAX,
     RUN_TIMEOUT_SEC,
+    SUMMARY_MAX,
     AcpCloseCode,
     AgentInterface,
+    Build,
     HostFolder,
     LlmUsage,
     NoNetwork,
@@ -64,6 +71,7 @@ from handler_contracts import (
     SandboxExit,
     Session,
     SessionAppDraft,
+    SessionAsk,
     SessionErrorCode,
     SessionInput,
     SessionLifecycle,
@@ -72,6 +80,7 @@ from handler_contracts import (
     SessionPlan,
     SessionPlanDraft,
     SessionSubject,
+    ToolKind,
     session_acp_path,
 )
 from handler_harness import starting_instructions
@@ -79,6 +88,7 @@ from handler_harness import starting_instructions
 from . import (
     __version__,
     addon_folders,
+    builds,
     compose,
     folders,
     interfaces,
@@ -90,7 +100,16 @@ from . import (
 )
 from .agents import AgentRecord, AgentRegistry, LiveConnection, RunsAs, apply_network
 from .model_agent import ModelAgent
-from .policy import AcpPolicy, ToAgent, ToClient, instructed, is_request, is_response, parse
+from .policy import (
+    AcpPolicy,
+    ToAgent,
+    ToClient,
+    ask_risk,
+    instructed,
+    is_request,
+    is_response,
+    parse,
+)
 from .sandbox_process import read_stderr, set_watched, stop
 from .secrets import redactor
 from .settings import Settings
@@ -111,6 +130,7 @@ EGRESS_LAG = 1.0  # seconds after a turn's end for its filter's last decisions (
 # failures in a turn, or so many seconds after the first one with no connection reached since
 MODEL_FAILURES = 3
 MODEL_SILENCE = 15.0
+SAID_KEEP = 2048  # of the agent's current message, for its last line (`LiveSession.last`)
 
 # how a session stopped (F.5), on its `lifecycle stopped` event: read by automations (I.2)
 StopHow = Literal["explicit", "idle", "exited", "error", "run_ended", "daemon_restarted", "deleted"]
@@ -194,7 +214,7 @@ def error(req_id: Any, code: int, message: str) -> Message:
 @dataclass
 class SessionRecord:
     id: str
-    agent_id: str
+    agent_id: str | None  # none: an app's job's run (H.11, `app` and `job`), no agent's
     harness: str | None  # the model it was started with (its agent's or one picked for it): the
     # harness (None: the model alone, D.18), on the account or provider below, with `model`
     scope: str
@@ -218,8 +238,9 @@ class SessionRecord:
     harness_version: str | None = None
     origin: SessionOrigin = "ui"
     app: str | None = None  # origin "app": the app that started it (H.11)
+    job: str | None = None  # a run of that job of `app` (H.11): run by its Who works, no agent
     plan: dict[str, Any] | None = None  # origin "plan": SessionPlan, the step it is (D.27)
-    waiting_for: str | None = None  # a run waiting: the run of its agent it waits for (D.18)
+    waiting_for: str | None = None  # a run waiting: the run it waits for (D.18, H.11)
     last_stop_reason: str | None = None
     answer: str | None = None  # a run's: the agent's last message, kept when it ended
     interface: dict[str, Any] | None = None  # a run (D.18): its job's interface when it started
@@ -392,8 +413,12 @@ class Attachment:
             if isinstance(item, tuple):
                 await self._close_quietly(*item)
                 return
-            with contextlib.suppress(Exception):  # a closing client: it will re-attach
-                await self._send(json.dumps(item))
+            text = json.dumps(item)
+            try:
+                await self._send(text)
+            except Exception:  # the client is going (its socket or link closing): it re-attaches
+                self.closed = True
+                return
 
     async def _close_quietly(self, code: int, reason: str) -> None:
         with contextlib.suppress(Exception):
@@ -404,12 +429,18 @@ class LiveSession:
     """One running agent. Every method runs on the event loop; `out` orders what the client gets."""
 
     def __init__(
-        self, store: "SessionStore", record: SessionRecord, agent: AgentRecord, runs: RunsAs
+        self,
+        store: "SessionStore",
+        record: SessionRecord,
+        agent: AgentRecord,
+        runs: RunsAs,
+        job: "JobRun | None" = None,
     ) -> None:
         self.store = store
         self.record = record
-        self.agent = agent
+        self.agent = agent  # a job's run's: its stand-in (app_jobs.stand_in)
         self.runs = runs  # the agent's model it runs with
+        self.job = job  # an app's job's run (H.11)
         self.log = store.event_log(record.id)
         self.link: AgentLink | None = None
         self.policy: AcpPolicy | None = None
@@ -423,6 +454,7 @@ class LiveSession:
         self.own: dict[str, asyncio.Future[Message]] = {}  # the daemon's own requests
         self.forwarded: dict[str, Forwarded] = {}  # our id → the client's request
         self.pending: dict[Any, Message] = {}  # agent→client requests awaiting an answer
+        self.asked_at: dict[Any, datetime] = {}  # when each of them came
         self.prompt_id: str | None = None  # the turn in progress (our id of its session/prompt)
         self.turn_started_at: datetime | None = None
         self.stop_reason: str | None = None  # why the daemon stopped it, if it did
@@ -454,10 +486,59 @@ class LiveSession:
         self.model_error = ""
         self.model_said = False
         self.model_wait: asyncio.TimerHandle | None = None
+        # what a device is shown of it (D.7): the agent's last step or sentence in one line, and
+        # what makes it: the end of its current message, its latest tool call's id
+        self.last: str | None = None
+        self.said = ""
+        self.tool_call: Any = None
 
     @property
     def busy(self) -> bool:
         return self.prompt_id is not None
+
+    @property
+    def since(self) -> datetime:
+        """When it came into the state a device shows (D.7): waiting on you since its first
+        pending request came, working since its turn started, idle since its last turn ended."""
+        if self.pending:
+            return self.asked_at[next(iter(self.pending))]
+        return self.turn_started_at or self.record.last_activity_at
+
+    def ask(self) -> SessionAsk | None:
+        """The first request it waits on you for, as a device is shown it (D.7); None when nothing
+        is pending, or the request names no tool call id (a device could not answer that one)."""
+        if not self.pending or self.policy is None:
+            return None
+        params = next(iter(self.pending.values())).get("params")
+        tool = params.get("toolCall") if isinstance(params, dict) else None
+        tool_id = tool.get("toolCallId") if isinstance(tool, dict) else None
+        if not isinstance(tool, dict) or not isinstance(tool_id, str):
+            return None
+        title, kind = tool.get("title"), tool.get("kind")
+        return SessionAsk(
+            tool_call_id=tool_id,
+            summary=self.one_line(title, SUMMARY_MAX) if isinstance(title, str) else None,
+            kind=kind if kind in get_args(ToolKind) else None,
+            risk=ask_risk(tool, self.policy.scope, self.policy.network),
+        )
+
+    def one_line(self, text: str, limit: int) -> str | None:
+        """`text` as a device is shown it: its secrets redacted (it reaches every device around,
+        and their sealed snapshots), then `one_line`."""
+        return one_line(self.log.redact(text), limit, self.record.scope)
+
+    def step(self, text: Any) -> None:
+        """The agent's latest visible step or sentence: its new last line, told when it changed."""
+        line = self.one_line(text, LAST_MAX) if isinstance(text, str) else None
+        if line and line != self.last:
+            self.last = line
+            self.shown()
+
+    def shown(self) -> None:
+        """What a device is shown of it changed (a turn started or ended, an ask came or went, its
+        last line): the store's `shown_listeners` are told (the remote connector sends the list)."""
+        for listener in self.store.shown_listeners:
+            listener(self)
 
     # ── start ───────────────────────────────────────────────────────────
 
@@ -530,6 +611,8 @@ class LiveSession:
             str(state_dir),
             folder=rec.scope,
             subject=subject,
+            unattended=rec.interface is not None,  # a run (D.18)
+            job=self.job.place if self.job is not None else None,
         )
         session_files.record_mounts(self.store.mounts(rec.id), started.seen, now())
         assert rec.harness is not None  # an agent program's
@@ -657,6 +740,10 @@ class LiveSession:
         if decision not in ("allowed", "kept blocked") or not isinstance(host, str):
             client.put(error(m["id"], -32602, "decision: allowed or kept blocked"))
             return
+        if self.job is not None:  # what it reaches is its app's declaration (H.1)
+            message = "a job's hosts are its app's: a version of the app declares them"
+            client.put(error(m["id"], -32602, message))
+            return
         if not self.log.refused(host):
             code = SessionErrorCode.NOT_REFUSED_HERE
             client.put(error(m["id"], code, f"{host} was not blocked in this session"))
@@ -753,7 +840,7 @@ class LiveSession:
             self.store.settings,
             provider=self.runs.provider,
             model=self.runs.model,
-            knowledge_folders=self.agent.knowledge,
+            knowledge_folders=[u.folder for u in self.agent.knowledge],
             folder=state_dir,
             on_call=on_call,
         )
@@ -859,8 +946,11 @@ class LiveSession:
             await self.to_agent(self.auto_answer(m))
         elif is_request(m):  # session/request_permission (P4 answered fs/*, terminal/*)
             self.pending[m["id"]] = m
+            self.asked_at[m["id"]] = now()
             self.broadcast(m)
             self.broadcast_state()
+            self.waiting_changed()
+            self.shown()
         else:
             self.broadcast(m)
 
@@ -891,6 +981,19 @@ class LiveSession:
             self.modes = self.modes | {"currentModeId": update.get("currentModeId")}
         elif kind == "config_option_update":
             self.config_options = update.get("configOptions")
+        elif kind == "tool_call":
+            self.said, self.tool_call = "", update.get("toolCallId")
+            self.step(update.get("title"))
+        elif kind == "tool_call_update" and update.get("toolCallId") == self.tool_call:
+            self.step(update.get("title"))
+        elif kind == "agent_message_chunk":
+            content = update.get("content")
+            text = content.get("text") if isinstance(content, dict) else None
+            if isinstance(text, str):
+                self.said = (self.said + text)[-SAID_KEEP:]
+                self.step(next((x for x in reversed(self.said.splitlines()) if x.strip()), None))
+        elif kind == "user_message_chunk":
+            self.said = ""
         return True
 
     def mirror(self, entry: "Forwarded", result: Any) -> None:
@@ -915,6 +1018,7 @@ class LiveSession:
         self.log.append("turn", phase="end", stopReason=stop_reason)
         self.touch()
         self.schedule_idle()
+        self.shown()
         if self.to_tell:
             self.store.spawn(self.send_told())
         if self.unseen:
@@ -943,6 +1047,8 @@ class LiveSession:
             self.prompt_id = self.turn_started_at = None
         self.forwarded.clear()
         self.pending.clear()
+        self.asked_at.clear()
+        self.waiting_changed()
         self.remote = False  # reset: switched on again by hand after a restart
         self.agent.connections.pop(rec.id, None)
         addon_folders.sweep_soon(self.store.settings)  # a folder it mounted may be free
@@ -1007,8 +1113,11 @@ class LiveSession:
         method = m.get("method")
         if is_response(m):  # an answer to a permission request: the first one wins (F.7)
             if (request := self.pending.pop(m["id"], None)) is not None:
+                self.asked_at.pop(m["id"], None)
                 await self.to_agent(m)
                 self.resolved(request, m, client)
+                self.waiting_changed()
+                self.shown()
             return  # an answer to a request already answered, or unknown: dropped
         request = is_request(m)
         raw = m.get("params")
@@ -1031,13 +1140,14 @@ class LiveSession:
                 code = SessionErrorCode.TURN_IN_PROGRESS
                 client.put(error(m["id"], code, "turn in progress"))
                 return
-            if self.record.instructions:
-                self.handlers_words = self.record.instructions
-                params = params | {"prompt": instructed(self.record.instructions, params)}
+            instructions = self.record.instructions
+            self.begin_turn(params.get("prompt") or [], client, instructions=instructions)
+            if instructions:
+                self.handlers_words = instructions
+                params = params | {"prompt": instructed(instructions, params)}
                 m = m | {"params": params}
                 self.record.instructions = None
                 self.store.save(self.record)
-            self.begin_turn(params.get("prompt") or [], client)
         if request:
             ours = f"handler-c-{next(self.ids)}"
             self.forwarded[ours] = Forwarded(client, m["id"], str(method), params)
@@ -1073,18 +1183,25 @@ class LiveSession:
         self.schedule_idle()
 
     async def first_prompt(
-        self, blocks: list[Message], timeout: float | None = None, *, from_handler: bool = False
+        self,
+        blocks: list[Message],
+        timeout: float | None = None,
+        *,
+        from_handler: bool = False,
+        instructions: str | None = None,
     ) -> None:
         """The request a session was created with, sent by the daemon itself as its first turn:
         the attached clients see it like another client's prompt (F.7). After `timeout` seconds
         the turn is cancelled (and ends as `timed_out`). `from_handler`: a message of Handler's
-        own (`tell`), shown as Handler's line, not as the person's."""
+        own (`tell`), shown as Handler's line, not as the person's. `instructions`: the agent's,
+        sent before the request's text (F.3), shown as Handler's line before it."""
         rid = f"handler-d-{next(self.ids)}"
         future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
         self.own[rid] = future
-        self.begin_turn(blocks, None, from_handler=from_handler)
+        self.begin_turn(blocks, None, from_handler=from_handler, instructions=instructions)
         self.prompt_id = rid
-        params = {"sessionId": self.record.acp_session_id, "prompt": blocks}
+        sent = instructed(instructions, {"prompt": blocks}) if instructions else blocks
+        params = {"sessionId": self.record.acp_session_id, "prompt": sent}
         timed_out = False
         try:
             await self.execute(
@@ -1117,12 +1234,21 @@ class LiveSession:
             await self.execute({"jsonrpc": "2.0", "method": "session/cancel", "params": params})
 
     def begin_turn(
-        self, prompt: list[Any], by: Attachment | None, *, from_handler: bool = False
+        self,
+        prompt: list[Any],
+        by: Attachment | None,
+        *,
+        from_handler: bool = False,
+        instructions: str | None = None,
     ) -> None:
+        """A turn's prompt in the log. `instructions`, sent to the agent before the person's
+        words, are Handler's line before them (F.5 `instructed`), never the person's."""
         self.cancel_idle()
         self.cards = {}
         self.model_failures, self.model_said = 0, False
         self.cancel_model_wait()
+        if instructions:
+            self.say("instructed", text=instructions)
         if from_handler:  # Handler's own message: its line (F.5), not the person's
             self.say("told agent", text="\n".join(b.get("text", "") for b in prompt))
             prompt = []
@@ -1139,8 +1265,10 @@ class LiveSession:
         self.touch()
         self.prompt_id = "starting"  # busy from now on; set to the forwarded id right after
         self.turn_started_at = now()
+        self.said, self.tool_call = "", None  # its last line stays until the agent's first update
         self.broadcast_state()
         self.watch()
+        self.shown()
 
     def load(self, client: Attachment, m: Message, params: Message) -> None:
         """The attach proper: replay the log, answer with the current state, re-send pending
@@ -1187,6 +1315,12 @@ class LiveSession:
     def broadcast_state(self) -> None:
         self.broadcast(notification("_handler/session_state", **self.state()))
 
+    def waiting_changed(self) -> None:
+        """A request awaiting an answer came or went (`pending`): the store's listeners are told
+        (the remote connector pushes when a shared session starts waiting on you)."""
+        for listener in self.store.waiting_listeners:
+            listener(self)
+
     # ── idle stop (F.6.3) ───────────────────────────────────────────────
 
     def touch(self) -> None:
@@ -1226,6 +1360,23 @@ def title_of(prompt: str) -> str:
     return line if len(line) <= TITLE_LENGTH else line[: TITLE_LENGTH - 1].rstrip() + "…"
 
 
+MARKER = re.compile(r"^(?:#+|>|[-*+]|\d+[.)])(?:\s+|$)")  # Markdown's, before a line's words
+
+
+def one_line(text: str, limit: int, folder: str = "") -> str | None:
+    """`text` in one line of at most `limit` characters (code points): paths relative to
+    `folder`, whitespace runs one space, Markdown's markers at its start dropped, cut with `…`;
+    None when nothing is left."""
+    if folder and folder != "/":
+        text = text.replace(f"{folder}/", "")
+    line = " ".join(text.split())
+    while (marker := MARKER.match(line)) is not None:
+        line = line[marker.end() :]
+    if len(line) > limit:
+        line = line[: limit - 1].rstrip() + "…"
+    return line or None
+
+
 def notification(method: str, **params: Any) -> Message:
     return {"jsonrpc": "2.0", "method": method, "params": params}
 
@@ -1248,6 +1399,19 @@ def with_seq(m: Message, seq: int) -> Message:
     meta = params.get("_meta")
     meta = meta if isinstance(meta, dict) else {}
     return m | {"params": params | {"_meta": meta | {"handler.dev/seq": seq}}}
+
+
+@dataclass(frozen=True)
+class JobRun:
+    """An app's job's run (H.11), made by its app (apps.py): the stand-in it launches as, where
+    it works, and the section of its request naming its folders. Kept in memory: a job's run is
+    never started again once handlerd stopped (its app runs the job again)."""
+
+    app: str
+    name: str
+    agent: AgentRecord
+    place: launcher.JobPlace
+    folders: str
 
 
 @dataclass(frozen=True)
@@ -1291,13 +1455,22 @@ class SessionStore:
         self.live: dict[str, LiveSession] = {}
         self.starting: dict[str, asyncio.Task[LiveSession]] = {}
         self.background: set[asyncio.Task[Any]] = set()
-        # runs take turns per agent (D.18): agent id → the run going on, the runs waiting
+        # runs take turns (D.18, H.11): agent id or written folder → the run going on, the waiting
         self.running_runs: dict[str, str] = {}
         self.run_queues: dict[str, list[str]] = {}
         self.waits: dict[str, asyncio.Task[Any]] = {}  # a waiting run's id → its task
+        self.jobs: dict[str, JobRun] = {}  # an app's job's run's id → what runs it (H.11)
         self.listeners: list[Callable[[], None]] = []  # told when sessions stop or are shared
+        # told when a session's requests awaiting an answer change: it waits on you, or no more
+        self.waiting_listeners: list[Callable[[LiveSession], None]] = []
+        # told when what a device is shown of a session changes (`LiveSession.shown`)
+        self.shown_listeners: list[Callable[[LiveSession], None]] = []
         # told with its id when a session's `lifecycle stopped` event is written (automations)
         self.stop_listeners: list[Callable[[str], None]] = []
+        # told after each change of a session saved, made or deleted (the web UI's events, D.30)
+        self.watchers: list[Callable[[], None]] = []
+        # awaited with its id before a session is deleted (an app's draft opened from it: closed)
+        self.delete_listeners: list[Callable[[str], Awaitable[None]]] = []
         # told of the hosts refused in a session's turn while nobody could answer (the inbox)
         self.refusal_listeners: list[
             Callable[[SessionRecord, AgentRecord, list[RefusedHost]], None]
@@ -1342,6 +1515,8 @@ class SessionStore:
         tmp = folder / "session.json.tmp"
         tmp.write_text(json.dumps(rec.to_json(), indent=2))
         tmp.replace(folder / "session.json")
+        for watcher in self.watchers:
+            watcher()
 
     def redactor(self, agent: AgentRecord, runs: RunsAs) -> Any:
         """Invariant 4: its account's or provider's and bindings' secret values never land in the
@@ -1361,7 +1536,7 @@ class SessionStore:
 
     def to_contract(self, rec: SessionRecord) -> Session:
         live = self.live.get(rec.id)
-        agent = self.registry.get(rec.agent_id)
+        agent = self.registry.get(rec.agent_id) if rec.agent_id else None
         return Session(
             id=rec.id,
             agent_id=rec.agent_id,
@@ -1385,6 +1560,7 @@ class SessionStore:
             harness_version=rec.harness_version,
             origin=rec.origin,
             app=rec.app,
+            job=rec.job,
             waiting_for=rec.waiting_for,
             last_stop_reason=rec.last_stop_reason,
             answer=rec.answer,
@@ -1456,6 +1632,7 @@ class SessionStore:
         instructions: str | None = None,
         step: PlanTurn | None = None,
         plan_draft: DraftWork | None = None,
+        job: JobRun | None = None,
     ) -> SessionRecord:
         """A new session, started in the background (F.3). With a `prompt` (the request), the
         daemon sends it once the agent runs, after the agent's instructions if it has any (a
@@ -1477,9 +1654,15 @@ class SessionStore:
         the agent is not changed.
         `plan_draft`: a plan builder's session (D.27): it works in the draft's folder, its
         project mounted read-only when it starts, told its brief after the agent's
-        instructions."""
+        instructions.
+        `job`: an app's job's run (origin "app", H.11, with `run`): `agent` its stand-in, never
+        registered; it works in its folder (one given to its app), else in its own, its other
+        folders named in its request. It takes its turn on the folders it writes (`turns`)."""
         sid = "s_" + pysecrets.token_hex(8)
         scope = agent.scope
+        if job is not None:
+            assert scope is None and run is not None and app == job.app
+            scope = job.place.work
         if plan_draft is not None:
             assert scope is None and app_draft is None and from_skill is None
             scope = str(plan_draft.folder)
@@ -1512,7 +1695,7 @@ class SessionStore:
         timeout = (interface.timeout_sec or RUN_TIMEOUT_SEC) if interface is not None else None
         rec = SessionRecord(
             id=sid,
-            agent_id=agent.id,
+            agent_id=None if job is not None else agent.id,
             harness=runs.harness,
             account=runs.account,
             provider=runs.provider,
@@ -1524,6 +1707,7 @@ class SessionStore:
             title=title,
             origin=origin,
             app=app,
+            job=job.name if job is not None else None,
             plan=step.plan.model_dump(mode="json", by_alias=True) if step else None,
             interface=interface.model_dump(mode="json", by_alias=True) if interface else None,
             input=run.model_dump(mode="json", by_alias=True) if run is not None else None,
@@ -1538,11 +1722,14 @@ class SessionStore:
             request=prompt if run is None and step is None else None,
         )
         self.records[rec.id] = rec
+        if job is not None:
+            self.jobs[rec.id] = job
         self.save(rec)
         text = None
         if form is not None and run is not None:
             notes = self.subject_notes(subject)
-            text = interfaces.request(told, form, run, subject, notes)
+            folders = job.folders if job is not None else None
+            text = interfaces.request(told, form, run, subject, notes, folders=folders)
         elif step is not None:
             text = f"{told}\n\n{prompt}" if told else prompt
         # one block: every adapter reads it (some would drop a second one)
@@ -1561,30 +1748,48 @@ class SessionStore:
         self, session_id: str, prompt: Sequence[Message], timeout: float | None
     ) -> None:
         rec = self.records[session_id]
-        if rec.interface is None:
+        turns = self.turns(rec)
+        if not turns:
             await self._go(session_id, prompt, timeout)
             return
-        if not await self._take_turn(rec):
+        if not await self._take_turn(rec, turns):
             return
         try:
             await self._go(session_id, prompt, timeout)
         finally:
-            self.running_runs.pop(rec.agent_id, None)
+            for turn in turns:
+                self.running_runs.pop(turn, None)
 
-    async def _take_turn(self, rec: SessionRecord) -> bool:
-        """A run's turn among its agent's runs (D.18): False when it did not come (it waited
-        too long, or was stopped meanwhile)."""
-        agent_id, loop = rec.agent_id, asyncio.get_running_loop()
-        queue = self.run_queues.setdefault(agent_id, [])
-        queue.append(rec.id)
+    def turns(self, rec: SessionRecord) -> tuple[str, ...]:
+        """What a run takes its turn on: its agent's id (D.18: one run of an agent at a time,
+        rule job.one-run-of-an-agent-at-a-time), or, for an app's job's run (H.11), the real path
+        of each folder it writes (rule app-job.writers-of-a-folder-take-turns): none when it only
+        reads, so a reader never waits. A path starts with `/`, an agent's id never: an agent's
+        runs and a job's never wait for each other. A session that is no run takes none."""
+        if rec.interface is None:
+            return ()
+        if rec.job is not None:
+            return self.jobs[rec.id].place.writes
+        assert rec.agent_id is not None  # an agent's run
+        return (rec.agent_id,)
+
+    async def _take_turn(self, rec: SessionRecord, turns: tuple[str, ...]) -> bool:
+        """A run's turn on each of `turns` at once (D.18, H.11): False when it did not come (it
+        waited too long, or was stopped meanwhile). It joins each queue in one step, so any two
+        runs are in the same order in every queue they share: the first of them never waits for
+        a later one (no deadlock), and it starts once it is first in each, none running."""
+        loop = asyncio.get_running_loop()
+        queues = [self.run_queues.setdefault(turn, []) for turn in turns]
+        for queue in queues:
+            queue.append(rec.id)
         task = asyncio.current_task()
         assert task is not None
         self.waits[rec.id] = task
         limit = self.settings.run_wait_timeout
         deadline = loop.time() + limit
         try:
-            while (ahead := self.running_runs.get(agent_id)) is not None or queue[0] != rec.id:
-                ahead = ahead or queue[0]
+            while (blocked := self.blocked(rec.id, turns)) is not None:
+                turn, ahead = blocked
                 if rec.waiting_for != ahead:
                     rec.waiting_for = ahead
                     self.save(rec)
@@ -1592,22 +1797,34 @@ class SessionStore:
                 if loop.time() > deadline:
                     behind = self.records.get(ahead)
                     what = behind.title if behind and behind.title else ahead
+                    holder = "its agent" if rec.job is None else f"a run writing {turn}"
                     self.not_started(
-                        rec, f"waited {wait_label(limit)}: its agent was still running {what}"
+                        rec, f"waited {wait_label(limit)}: {holder} was still running {what}"
                     )
                     return False
                 await asyncio.sleep(RUN_POLL)
-            self.running_runs[agent_id] = rec.id
+            for turn in turns:
+                self.running_runs[turn] = rec.id
         except asyncio.CancelledError:  # stopped while waiting (stop): not_started is done
             return False
         finally:
-            queue.remove(rec.id)
+            for queue in queues:
+                queue.remove(rec.id)
             self.waits.pop(rec.id, None)
         if rec.waiting_for is not None:
             rec.waiting_for = None
             self.save(rec)
             self.changed()
         return True
+
+    def blocked(self, run_id: str, turns: tuple[str, ...]) -> tuple[str, str] | None:
+        """The first of `turns` the run cannot take yet, and the run it waits for there (the one
+        going on, else the one before it); None when it can take them all."""
+        for turn in turns:
+            ahead = self.running_runs.get(turn) or self.run_queues[turn][0]
+            if ahead != run_id:
+                return turn, ahead
+        return None
 
     def not_started(self, rec: SessionRecord, reason: str) -> None:
         """A run that never started: failed, with why (its `lifecycle stopped` event told)."""
@@ -1674,6 +1891,8 @@ class SessionStore:
         """The live session, started if needed — at most one start at a time (F.6.1). A run
         waiting for its turn (D.18) is not started before it comes."""
         if session_id in self.waits:
+            if self.records[session_id].job is not None:
+                raise SessionError("this run waits for the run writing its folder")
             raise SessionError("this run waits for its agent's run in progress")
         if (live := self.live.get(session_id)) is not None and live.record.state == "running":
             return live
@@ -1687,20 +1906,30 @@ class SessionStore:
     async def _start(self, rec: SessionRecord) -> LiveSession:
         if rec.state == "failed":
             raise SessionError(rec.error or "session failed")
-        agent = self.registry.get(rec.agent_id)
-        if agent is None:
-            raise SessionError("its agent was deleted")
-        # its history belongs to the harness, login and folder it was started with
-        # (its project's area is checked when it starts, launcher.prepare)
-        runs = agent.resumes_as(
-            rec.harness, rec.account, rec.provider, rec.model, agents_model=rec.agents_model
-        )
-        if (scope := agent.scope or str(self.own_folder(rec))) != rec.scope:
-            raise SessionError(
-                f"the agent now works in {scope}; this conversation was in {rec.scope}: "
-                "start a new session"
+        job = self.jobs.get(rec.id)
+        if rec.job is not None:  # an app's job's run (H.11): what it ran with, as it was made
+            if job is None:
+                raise self.refused(rec, "a job's run does not start again: run the job again")
+            agent = job.agent
+            runs = RunsAs(
+                harness=rec.harness, account=rec.account, provider=rec.provider, model=rec.model
             )
-        self.registry.touch(agent)
+        else:
+            agent = self.registry.get(rec.agent_id or "")
+            if agent is None:
+                raise self.refused(rec, "its agent was deleted")
+            # its history belongs to the harness, login and folder it was started with
+            # (its project's area is checked when it starts, launcher.prepare)
+            runs = agent.resumes_as(
+                rec.harness, rec.account, rec.provider, rec.model, agents_model=rec.agents_model
+            )
+            if (scope := agent.scope or str(self.own_folder(rec))) != rec.scope:
+                raise self.refused(
+                    rec,
+                    f"the agent now works in {scope}; this conversation was in {rec.scope}: "
+                    "start a new session",
+                )
+            self.registry.touch(agent)
         first = rec.state == "starting"
         rec.state = "starting"
         self.save(rec)
@@ -1711,7 +1940,7 @@ class SessionStore:
                 )
             except OSError as e:
                 log.warning("session %s: its folder not recorded: %s", rec.id, e)
-        live = LiveSession(self, rec, agent, runs)
+        live = LiveSession(self, rec, agent, runs, job)
         self.live[rec.id] = live
         try:
             await live.start()
@@ -1729,16 +1958,49 @@ class SessionStore:
             self.live.pop(rec.id, None)
             raise SessionError(str(e)) from None
         if rec.request is not None:  # its first turn, now that it runs (F.1, F.3)
-            text = f"{rec.instructions}\n\n{rec.request}" if rec.instructions else rec.request
-            live.handlers_words = rec.instructions
+            request, instructions = rec.request, rec.instructions
+            live.handlers_words = instructions
             rec.request = rec.instructions = None
             self.save(rec)
-            self.spawn(live.first_prompt([{"type": "text", "text": text}]))
+            prompt = [{"type": "text", "text": request}]
+            self.spawn(live.first_prompt(prompt, instructions=instructions))
         return live
+
+    def refused(self, rec: SessionRecord, reason: str) -> SessionError:
+        """A start refused before its sandbox: a first one leaves the session failed with why
+        (nobody may be there to be told: `POST /v1/sessions` started it), a resume stays
+        stopped, the error going to whoever resumes it."""
+        if rec.state == "starting":
+            self.not_started(rec, reason)
+        return SessionError(reason)
+
+    def image_built(self, build: Build) -> None:
+        """Told by the builds when one ends: a session whose first request waits for what it made
+        starts now, whether or not a page has it open (F.1). A resume refused for an image
+        waits for someone to attach: nothing is waiting to be said to its agent."""
+        if build.state != "succeeded":
+            return
+        for rec in list(self.records.values()):
+            if (
+                rec.state == "stopped"
+                and rec.request is not None
+                and rec.missing_image is not None
+                and builds.makes(build, rec.missing_image)
+            ):
+                log.info("session %s: %s is built, starting it", rec.id, rec.missing_image)
+                self.spawn(self._start_waiting(rec.id))
+
+    async def _start_waiting(self, session_id: str) -> None:
+        try:
+            await self.ensure_running(session_id)
+        except SessionError as e:  # said on the session (its error), as for any start
+            log.info("session %s: not started after its build: %s", session_id, e)
 
     def changed(self) -> None:
         for listener in self.listeners:
             listener()
+        for watcher in self.watchers:
+            watcher()
 
     def set_remote(self, session_id: str, enabled: bool) -> None:
         """Share a running session with paired devices, or stop sharing it
@@ -1767,9 +2029,14 @@ class SessionStore:
                 await asyncio.gather(*live.tasks, return_exceptions=True)
 
     async def delete(self, session_id: str) -> None:
+        for listener in self.delete_listeners:
+            await listener(session_id)
         await self.stop(session_id, "deleted", "deleted")
         self.records.pop(session_id, None)
+        self.jobs.pop(session_id, None)
         shutil.rmtree(self.folder(session_id), ignore_errors=True)
+        for watcher in self.watchers:
+            watcher()
 
     async def stop_agent(self, agent_id: str) -> None:
         for rec in self.list(agent_id):

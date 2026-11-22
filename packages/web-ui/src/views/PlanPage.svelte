@@ -14,6 +14,7 @@
   import RefusedHosts from "../components/RefusedHosts.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import When from "../components/When.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { PlanView } from "../lib/contracts.gen";
   import { limit, restartable, stepsDone } from "../lib/plans";
@@ -41,8 +42,7 @@
 
   $effect(() => {
     void load();
-    const timer = setInterval(() => plan?.state === "running" && load(), 3000);
-    return () => clearInterval(timer);
+    return onChange(["plans", "sessions"], () => void load());
   });
 
   async function act(action: () => Promise<PlanView>): Promise<void> {
@@ -157,7 +157,7 @@
                 said={step.said}
                 completed={step.state === "done"}
                 {busy}
-                again={runs ? `Allow and run again from step ${step.n}` : null}
+                again={runs ? { agent: plan.agent, step: step.n } : null}
                 onallow={(hosts) => (runs ? act(() => api.runPlan(id, step.n, hosts)) : decide(hosts, "allow"))}
                 onkeep={(hosts) => decide(hosts, "blocked")}
               />

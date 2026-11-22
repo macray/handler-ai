@@ -21,14 +21,17 @@ from .test_sessions import attach, create_session, get_session
 _TAKEN: dict[AcpClient, int] = {}  # a client's lines already taken by `lines`
 
 
+def network_line(m: dict[str, Any]) -> bool:
+    """A line of Handler's own (`_handler/line`) but the agent's instructions (`instructed`)."""
+    return m["method"] == "_handler/line" and m["params"]["event"] != "instructed"
+
+
 def lines(client: AcpClient, count: int, timeout: float = 30) -> list[dict[str, Any]]:
-    """The next `count` lines of Handler's own (`_handler/line`), also those that came while
-    waiting for an answer."""
+    """The next `count` lines of Handler's own (`_handler/line`) but the instructions, also
+    those that came while waiting for an answer."""
     deadline = time.monotonic() + timeout
     taken = _TAKEN.get(client, 0)
-    while (
-        len(found := [m for m in client.updates if m["method"] == "_handler/line"]) < taken + count
-    ):
+    while len(found := [m for m in client.updates if network_line(m)]) < taken + count:
         client.wait_notification("_handler/line", deadline - time.monotonic())
     _TAKEN[client] = taken + count
     return [m["params"] for m in found[taken : taken + count]]
@@ -74,7 +77,7 @@ def test_one_card_per_host_per_turn_with_its_count(daemon: Daemon, started: Any)
     later, _ = attach(daemon, session)  # the history: the lines in their place
     try:
         replayed = [m for m in later.updates if m["method"] in ("_handler/line", "session/update")]
-        shown = [m["params"] for m in replayed if m["method"] == "_handler/line"]
+        shown = [m["params"] for m in replayed if network_line(m)]
         assert [(x["host"], x["count"], x["card"]) for x in shown] == [
             *(("pypi.org:443", n, card) for n in (1, 2, 3)),
             ("pypi.org:443", 1, again["card"]),

@@ -30,6 +30,8 @@ def test_every_keeps_its_cadence() -> None:
     assert latest_slot(s, at(28, 8), at(28, 8, 31)) == at(28, 8, 30)  # not the time it is seen
     assert next_slot(s, at(28, 8, 30), at(28, 8, 31)) == at(28, 9)
     assert schedule(every="2h").every_minutes == 120
+    daily = schedule(every="1d")
+    assert next_slot(daily, at(28, 8), at(28, 9)) == at(29, 8)
 
 
 @pytest.mark.rule("schedule.the-latest-slot-once")
@@ -79,7 +81,7 @@ def test_days() -> None:
         {},
         {"every": "30m", "at": "08:00"},
         {"every": "2m"},  # at least 5m
-        {"every": "1d"},
+        {"every": "1w"},  # minutes, hours or days
         {"at": "8:30"},
         {"at": "24:00"},
         {"every": "1h", "days": ["mon"]},

@@ -1,0 +1,21 @@
+{
+  "$id": "urn:handler.control/v1/nudge-setting-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`PUT /v1/apps/{name}/nudges/{nudge}`: how that nudge reminds you (H.17).",
+  "properties": {
+    "setting": {
+      "enum": [
+        "default",
+        "once",
+        "silent"
+      ],
+      "title": "Setting",
+      "type": "string"
+    }
+  },
+  "required": [
+    "setting"
+  ],
+  "title": "NudgeSettingRequest",
+  "type": "object"
+}

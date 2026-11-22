@@ -2,7 +2,7 @@
 // one per session), working in a folder (where; an ad-hoc agent may have none: each session gets its own), with its settings:
 // network (mode, log-only, extra hosts), permission mode, addon configurations, knowledge
 // folders, confinement, display, and an interface (D.18: its runs take an input and give a
-// result back). Its home, never changed: a project, an app (or Chat), or none (Other folders:
+// result back). Its home, never changed: a project, an app (or Chat), or none (Agents outside projects:
 // made there or by the CLI). Their requests are built by projects.svelte.ts (`agentBody`).
 //
 // Also the helpers shared by agent forms and lists (badges, folder names, "2 hours ago").
@@ -36,6 +36,17 @@ export function modeTone(id: string, kind?: PermissionMode): "plan" | "edits" | 
   return /plan/i.test(id) ? "plan" : "ask";
 }
 
+const WIDTH: Record<PermissionMode, number> = { ask: 0, "accept-edits": 1, bypass: 2 };
+
+/** Whether a session's mode lets the agent do more without asking than its own setting (`own`):
+ *  the only case the mode select is amber (switched wider for this session). `kind`: the
+ *  permission mode the session mode is (a harness's other modes, plan mode among them, are
+ *  never wider); `own` not known: wider only when it acts without asking at all. */
+export function modeWider(kind: PermissionMode | undefined, own: PermissionMode | undefined): boolean {
+  if (!kind) return false;
+  return WIDTH[kind] > WIDTH[own ?? "accept-edits"];
+}
+
 /** The mode after `current`, in the harness's order (Shift+Tab), back to the first after the last. */
 export function nextMode(modes: { id: string }[], current: string | null): string | null {
   if (!modes.length) return null;
@@ -48,12 +59,6 @@ export function terminalsOf(agents: Agent[]): { agent: Agent; conn: Connection &
   return agents
     .flatMap((agent) => agent.connections.flatMap((conn) => (conn.terminal ? [{ agent, conn: { ...conn, terminal: conn.terminal } }] : [])))
     .sort((a, b) => b.conn.since.localeCompare(a.conn.since));
-}
-
-/** The app an agent is one of the parts of (its home, H.14): listed and opened on its page
- *  only, started by the app. */
-export function appOf(a: Pick<Agent, "app">): string | null {
-  return a.app ?? null;
 }
 
 /** Someone you talk to in Chat: an agent whose home is Chat (D.1). */
@@ -107,6 +112,13 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
   return delta >= 0 ? `${span} ago` : `in ${span}`;
 }
 
+/** When a project was last used, on its Projects row (E8): "last session 2 hours ago", "no session
+ *  yet". Its `lastUsedAt` is its agents' last use: a session started or resumed, an editor or
+ *  terminal connected (each a session of its agent). */
+export function lastSession(iso: string | null | undefined, now = Date.now()): string {
+  return iso ? `last session ${ago(iso, now)}` : "no session yet";
+}
+
 /** The exact time, for a hover over an `ago`: "Oct 4, 2026, 4:03 PM". */
 export function exactTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -131,7 +143,7 @@ export function clockTime(iso: string): string {
 }
 
 /** What an agent was set up from, by name: an agents file (D.23) or one of Handler's needs
- *  (D.18); null for an app's need (it is the app's part) or none. */
+ *  (D.18); null for none. */
 export function setUpFrom(origin: AgentOrigin | null | undefined): string | null {
-  return origin && origin.kind !== "app" ? origin.name : null;
+  return origin ? origin.name : null;
 }

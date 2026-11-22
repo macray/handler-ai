@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from handler_contracts import ImageInfo, ProxyImage
 from handler_sandbox_kit import egress, image_archive
+from handler_sandbox_kit.engine_output import Reason
 from handler_sandbox_kit.launcher import LAUNCHER_LABEL, MANAGED_LABEL, launcher_label
 
 from .docker import (
@@ -41,21 +42,24 @@ def _fail(message: str) -> int:
     return 1
 
 
-def _build(argv: list[str]) -> int:
-    """Run `docker build`, BuildKit's progress turned into the contract's STEP lines (A.7)."""
+def _build(argv: list[str]) -> tuple[int, Reason]:
+    """Run `docker build`, BuildKit's progress turned into the contract's STEP lines (A.7); its
+    exit code, and the reason it gave when it failed."""
     proc = subprocess.Popen(
         ["docker", "build", "--progress", "plain", *argv],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )  # fmt: skip
     assert proc.stdout is not None
     seen: set[tuple[str, str]] = set()
+    reason = Reason()
     for line in proc.stdout:
+        reason.feed(line)
         if (m := STEP.search(line)) and (m[1], m[2]) not in seen:
             seen.add((m[1], m[2]))
             print(f"STEP {m[1]}/{m[2]}: {m[3].strip()}", flush=True)
         else:
             print(line, end="", flush=True)
-    return proc.wait()
+    return proc.wait(), reason
 
 
 def build(
@@ -87,9 +91,9 @@ def build(
                 argv += ["--build-arg", f"{name}={value}"]
         except DockerError as e:
             return _fail(str(e))
-        code = _build([*argv, str(context)])
-        if code != 0:
-            return _fail(f"build failed (docker exit code {code})")
+        code, reason = _build([*argv, str(context)])
+        if code:
+            return _fail(reason.said(f"build failed (docker exit code {code})"))
         id_file.write_text(iidfile.read_text().strip().removeprefix("sha256:") + "\n")
     return 0
 
@@ -135,9 +139,9 @@ def build_proxy() -> int:
     with tempfile.TemporaryDirectory() as tmp, resources.as_file(context) as path:
         iidfile = Path(tmp) / "iid"
         argv = [f"--iidfile={iidfile}", "--pull", "--no-cache", "--file", str(path / RECIPE)]
-        code = _build([*argv, str(path)])
-        if code != 0:
-            return _fail(f"build failed (docker exit code {code})")
+        code, reason = _build([*argv, str(path)])
+        if code:
+            return _fail(reason.said(f"build failed (docker exit code {code})"))
         image_id = iidfile.read_text().strip()
     started = subprocess.run(
         ["docker", "run", "--rm", "--network", "none", "--label", f"{MANAGED_LABEL}=1",

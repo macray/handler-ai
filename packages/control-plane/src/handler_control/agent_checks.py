@@ -47,7 +47,7 @@ MATTERS = {
     "model_alone": "who works",
     "knowledge": "its knowledge",
     "skills": "its skills",
-    "addons": "its addons",
+    "addons": "its tools",
 }
 
 
@@ -100,6 +100,7 @@ class CheckStore:
         self.settings, self.sessions = settings, sessions
         self.root = settings.state_dir / "agent-checks"
         self.running: dict[str, asyncio.Task[None]] = {}  # agent id → its check run
+        self.watchers: list[Callable[[], None]] = []  # told after each save (the web UI, D.30)
 
     # ── storage ─────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ class CheckStore:
         stored = Stored(
             checks=[Check.model_validate(c) for c in raw["checks"]],
             runs=[CheckRun.model_validate(r) for r in raw["runs"]],
-            ran_with=raw.get("ranWith"),
+            ran_with=raw["ranWith"],
         )
         if stored.runs and stored.runs[-1].ended_at is None and agent_id not in self.running:
             stored.runs[-1] = interrupted(stored.runs[-1])  # handlerd stopped meanwhile
@@ -129,6 +130,8 @@ class CheckStore:
         tmp = self.file(agent_id).with_suffix(".tmp")
         tmp.write_text(json.dumps(raw, indent=2))
         tmp.replace(self.file(agent_id))
+        for watcher in self.watchers:
+            watcher()
 
     # ── what clients see ────────────────────────────────────────────────
 

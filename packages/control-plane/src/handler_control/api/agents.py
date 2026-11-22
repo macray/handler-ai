@@ -50,9 +50,7 @@ def add_agent_routes(app: FastAPI, ctx: Context) -> None:
 
     @app.get("/v1/agents", dependencies=authed)
     def list_agents() -> Response:
-        # a copy: sync routes read it in a worker thread, the event loop changes it
-        agents = list(ctx.registry.agents.values())
-        return dump([ctx.to_agent(r) for r in agents])
+        return dump([ctx.to_agent(r) for r in ctx.registry.agents.values()])
 
     @app.get("/v1/agents/{agent_id}", dependencies=authed)
     def inspect_agent(agent_id: str) -> Response:

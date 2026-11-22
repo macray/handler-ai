@@ -6,8 +6,8 @@ stable id.
 
 Its home, given at creation and never changed: a project (`project_id`, projects.py: what it
 gets from its project, folder, caches, skills, is resolved into its record, so what launches
-sessions and sandboxes never needs to know about projects), an app (`app`: one of its parts,
-H.14), Chat (`chat`: someone you talk to, D.1), or none: outside projects (D.1: `handler
+sessions and sandboxes never needs to know about projects), Chat (`chat`: someone you talk to,
+D.1), or none: outside projects (D.1: `handler
 run`, `handler acp`, `handler terminal`, or made on the Other folders page). An agent of no
 project may have no folder: each of its sessions then works in a folder of its own (D.18).
 
@@ -123,7 +123,6 @@ class AgentRecord(CheckedSettings):
     id: str = ""
     name: str | None = None  # its name (of no project: optional)
     project_id: str | None = None  # its home: the project it is an agent of (projects.py)
-    app: str | None = None  # its home: the app it is one of the parts of (H.14)
     chat: bool = False  # its home: Chat, someone you talk to (D.1)
     description: str | None = None  # an agent's: what it is for
     instructions: str | None = None  # an agent's: sent before the request starting a session
@@ -143,8 +142,9 @@ class AgentRecord(CheckedSettings):
 
     @property
     def addon_uses(self) -> list[AddonUse]:
-        """Its own addons, then its project's (G.3)."""
-        return [*self.addons, *self.project_addons]
+        """Its own addons, then its project's (G.3), then the knowledge tool its knowledge uses
+        bring (D.29)."""
+        return with_knowledge_tool([*self.addons, *self.project_addons], bool(self.schemas))
 
     @property
     def settings(self) -> CheckedSettings:
@@ -161,16 +161,19 @@ _SETTINGS = set(CheckedSettings.model_fields)
 class AgentRegistry:
     def __init__(self, state_dir: Path) -> None:
         self.file = state_dir / "agents.json"
+        # replaced, never changed in place: sync routes iterate it in a worker thread while the
+        # event loop adds or removes one
         self.agents: dict[str, AgentRecord] = {}
         self.listeners: list[Callable[[], None]] = []  # told after each save (image_updates)
+        # told after each save and each connection made or ended (the web UI, D.30)
+        self.watchers: list[Callable[[], None]] = []
         self._load()
 
     def _load(self) -> None:
         if not self.file.exists():
             return
-        for r in json.loads(self.file.read_text()):
-            record = AgentRecord.model_validate(r)
-            self.agents[record.id] = record
+        records = (AgentRecord.model_validate(r) for r in json.loads(self.file.read_text()))
+        self.agents = {r.id: r for r in records}
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +183,12 @@ class AgentRegistry:
         tmp.replace(self.file)
         for listener in self.listeners:
             listener()
+        self.connected()
+
+    def connected(self) -> None:
+        """A connection of an agent made or ended (a terminal's, an editor's: D.16, C)."""
+        for watcher in self.watchers:
+            watcher()
 
     def outside(self, scope: str | None, name: str | None) -> AgentRecord | None:
         """The agent of no home working in `scope` under `name` (None: the unnamed one; names
@@ -187,7 +196,7 @@ class AgentRegistry:
         key = (name or "").strip().lower()
         for record in self.agents.values():
             same = (record.scope, (record.name or "").lower()) == (scope, key)
-            if record.project_id is None and record.app is None and not record.chat and same:
+            if record.project_id is None and not record.chat and same:
                 return record
         return None
 
@@ -197,7 +206,7 @@ class AgentRegistry:
         while aid in self.agents:
             aid = secrets.token_hex(6)
         record.id = aid
-        self.agents[aid] = record
+        self.agents = {**self.agents, aid: record}
         self.save()
         return record
 
@@ -211,8 +220,9 @@ class AgentRegistry:
         return self.agents.get(aid)
 
     def delete(self, aid: str) -> AgentRecord | None:
-        record = self.agents.pop(aid, None)
+        record = self.agents.get(aid)
         if record:
+            self.agents = {k: r for k, r in self.agents.items() if k != aid}
             self.save()
         return record
 
@@ -239,6 +249,17 @@ class AgentRegistry:
 
     def add_event(self, record: AgentRecord, connection: str, event: dict[str, str]) -> None:
         record.events.append({"t": datetime.now(UTC), "connection": connection} | event)
+
+
+KNOWLEDGE_TOOL = "knowledge"  # the built-in tool giving the format's command (D.29)
+
+
+def with_knowledge_tool(uses: list[AddonUse], has_schemas: bool) -> list[AddonUse]:
+    """`uses`, and the knowledge tool when an agent has a knowledge use and not that tool yet:
+    the command its documents are written with comes with them."""
+    if not has_schemas or any(u.addon == KNOWLEDGE_TOOL for u in uses):
+        return uses
+    return [*uses, AddonUse(addon=KNOWLEDGE_TOOL)]
 
 
 def addons_in_use(agents: Iterable[AgentRecord]) -> dict[str, list[str]]:

@@ -3,8 +3,9 @@
   // one or edit it: the one agent form, every setting visible, nothing folded. Rows first: its
   // name (what it is for; "Assistant" for a project's first) and description, how it is used
   // (Talk; Brief: a form starts each session, then a talk; Job: a form in, a result out,
-  // unattended, D.18; a change of use that drops a saved brief or result says so), who works (two
-  // chips: its program, or the model alone, then what it runs on and its model), its tools,
+  // unattended, D.18; a change of use that drops a saved brief or result says so), who works (its
+  // account or provider, its program or the model alone, its model; a job on a subscription is
+  // recommended an API key), its tools,
   // skills and notes; outside projects, its folder. Then a brief's or a job's form (JobEditor), its
   // instructions, which may name the form's fields `{{key}}` (a field not saved yet keeps its
   // placeholders when its label, so its key, changes); then Can do (CanDo: the network and the
@@ -15,7 +16,7 @@
   // model is pointed to that one: one goal, one agent. A job never asks (bypass, confirmed when
   // chosen); "Save and try" saves it, then opens its page and its run form; "Save and run it on a
   // schedule…" saves it, then opens a new automation's form.
-  import type { Agent, AgentOrigin, AutomationView, HarnessInfo, Project, UseRef } from "../lib/contracts.gen";
+  import type { Agent, AutomationView, HarnessInfo, Project, UseRef } from "../lib/contracts.gen";
   import { resultProblems, runsAgent, whenSentence } from "../lib/automations";
   import { dependents } from "../lib/apps";
   import { accessLabel, accessOf, chosen, sameModel, sameRun } from "../lib/access";
@@ -48,29 +49,26 @@
   import AddonPicker from "./AddonPicker.svelte";
   import FolderPicker from "./FolderPicker.svelte";
   import KnowledgePicker from "./KnowledgePicker.svelte";
+  import SchemaPicker from "./SchemaPicker.svelte";
   import SkillPicker from "./SkillPicker.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import When from "./When.svelte";
-  import ModelChoice from "./ModelChoice.svelte";
+  import WhoWorksChoice from "./WhoWorksChoice.svelte";
   import CanDo from "./CanDo.svelte";
+  import EnvEditor from "./EnvEditor.svelte";
+  import { envProblem } from "../lib/env";
   import SettingRow from "./SettingRow.svelte";
 
   let {
     project,
     agent,
     start,
-    origin,
-    startFolder,
-    pendingSkills = [],
     onsaved,
     oncancel,
   }: {
     project?: Project; // none: an ad-hoc agent
     agent?: Agent; // edit it; none: a new one
     start?: AgentSpec; // a new one's starting values (a duplicated agent's, a definition's)
-    origin?: AgentOrigin; // a new one: what it is set up from (D.23: an agents file's agent, D.18: a need of Handler's, H.2: an app's need, whose part it is)
-    startFolder?: string | null; // a new ad-hoc one's folder (an app's need: the folder given for it)
-    pendingSkills?: string[]; // its definition's skills, not in the library until saved
     onsaved: (agent: Agent, then?: Route) => void; // then: where to go next, instead of back
     oncancel: () => void;
   } = $props();
@@ -82,7 +80,7 @@
   );
   // an ad-hoc agent's folder; null: a folder per session (D.18)
   // svelte-ignore state_referenced_locally
-  let folder = $state<string | null>(agent ? (agent.scope ?? null) : (startFolder ?? null));
+  let folder = $state<string | null>(agent ? (agent.scope ?? null) : null);
   let busy = $state(false);
   let error = $state<string | null>(null);
   let risks = $state<string | null>(null); // what the last save would widen, to confirm
@@ -95,6 +93,13 @@
   api.health().then(
     (h) => (displayAvailable = h.display ?? false),
     () => (displayAvailable = false),
+  );
+
+  // the container engines of the toolbox, for Runs containers (none on: saving adds podman, B.6)
+  let engines = $state<string[]>([]);
+  api.toolbox().then(
+    (t) => (engines = (t.systemPackages ?? []).map((p) => p.name).filter((n) => n === "podman" || n === "docker")),
+    () => (engines = []),
   );
 
   let harnesses = $state<HarnessInfo[]>([]);
@@ -115,8 +120,6 @@
   const live = $derived(agent?.connections.length ?? 0);
   // what its past conversations ran with, changed: they cannot be resumed
   const dropped = $derived(agent && !sameRun(spec.model, agent.model) ? agent.model : null);
-  // the account (a subscription) it runs on: an unattended agent is better on an API key
-  const onSubscription = $derived(spec.model.account);
   // one goal, one agent: another agent of the project set up the same, but for its model
   // (once it has a goal: a new one starts set up like the default agent)
   const twin = $derived(project && !agent && !start && spec.name.trim() ? sameSetup(spec, project.agents, project) : undefined);
@@ -183,6 +186,8 @@
   const blocker = $derived(
     unknownField !== null
       ? `Instructions: {{${unknownField}}} is not a field of its form.`
+      : !spec.modelAlone && envProblem(spec.env)
+      ? envProblem(spec.env)
       : !chosen(spec.model, spec.modelAlone)
       ? "Choose what it runs as."
       : folder === ""
@@ -273,13 +278,13 @@
     busy = true;
     error = null;
     try {
-      // its home: kept when it exists; a new one's, its project's, or the app it is set up for
+      // its home: kept when it exists; a new one's, its project's, or its folder
       const home: Home = agent
         ? { ...homeOf(agent), ...(agent.projectId ? {} : { scope: folder }) }
         : project
           ? { projectId: project.id }
-          : { app: origin?.kind === "app" ? origin.name : null, scope: folder };
-      const body = agentBody({ ...spec, origin: agent ? (agent.origin ?? null) : (origin ?? null) }, home, confirm, adds);
+          : { scope: folder };
+      const body = agentBody({ ...spec, origin: agent ? (agent.origin ?? null) : null }, home, confirm, adds);
       const saved = agent ? await api.updateAgent(agent.id, body) : await api.createAgent(body);
       risks = toolbox = null;
       onsaved(saved, next === "schedule" ? { view: "edit-automation", agent: saved.id } : next === "try" ? { view: "agent", id: saved.id } : undefined);
@@ -347,20 +352,17 @@
         </div>
       {/if}
       {#if drops}<p class="text-xs text-warn" data-testid="agent-use-drops">{drops}</p>{/if}
-      {#if job && onSubscription}
-        <p class="text-xs text-muted-foreground" data-testid="agent-unattended-subscription">
-          It runs on a subscription ({onSubscription}): subscription plans are for ordinary, individual use (their vendors' terms). For an agent that
-          runs on its own, an API key is recommended.
-        </p>
-      {/if}
     </SettingRow>
     <SettingRow label="Who works" data-testid="agent-model">
-      <ModelChoice
-        agent={{ id: agent?.id ?? "", name: spec.name, model: spec.model, area: project?.area ?? null, modelAlone: spec.modelAlone }}
-        own
-        onchange={(m) => (spec.model = accessOf(m))}
-        onalone={chooseProgram}
-      />
+      {#key agent?.id}
+        <WhoWorksChoice
+          agent={{ id: agent?.id ?? "", name: spec.name, model: spec.model, area: project?.area ?? null, modelAlone: spec.modelAlone }}
+          own
+          unattended={job}
+          onchange={(m) => (spec.model = accessOf(m))}
+          onalone={chooseProgram}
+        />
+      {/key}
       {#if dropped}
         <p class="text-xs text-warn">Its past conversations with {accessLabel(dropped)} cannot be resumed after this change.</p>
       {/if}
@@ -413,11 +415,18 @@
       {#if spec.modelAlone}
         <p class="text-xs text-muted-foreground">None: a skill can run scripts, it needs an agent program.</p>
       {:else}
-        <SkillPicker projectId={project?.id} bind:value={spec.skills} pending={pendingSkills} />
+        <SkillPicker projectId={project?.id} bind:value={spec.skills} />
       {/if}
     </SettingRow>
     <SettingRow label="Notes">
-      <KnowledgePicker bind:value={spec.knowledge} />
+      <KnowledgePicker bind:value={spec.knowledge} readOnly={spec.modelAlone} />
+    </SettingRow>
+    <SettingRow label="Schemas">
+      {#if spec.modelAlone}
+        <p class="text-xs text-muted-foreground">None: working with a schema's documents needs an agent program.</p>
+      {:else}
+        <SchemaPicker bind:value={spec.schemas} />
+      {/if}
     </SettingRow>
   </div>
 
@@ -478,7 +487,8 @@
       </div>
     </section>
   {:else}
-    <CanDo bind:spec {job} {offered} program={productName(spec.model.harness ?? "")} {needed} {gives} {displayAvailable} />
+    <CanDo bind:spec {job} {offered} program={productName(spec.model.harness ?? "")} {needed} {gives} {engines} {displayAvailable} />
+    <EnvEditor bind:rows={spec.env} />
   {/if}
 
   {#if project || agent || job}

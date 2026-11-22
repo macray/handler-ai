@@ -1,0 +1,61 @@
+{
+  "$id": "decision-log@1",
+  "title": "Decision log",
+  "description": "A list of architecture decisions.",
+  "extends": null,
+  "item": {
+    "description": "One decision.",
+    "fields": {
+      "status": {
+        "type": "enum",
+        "values": ["proposed", "accepted", "rejected", "superseded"],
+        "missing": "error",
+        "description": "Where the decision stands."
+      },
+      "date": {
+        "type": "date",
+        "missing": "error",
+        "description": "Date the decision was made or proposed."
+      },
+      "owner": {
+        "type": "string",
+        "missing": "warning",
+        "description": "Person accountable for the decision."
+      },
+      "tags": {
+        "type": "list",
+        "of": "string",
+        "missing": "info",
+        "description": "Free keywords."
+      },
+      "supersedes": {
+        "type": "ref",
+        "missing": "none",
+        "description": "Decision replaced by this one."
+      }
+    },
+    "sections": {
+      "context": {
+        "heading": "Context",
+        "aliases": ["Background"],
+        "missing": "error",
+        "description": "Why a decision is needed."
+      },
+      "decision": {
+        "heading": "Decision",
+        "aliases": [],
+        "missing": "error",
+        "description": "What was decided."
+      },
+      "consequences": {
+        "heading": "Consequences",
+        "aliases": [],
+        "missing": "none",
+        "description": "Trade-offs and follow-ups."
+      }
+    },
+    "lenient_when": { "field": "status", "in": ["proposed"] },
+    "additional_fields": "allow",
+    "additional_sections": "allow"
+  }
+}

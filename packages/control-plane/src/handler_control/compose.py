@@ -23,6 +23,7 @@ from handler_contracts import (
     AppManifest,
     Confinement,
     Enforcement,
+    File,
     FilteredNetwork,
     HandlerTool,
     HarnessLaunch,
@@ -57,6 +58,17 @@ class AddonConflictError(ValueError):
 
 class DaemonConflictError(ValueError):
     """A toolbox daemon's env var is set by the harness or an addon too (no silent override)."""
+
+
+class AgentEnvConflictError(ValueError):
+    """An agent's own env var is set by its harness, a tool, a toolbox daemon or its terminal
+    too (no silent override, D.8)."""
+
+
+# D.29: an agent's schemas, its knowledge uses' and those they extend, read-only in its home;
+# the format's command finds them through this variable, so the agent needs no flag.
+SCHEMAS_DIR = ".smd-schemas"
+SCHEMAS_ENV = "SMD_SCHEMAS"
 
 
 # B.7: the toolbox's daemons a sandbox has, started by this command before the agent's program.
@@ -107,6 +119,11 @@ def narrowed_scope(scope: str, folder: str) -> str:
     if not Path(resolved).is_dir():
         raise ScopeError(f"{resolved} is not a directory")
     return resolved
+
+
+def real_folder(path: str) -> bool:
+    """A folder, not a link to one."""
+    return os.path.isdir(path) and not os.path.islink(path)
 
 
 def required_egress(launch: HarnessLaunch, addon_egress: list[str] | None = None) -> list[str]:
@@ -162,6 +179,9 @@ def sandbox_spec(
     paste: str | None = None,
     injections: list[Injection] | None = None,
     daemons: list[SystemPackageDaemon] | None = None,
+    agent_env: dict[str, str] | None = None,
+    schemas: dict[str, str] | None = None,
+    app_folders: list[HostFolder] | None = None,
 ) -> SandboxSpec:
     """`scope` must already be checked (check_scope), `addons` resolved from checked bindings
     (addons.check, addons.resolve), `knowledge` built from checked folders (knowledge.folders),
@@ -174,6 +194,10 @@ def sandbox_spec(
     `paste`: the host folder the client puts a pasted image into, read as its clipboard.
     `injections`: the secrets its proxy gives in place of the phantoms `launch` holds (A.3).
     `daemons`: the toolbox's (B.7); those of the sandbox's abilities start before its program.
+    `agent_env`: the agent's own variables (D.8), set by nothing else.
+    `schemas`: its schemas' files (D.29, knowledge_schemas.files), read-only at SCHEMAS_DIR.
+    `app_folders`: an app's job's run's folders (H.1, app_jobs.place), each at its path, as it
+    reads or writes it (rule app-job.reads-are-read-only).
     """
     addons = addons or AddonLaunch()
     if clash := sorted(addons.env.keys() & launch.env.keys()):
@@ -184,6 +208,7 @@ def sandbox_spec(
         raise DaemonConflictError(
             f"toolbox daemon env vars also set by the harness or a tool: {', '.join(clash)}"
         )
+    agent_env = agent_env or {}
     argv = list(launch.argv)
     tools = list(launch.tools)
     if started:
@@ -194,13 +219,26 @@ def sandbox_spec(
         term_env = {"TERM": terminal.term} | (
             {"COLORTERM": terminal.colorterm} if terminal.colorterm else {}
         )
+    schemas_dir = f"{launch.home}/{SCHEMAS_DIR}"
+    schemas_env = {SCHEMAS_ENV: schemas_dir} if schemas else {}
+    schema_files = [
+        File(target=f"{schemas_dir}/{name}", content=content, mode="0444")
+        for name, content in (schemas or {}).items()
+    ]
+    others = launch.env.keys() | addons.env.keys() | daemon_env.keys() | term_env.keys()
+    others |= schemas_env.keys()
+    if clash := sorted(agent_env.keys() & others):
+        raise AgentEnvConflictError(
+            f"the agent's environment variables {', '.join(clash)} are also set by its "
+            "harness, a tool or the toolbox: remove them from its settings"
+        )
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
         name=name,
         isolation=confinement,
         image=launch.image,
         argv=argv,
-        env=dict(launch.env) | addons.env | daemon_env | term_env,
+        env=dict(launch.env) | addons.env | daemon_env | schemas_env | agent_env | term_env,
         workdir=scope,
         home=launch.home,
         work_folder=WorkFolder(path=scope),
@@ -209,10 +247,11 @@ def sandbox_spec(
             *launch.skills,
             *(knowledge or []),
             *([subject] if subject else []),
+            *(app_folders or []),
         ],
         caches=list(launch.caches),
         kept_files=list(launch.kept_files),
-        files=list(launch.files),
+        files=[*launch.files, *schema_files],
         tools=tools,
         addons=list(addons.images),
         network=network_policy(
@@ -238,12 +277,13 @@ def seen(
     addons: AddonLaunch | None = None,
     knowledge: list[HostFolder] | None = None,
     subject: HostFolder | None = None,
+    app_folders: list[HostFolder] | None = None,
 ) -> list[SessionMount]:
     """What a session's sandbox (sandbox_spec, from the same parts) sees of the host, each by
-    what it is (F.8); browsable: its folder, knowledge, a subject, skills."""
+    what it is (F.8); browsable: its folder, knowledge, a subject, skills, a job's folders."""
 
     def folder(f: HostFolder, kind: MountKind) -> SessionMount:
-        browsable = kind in ("knowledge", "subject", "config")
+        browsable = kind in ("knowledge", "subject", "config", "app")
         return SessionMount(target=f.target, kind=kind, read_only=not f.writable,
                             source=f.source, browsable=browsable)  # fmt: skip
 
@@ -263,6 +303,7 @@ def seen(
     found += [folder(f, "config") for f in launch.skills]
     found += [folder(f, "knowledge") for f in knowledge or []]
     found += [folder(subject, "subject")] if subject else []
+    found += [folder(f, "app") for f in app_folders or []]
     found += [
         SessionMount(target=i.target, kind="tools", read_only=True, source=i.source,
                      browsable=False)
@@ -298,6 +339,30 @@ def toolbox_check_spec(*, name: str, toolbox: str, scope: str, argv: list[str]) 
     return _check_spec(name=name, toolbox=toolbox, scope=scope, argv=argv, addons=[])
 
 
+def connection_check_spec(
+    *,
+    name: str,
+    toolbox: str,
+    scope: str,
+    argv: list[str],
+    tool: Addon,
+    env: dict[str, str],
+    egress: list[str],
+    injections: list[Injection],
+) -> SandboxSpec:
+    """G.2: a connection's check, run as an agent of it gets its tool, nothing more: the tool's
+    folder on PATH in the toolbox, `env` its env and the connection's (its secrets the phantoms
+    of `injections`, which the proxy swaps back towards their hosts), the network filtered and
+    enforced to the tool's `egress` alone, confined like an agent. `scope`: an empty folder,
+    checked (the workdir): no project."""
+    network = FilteredNetwork(
+        mode="filtered", allow=sorted(set(egress)), enforcement="enforce", injections=injections
+    )
+    return _check_spec(
+        name=name, toolbox=toolbox, scope=scope, argv=argv, addons=[tool], env=env, network=network
+    )
+
+
 def _check_spec(
     *,
     name: str,
@@ -305,18 +370,20 @@ def _check_spec(
     scope: str,
     argv: list[str],
     addons: list[Addon],
+    env: dict[str, str] | None = None,
+    network: NetworkPolicy | None = None,
 ) -> SandboxSpec:
     return SandboxSpec(
         api_version=SANDBOX_API_VERSION,
         name=name,
         image=toolbox,
         argv=argv,
-        env={},
+        env=dict(env or {}),
         workdir=scope,
         home=CHECK_HOME,
         work_folder=WorkFolder(path=scope),
         addons=addons,
-        network=NoNetwork(mode="none"),
+        network=network or NoNetwork(mode="none"),
         labels={"handler.check": name},
     )
 
@@ -396,9 +463,9 @@ def app_sandbox_spec(
     `test`: `bun test` on the backend's directory instead of serving it (H.6). All host paths
     absolute and existing. `secrets`: the values of the manifest's secrets (H.2), given as env
     vars (never to tests). `files`: the folders given for its files needs, checked and resolved
-    (need, path, writable), mounted at the same path, `HANDLER_APP_FILES` naming them by need
-    (not for tests either). With `needs.notify` or `needs.agents`, the backend reaches handler at
-    APP_API_SOCKET (H.9, H.11).
+    (need, path, writable), mounted at the same path (a writable folder's own `.git`
+    read-only over it), `HANDLER_APP_FILES` naming them by need (not for tests either). When it talks to handler
+    (`AppManifest.handler_api`), the backend reaches it at APP_API_SOCKET (H.9, H.11).
     """
     files = [] if test else list(files or [])
     egress = list(manifest.needs.egress)
@@ -427,14 +494,20 @@ def app_sandbox_spec(
         }
         | ({} if test else dict(secrets or {}))
         | ({"HANDLER_APP_FILES": json.dumps({n: p for n, p, _ in files})} if files else {})
-        | ({"HANDLER_APP_API": APP_API_SOCKET} if manifest.needs.handler_api and not test else {}),
+        | ({"HANDLER_APP_API": APP_API_SOCKET} if manifest.handler_api and not test else {}),
         workdir=data,
         home=APP_HOME,
         work_folder=WorkFolder(path=data),
         folders=[
             HostFolder(source=code, target=APP_CODE_DIR, writable=False),
-            # its files needs, each a folder or a file (H.9): their shape waits for the App work
+            # its files needs, each a folder or a file (H.9)
             *(HostFolder(source=p, target=p, writable=rw) for _, p, rw in files),
+            # a read-write folder's own .git (your history) read-only over it (D.5)
+            *(
+                HostFolder(source=git, target=git, writable=False)
+                for _, p, rw in files
+                if rw and real_folder(git := os.path.join(p, ".git"))
+            ),
         ],
         # its socket, and handlerd's for its needs (H.3, H.9, H.11)
         socket_folders=[
@@ -443,7 +516,7 @@ def app_sandbox_spec(
                 target=APP_RUN_DIR,
                 serves=[os.path.basename(APP_SOCKET)],
                 reaches=[os.path.basename(APP_API_SOCKET)]
-                if manifest.needs.handler_api and not test
+                if manifest.handler_api and not test
                 else [],
             )
         ],

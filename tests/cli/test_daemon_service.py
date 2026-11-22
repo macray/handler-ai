@@ -21,6 +21,54 @@ def test_a_systemd_unit_on_linux(
     assert "ExecStart=" in out and "Restart=on-failure" in out
 
 
+def _fake_systemctl(folder: Path) -> Path:
+    """A `systemctl` that answers `--user show-environment` with $MANAGER_ENV (systemd's user
+    manager's own environment) and records every other call in `calls`."""
+    folder.mkdir()
+    calls = folder / "calls"
+    script = folder / "systemctl"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$2" = show-environment ]; then printf %s "$MANAGER_ENV"; exit 0; fi\n'
+        f'echo "$@" >> {calls}\n'
+    )
+    script.chmod(0o755)
+    return calls
+
+
+def test_the_unit_goes_where_systemds_user_manager_looks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The user manager has its own environment, not this shell's: the unit goes under its
+    XDG_CONFIG_HOME, or its home's `.config`, never under a custom one of this shell (where
+    `systemctl --user enable` would not find it); that one is still carried into the unit."""
+    monkeypatch.setattr(daemon_commands.sys, "platform", "linux")
+    shells = tmp_path / "shells-config"
+    managers = tmp_path / "managers config"  # a space: systemctl quotes it $'…'
+    calls = _fake_systemctl(tmp_path / "bin")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(shells))
+    monkeypatch.setenv("MANAGER_ENV", f"HOME={tmp_path}\nXDG_CONFIG_HOME=$'{managers}'\n")
+
+    unit = managers / "systemd" / "user" / "handler-ai.service"
+    assert daemon_commands.unit_path() == unit
+    assert daemon_commands.install(dry_run=False) == 0
+    assert unit.is_file() and not shells.exists()
+    assert f'Environment="XDG_CONFIG_HOME={shells}"' in unit.read_text()
+    assert daemon_commands.uninstall() == 0
+    assert not unit.exists()
+    assert calls.read_text().splitlines() == [
+        "--user daemon-reload",
+        "--user enable --now handler-ai.service",
+        "--user disable --now handler-ai.service",
+        "--user daemon-reload",
+    ]
+    capsys.readouterr()
+
+    monkeypatch.setenv("MANAGER_ENV", f"HOME={tmp_path}\nPATH=/usr/bin\n")  # none of its own
+    assert daemon_commands.unit_path() == tmp_path / ".config/systemd/user/handler-ai.service"
+
+
 def test_a_launch_agent_on_macos(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -36,6 +84,47 @@ def test_a_launch_agent_on_macos(
     assert agent["RunAtLoad"] and agent["KeepAlive"] == {"SuccessfulExit": False}
     assert "/opt/homebrew/bin" in agent["EnvironmentVariables"]["PATH"]  # brew's podman, docker
     assert agent["StandardErrorPath"] == str(tmp_path / "Library/Logs/handler-ai/handlerd.log")
+
+
+def _fake_launchctl(folder: Path) -> Path:
+    """A `launchctl` that unloads as launchd does: `bootout` returns at once but the job stays
+    known (`print` succeeds) until its handlerd has exited, here 0.5 s later; `bootstrap` of a job
+    still known fails with launchd's `5: Input/output error`. Each call is recorded in `calls`."""
+    folder.mkdir()
+    loaded, calls = folder / "loaded", folder / "calls"
+    script = folder / "launchctl"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$1" >> {calls}\n'
+        "case $1 in\n"
+        f"  print) [ -e {loaded} ];;\n"
+        f"  bootout) if [ -e {loaded} ]; then (sleep 0.5; rm -f {loaded}) >/dev/null 2>&1 & fi;;\n"
+        f"  bootstrap) if [ -e {loaded} ]; then echo 'Bootstrap failed: 5: Input/output error'"
+        f" >&2; exit 5; fi; touch {loaded};;\n"
+        "esac\n"
+    )
+    script.chmod(0o755)
+    return calls
+
+
+def test_setup_run_again_on_macos_leaves_the_launch_agent_loaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`handler setup` run a second time: the new launch agent is bootstrapped once launchd has
+    let go of the old one, not while its handlerd is still shutting down (which failed, and left
+    no service at all)."""
+    monkeypatch.setattr(daemon_commands.sys, "platform", "darwin")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls = _fake_launchctl(tmp_path / "bin")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:/usr/bin:/bin")
+
+    assert daemon_commands.install(dry_run=False) == 0  # the first setup
+    assert daemon_commands.install(dry_run=False) == 0  # and again, the old one loaded
+    assert (tmp_path / "bin" / "loaded").exists()
+    second = calls.read_text().splitlines()[calls.read_text().splitlines().index("bootstrap") + 1 :]
+    assert second[0] == "bootout" and second[-1] == "bootstrap"
+    assert second.count("print") >= 2  # it waited for launchd
+    capsys.readouterr()
 
 
 @pytest.mark.parametrize("command", ["status", "log"])

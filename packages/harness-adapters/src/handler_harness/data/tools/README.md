@@ -9,7 +9,7 @@ tools/<name>/
 ├── tool.toml         manifest, contract G.1 (handler.tool/v1) — validated by handler_contracts
 ├── Containerfile     the tool's image: built in the toolbox, shipped FROM scratch (only with `image`)
 ├── skills/<skill>/   skills (each with a SKILL.md), mounted read-only in the harness's skills folder
-└── PROVISIONING.md   how to create the least-privilege account a connection needs
+└── CONNECT.md   how to create the least-privilege account a connection needs
 ```
 
 A tool is generic. To use one that has settings, write a **connection** in

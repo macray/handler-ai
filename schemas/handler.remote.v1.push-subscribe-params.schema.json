@@ -40,7 +40,7 @@
       "type": "object"
     }
   },
-  "description": "`_handler/remote/push_subscribe` \u2192 PushSubscription. No subscription: push off.",
+  "description": "`_handler/remote/push_subscribe` \u2192 PushSubscription. No subscription: push off. `kinds`:\nwhat this device is pushed for, each a switch on it (both when not said).",
   "properties": {
     "subscription": {
       "anyOf": [
@@ -52,6 +52,17 @@
         }
       ],
       "default": null
+    },
+    "kinds": {
+      "items": {
+        "enum": [
+          "needs-you",
+          "app-news"
+        ],
+        "type": "string"
+      },
+      "title": "Kinds",
+      "type": "array"
     }
   },
   "title": "PushSubscribeParams",

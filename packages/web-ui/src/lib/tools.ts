@@ -47,3 +47,55 @@ export function toolOrigin(tool: AddonInfo): string {
   }
   return tool.overridesBuiltin ? "yours, in place of the built-in" : "yours";
 }
+
+/** Where it comes from, as its page's *From* says it: "Handler, built in", "Handler's own
+ *  tools", "the source acme", "a folder you chose", "an archive online", "your tools folder";
+ *  and "in place of the built-in". */
+export function toolFrom(tool: AddonInfo): string {
+  if (tool.builtin) return "Handler, built in";
+  const id = tool.source?.startsWith("source:") ? tool.source.slice("source:".length).split("/")[0] : null;
+  const other = tool.source && /^[a-z]+:\/\//.test(tool.source) ? "an archive online" : tool.source ? "a folder you chose" : "your tools folder";
+  const from = id === "official" ? "Handler's own tools" : id ? `the source ${id}` : other;
+  return tool.overridesBuiltin ? `${from}, in place of the built-in` : from;
+}
+
+/** The Tools shelf's Yours: each tool with its connections, then the connections whose tool is
+ *  not installed (or that cannot be read), listed apart. */
+export function shelfOf(tools: AddonInfo[], connections: BindingInfo[]): { tools: { tool: AddonInfo; connections: BindingInfo[] }[]; orphans: BindingInfo[] } {
+  return {
+    tools: tools.map((tool) => ({ tool, connections: connections.filter((c) => c.addon === tool.name) })),
+    orphans: connections.filter((c) => !tools.some((t) => t.name === c.addon)),
+  };
+}
+
+/** Who a connection is given to, by its `usedBy` ("agents/shop/dev", "projects/blog",
+ *  "ad-hoc/<id>"), said as the rest of the UI says them: "shop · dev", "all agents of blog",
+ *  "<id> (outside projects)". */
+export function connectionUsers(usedBy: string[] = []): string[] {
+  return usedBy.map((u) => {
+    const [kind = "", ...rest] = u.split("/");
+    if (kind === "agents") return rest.join(" · ");
+    if (kind === "projects") return `all agents of ${rest.join("/")}`;
+    return `${rest.join("/")} (outside projects)`;
+  });
+}
+
+/** Who a tool is given to, from what uses it (D.22): its agents by their label, its projects
+ *  as "all agents of <project>", each once; the rest (an automation, an app) left out. */
+export function toolUsers(refs: { kind: string; label: string }[] = []): string[] {
+  const named = refs.flatMap((r) => (r.kind === "agent" ? [r.label] : r.kind === "project" ? [`all agents of ${r.label}`] : []));
+  return [...new Set(named)];
+}
+
+/** "given to shop · dev and blog · writer", or "not given to any agent yet". */
+export function givenWords(users: string[]): string {
+  if (!users.length) return "not given to any agent yet";
+  const list = users.length === 1 ? users[0] : `${users.slice(0, -1).join(", ")} and ${users.at(-1)}`;
+  return `given to ${list}`;
+}
+
+/** What a connection holds, in short: its settings' values (its address, its store), then its
+ *  secrets, sealed: ["dev.shop.example.com", "theme_token sealed"]. */
+export function connectionFacts(c: BindingInfo): string[] {
+  return [...Object.values(c.settings ?? {}), ...(c.secrets?.length ? [`${c.secrets.join(", ")} sealed`] : [])];
+}

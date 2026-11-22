@@ -1,18 +1,60 @@
 @import "tailwindcss";
 @import "@handler/acp-view/theme.css"; /* tokens, markdown, the terminal surface */
+/* the mono face of titles, names and times (theme.css's --mono), the web UI's: from the package,
+   served by the gateway with the app's files (font-display: swap, the first paint never waits) */
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
 /* the shared components are compiled here: let Tailwind see their classes */
 @source "../../acp-view/src";
 
-/* A phone first: the whole screen is the app, the terminal surface fills it. */
+/* A phone first: the whole screen is the app. */
+/* The page itself never scrolls (only the screen's parts do): a swipe going on past the end of
+   the conversation would move the whole page, the prompt box with it (and hide the browser's
+   bar). A browser takes `overscroll-behavior` from html for the page, not from body. */
 html,
 body,
 #app {
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* The phone's page, under its cards (white on it in light; the dark theme's background in dark).
+   A session's screen has its own: `term-surface`, dark in every theme. */
+/* What waits for the person (a session that needs you, a nudge): a soft warm tint, its border,
+   its time in amber; never a coloured stripe or ring. */
+:root {
+  --page: #f8f6f2;
+  --needs-bg: #fdf6e7;
+  --needs-border: #f1e3c4;
+}
+.dark {
+  --page: var(--background);
+  --needs-bg: #27221a;
+  --needs-border: #43391f;
 }
 body {
-  background: var(--background);
-  overscroll-behavior: none;
+  background: var(--page);
+}
+
+/* Buttons and drop-downs as the terminal surface draws them inside a session (acp-view's theme.css),
+   on every screen: the screens are drawn with them. */
+.app button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.9em; /* ≥ 12px: controls stay readable */
+  cursor: pointer;
+}
+.app button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.app select {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 1em;
+  padding: 0.1rem 0.3rem;
 }

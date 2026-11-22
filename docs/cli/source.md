@@ -32,7 +32,8 @@ handler source rm ID
 
 Install what a source offers with the command of its kind:
 `handler app add NAME --from ID`, `handler tool add NAME --from ID`,
-`handler project import-agents NAME --from ID` (ID `official`: Handler's).
+`handler project import-agents NAME --from ID` (ID `official`: Handler's; the source's URL works
+too, and a source you have not added is said, with the ones you have).
 
 ## Examples
 

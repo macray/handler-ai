@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .client import Daemon
-from .output import table
+from .output import table, when_at
 
 
 def add_parser(sub: Any) -> None:
@@ -65,11 +65,11 @@ def print_images(d: Daemon) -> None:
     rows = [["NAME", "IMAGE", "VERSION", "BUILT"]]
 
     def row(name: str, info: dict[str, Any], version: str = "-") -> None:
-        built = (info.get("builtAt") or "-")[:16].replace("T", " ")
+        built = when_at(info.get("builtAt"))
         rows.append([name, info["image"], version if info["imagePresent"] else "not built", built])
 
     row("toolbox", d.call("GET", "/v1/toolbox"))
-    for h in d.call("GET", "/v1/harnesses"):
+    for h in d.call("GET", "/v1/harness-images"):
         row(h["name"], h, h.get("version", "-"))
     for a in d.call("GET", "/v1/addons"):
         if a.get("image"):

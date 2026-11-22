@@ -39,7 +39,7 @@ it("a list asked for before a pin changed does not undo it", async () => {
   expect(pins.items).toEqual([]);
 });
 
-it("pins last, reorders, and goes back to the daemon's list when it refuses", async () => {
+it("pins last, reorders, and goes back to what it showed when the daemon fails", async () => {
   // If this fails: the menu shows an order, or a pin, that handlerd does not keep.
   answers.setPins = async (body) => body;
   await pins.pin("app", "planner");
@@ -47,24 +47,19 @@ it("pins last, reorders, and goes back to the daemon's list when it refuses", as
   await pins.move(1, 0);
   expect(pins.items).toEqual([planner, shop]);
 
-  answers.pins = async () => ({ items: [planner, shop] });
   answers.setPins = async () => {
-    throw new Error("nothing to pin");
+    throw new Error("handlerd is not running");
   };
-  await expect(pins.pin("app", "gone")).rejects.toThrow("nothing to pin");
+  await expect(pins.pin("app", "gone")).rejects.toThrow("handlerd is not running");
   expect(pins.items).toEqual([planner, shop]);
-  expect(pins.error).toBe("nothing to pin");
+  expect(pins.error).toBe("handlerd is not running");
 });
 
-it("a change refused on an old list is made again on handlerd's", async () => {
-  // If this fails: pinning does nothing after a pinned project was deleted elsewhere.
+it("shows the list the daemon kept: a pin of something deleted elsewhere goes", async () => {
+  // If this fails: pinning does nothing after a pinned project was deleted elsewhere, or the menu
+  // keeps showing it.
   pins.items = [shop, planner]; // shop deleted elsewhere since
-  answers.pins = async () => ({ items: [planner] });
-  answers.setPins = async (body) => {
-    const items = (body as { items: Pin[] }).items;
-    if (items.some((p) => p.id === "p1")) throw new Error("nothing to pin");
-    return { items };
-  };
+  answers.setPins = async (body) => ({ items: (body as { items: Pin[] }).items.filter((p) => p.id !== "p1") });
   const blog: Pin = { kind: "project", id: "p2" };
   await pins.pin(blog.kind, blog.id);
   expect(pins.items).toEqual([planner, blog]);

@@ -34,6 +34,15 @@
           "default": null,
           "title": "Bin"
         },
+        "kind": {
+          "default": "folder",
+          "enum": [
+            "folder",
+            "images"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "declaredBy": {
           "items": {
             "type": "string"

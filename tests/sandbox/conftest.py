@@ -20,9 +20,19 @@ from handler_control import sandbox_process
 from ..support import dev_env, place, runtimes
 
 CURL_IMAGE = dev_env.CURL_IMAGE
+
+
+def own_image() -> str:
+    """A test's Containerfile's last line: its image is its own. The same Containerfile built
+    again gives the same image id (the build cache), and ci.sh runs each test on two Pythons at
+    once: without it, one run's `image remove` takes the other's image while it is used."""
+    return f"LABEL handler-test={uuid.uuid4()}\n"
+
+
 HOME_IN = "/home/agent"
 
 
+@functools.cache  # asked by every file importing it, on every worker: podman is slow under load
 def podman_usable() -> bool:
     if not shutil.which("podman"):
         return False

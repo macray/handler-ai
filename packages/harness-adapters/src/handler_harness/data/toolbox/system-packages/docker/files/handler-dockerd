@@ -6,11 +6,14 @@ export XDG_RUNTIME_DIR=/tmp/handler-docker
 export PATH="/usr/local/libexec/handler-docker:$PATH"
 mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 # The sandbox's proxy (its network filter) given to containers and builds' steps, as Podman does
-# by itself: Docker's client adds it from its configuration. Not over the agent's own.
+# by itself: Docker's client adds it from its configuration. Not over the agent's own. Where the
+# sandbox's runtime says containers reach it elsewhere (HANDLER_DOCKER_CONTAINERS_PROXY: Apple
+# container, the filter on the sandbox's loopback), that address.
 if [ -n "${HTTPS_PROXY:-}" ] && [ ! -e "$HOME/.docker/config.json" ]; then
   mkdir -p "$HOME/.docker"
-  jq -n --arg http "${HTTP_PROXY:-$HTTPS_PROXY}" --arg https "$HTTPS_PROXY" \
-    --arg no "${NO_PROXY:-}" \
+  https="${HANDLER_DOCKER_CONTAINERS_PROXY:-$HTTPS_PROXY}"
+  http="${HANDLER_DOCKER_CONTAINERS_PROXY:-${HTTP_PROXY:-$HTTPS_PROXY}}"
+  jq -n --arg http "$http" --arg https "$https" --arg no "${NO_PROXY:-}" \
     '{proxies: {default: {httpProxy: $http, httpsProxy: $https, noProxy: $no}}}' \
     > "$HOME/.docker/config.json"
 fi
@@ -30,5 +33,12 @@ pools=$(ip -4 -o route | awk '
     for (c = 0; c < 256; c += 16) if (free("192.168." c ".0", 20))
       printf " --default-address-pool base=192.168.%d.0/20,size=20", c
   }')
+# Docker Hub's images through the sandbox's images mirror when its runtime gives one
+# (HANDLER_DOCKER_REGISTRY_MIRROR: Apple container, plain HTTP on the sandbox's loopback, where
+# the daemon is: rootlesskit detaches only its containers' network).
+mirror=""
+if [ -n "${HANDLER_DOCKER_REGISTRY_MIRROR:-}" ]; then
+  mirror="--registry-mirror $HANDLER_DOCKER_REGISTRY_MIRROR --insecure-registry ${HANDLER_DOCKER_REGISTRY_MIRROR#http://}"
+fi
 # shellcheck disable=SC2086 # one word per flag
-exec dockerd-rootless.sh --data-root "$XDG_RUNTIME_DIR/data" --firewall-backend nftables $pools
+exec dockerd-rootless.sh --data-root "$XDG_RUNTIME_DIR/data" --firewall-backend nftables $pools $mirror

@@ -4,15 +4,17 @@
   import Composer from "@handler/acp-view/components/Composer.svelte";
   import ContextMeter from "@handler/acp-view/components/ContextMeter.svelte";
   import { FollowEnd } from "@handler/acp-view/lib/follow";
-  import PermissionPrompt from "@handler/acp-view/components/PermissionPrompt.svelte";
   import Timeline from "@handler/acp-view/components/Timeline.svelte";
   import { dragSheet, flungDown, flungUp } from "@handler/acp-view/lib/sheet";
   import { activity } from "@handler/acp-view/lib/tools";
   import { app, loadDraft, saveDraft } from "../lib/app.svelte";
   import type { SendState } from "../lib/mailbox.svelte";
   import Lights from "./Lights.svelte";
+  import PermissionSheet from "./PermissionSheet.svelte";
 
   const session = $derived(app.current);
+  // as the computer lists it now (its ask's risk follows the list)
+  const listed = $derived(app.sessions.find((s) => s.id === app.current?.id) ?? app.current);
   const draftOf = app.current?.id ?? ""; // this screen shows one session
   let draft = $state(loadDraft(draftOf));
   $effect(() => saveDraft(draftOf, draft));
@@ -39,9 +41,11 @@
     follow.toEnd();
   });
 
-  // The permission requests are a sheet from the bottom: open (the question and its answers),
+  // The permission requests are a sheet from the bottom (PermissionSheet: the phone's own answers,
+  // not the desktop's prompt): open (the question and its answers),
   // full (dragged up: a long diff), or down to a bar (dragged down: read the conversation first;
-  // a tap brings it back). A new request opens it.
+  // a tap brings it back). A new request opens it. The card names the agent and where it runs
+  // (the session's project and folder): the sheet hides the timeline that says it.
   let sheet = $state<"open" | "full" | "down">("open");
   const asked = $derived(conn?.permissions[0]?.request.toolCall);
   $effect(() => {
@@ -77,7 +81,7 @@
   <button type="button" class="back" onclick={() => app.close()} aria-label="back to the list">‹</button>
   <div class="head">
     <span class="title">{conn?.session.title ?? session?.title ?? session?.label ?? folder}</span>
-    <span class="sub">{session?.label ?? folder} · {session?.harness ?? "the model alone"}</span>
+    <span class="sub">{session?.label ?? folder} · {session?.program ?? "the model alone"}</span>
   </div>
   {#if app.mailbox}<Lights mailbox={app.mailbox} />{/if}
 </header>
@@ -88,6 +92,7 @@
   {:else if app.attaching}
     <p class="text-muted-foreground">Attaching… the host replays the conversation.</p>
   {/if}
+  {#if app.notice}<p class="notice" role="status" data-testid="card-changed">{app.notice}</p>{/if}
   {#if app.error}<p class="error" data-testid="error">✗ {app.error}</p>{/if}
   {#if final}
     <div class="banner">
@@ -113,7 +118,7 @@
     <div class="asks" class:full={sheet === "full"} data-sheet data-testid="pinned-permissions">
       <div class="handle" aria-hidden="true" {@attach dragSheet(released)}></div>
       {#each conn.permissions as pending (pending.request.toolCall.toolCallId)}
-        <PermissionPrompt {pending} root={session?.scope} />
+        <PermissionSheet {pending} root={session?.scope} agent={session?.agent} place={session && { project: session.project, folder: session.scope }} ask={listed?.ask} />
       {/each}
     </div>
   {/if}
@@ -184,22 +189,25 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain; /* its end stops the swipe: the page and the prompt box stay */
     padding: 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
     font-size: 13px;
   }
+  /* the sheet over the dark session: a little lighter than it, its own top edge, no stripe */
   .asks {
     position: relative;
-    padding: 1.25rem 0.75rem 0;
-    max-height: 55%;
+    padding: 1.4rem 1rem max(0.5rem, env(safe-area-inset-bottom));
+    max-height: 70%;
     overflow-y: auto;
+    overscroll-behavior: contain;
     flex: none;
-    background: var(--card);
-    border-top: 1px solid var(--border);
-    border-radius: 16px 16px 0 0;
-    box-shadow: 0 -12px 32px -12px rgb(0 0 0 / 0.6);
+    background: #1f1d1a;
+    border-top: 1px solid #3a3631;
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -24px 40px rgb(0 0 0 / 0.6);
     transition:
       transform var(--dur-3) var(--ease),
       max-height var(--dur-3) var(--ease);
@@ -228,7 +236,7 @@
     width: 2.5rem;
     height: 4px;
     border-radius: 999px;
-    background: var(--border);
+    background: #4a4641;
   }
   .asks-bar {
     display: flex;
@@ -295,6 +303,12 @@
   .send.failed,
   .error {
     color: var(--danger);
+  }
+  .notice {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    color: var(--warn);
   }
   .banner {
     display: flex;

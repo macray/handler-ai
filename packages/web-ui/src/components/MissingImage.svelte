@@ -6,8 +6,9 @@
   import Play from "@lucide/svelte/icons/play";
   import { untrack } from "svelte";
   import { Button } from "$lib/components/ui/button";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
-  import { following } from "../lib/builds";
+  import { following, progress, stageWords } from "../lib/builds";
   import type { Build } from "../lib/contracts.gen";
   import { productName } from "../lib/harnesses.svelte";
   import { href } from "../lib/router.svelte";
@@ -33,6 +34,10 @@
   let now = $state(Date.now());
   let watched = false; // a build was seen running here: once it succeeds, the session starts
   const preparing = $derived(build?.state === "running");
+  // where the build is: its stage in words, its step when the runtime reports it (no time left:
+  // nothing says how long a build takes)
+  const at = $derived(build ? progress(build) : null);
+  const stage = $derived(stageWords(build?.stage, productName));
   const elapsed = $derived.by(() => {
     const s = build ? Math.max(0, Math.floor((now - Date.parse(build.startedAt)) / 1000)) : 0;
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -55,15 +60,17 @@
     }
   }
 
-  // once a second for its target: `look` reads `build`, untracked, else each answer would start one
-  // more interval (thousands of requests a second during a build)
+  // for its target, looked for again on each change of the builds; `look` reads `build`, untracked,
+  // else each answer would listen once more
   $effect(() => {
     void target;
+    const stop = onChange(["builds"], () => void look());
     untrack(() => void look());
-    const timer = setInterval(() => {
-      now = Date.now();
-      void look();
-    }, 1000);
+    return stop;
+  });
+  // the elapsed time, ticking
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
 
@@ -91,8 +98,16 @@
       <h2 class="text-sm font-semibold">{agent} can't start yet</h2>
       {#if preparing}
         <p class="text-sm text-muted-foreground" data-testid="missing-image-preparing">
-          Preparing {what}{build?.target === "toolbox" ? " with the toolbox build" : ""}… <span class="fact tabular-nums">{elapsed}</span>{#if build?.step && build.steps}<span class="fact tabular-nums"> · step {build.step}/{build.steps}</span>{/if}
+          Preparing {what}{build?.target === "toolbox" ? " with the toolbox build" : ""}… <span class="fact tabular-nums">{elapsed}</span>
         </p>
+        {#if at}
+          <div class="my-1.5 h-1 max-w-md overflow-hidden rounded bg-muted" role="progressbar" aria-label="its step" aria-valuenow={build?.step} aria-valuemax={build?.steps}>
+            <div class="h-full bg-primary transition-all" style:width={`${100 * at.done}%`}></div>
+          </div>
+        {/if}
+        {#if stage || at}
+          <p class="text-sm text-muted-foreground" data-testid="missing-image-progress">{[stage, at?.text].filter(Boolean).join(" · ")}</p>
+        {/if}
         <p class="text-sm text-muted-foreground">A build is running: the session will start by itself when it is done.</p>
       {:else if build}
         <p class="text-sm text-danger">

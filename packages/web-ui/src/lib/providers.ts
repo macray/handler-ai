@@ -32,6 +32,12 @@ export function statusOf(p: ProviderInfo): { state: "ready" | "warn" | "danger";
   return p.reached.ok ? { state: "ready", text: "Ready" } : { state: "danger", text: "Not reached" };
 }
 
+/** A server on this computer whose last test failed: not ready (the home's first step says so),
+ * though its key is set. One not tested since handlerd started is not said to fail. */
+export function notReached(p: ProviderInfo): boolean {
+  return p.status === "ready" && p.local === true && !!p.reached && !p.reached.ok;
+}
+
 /** The form's models after a test: what the server serves when none is typed yet; else the typed
  * ones, their context filled where the server reports it and none is typed. */
 export function fillModels(models: ProviderModel[], served: ProviderModel[]): ProviderModel[] {

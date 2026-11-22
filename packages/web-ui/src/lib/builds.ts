@@ -18,3 +18,23 @@ export function following(list: Build[], target: string, since: string): Build |
   const after = (b: Build) => b.state === "succeeded" && Date.parse(b.endedAt ?? "") > Date.parse(since);
   return making.find((b) => b.state === "running") ?? making.find(after) ?? null;
 }
+
+/** What a running build is at, in words, from its `stage` (D.4: "build toolbox", "build vibe",
+ *  "check addon:browser", "switch"): `name` names an agent program. Null: none said. */
+export function stageWords(stage: string | null | undefined, name: (harness: string) => string): string | null {
+  if (!stage) return null;
+  if (stage === "switch") return "Switching to the new images";
+  const [verb, ...rest] = stage.split(" ");
+  const what = rest.join(" ");
+  const doing = { build: "Building", update: "Updating", check: "Checking" }[verb ?? ""];
+  if (!doing || !what) return null;
+  const thing = what === "toolbox" || what === "network filter" ? `the ${what}` : what.startsWith(ADDON) ? `the ${what.slice(ADDON.length)} tool` : name(what);
+  return `${doing} ${thing}`;
+}
+
+/** A running build's progress in its stage, when the runtime reports its steps ("STEP 3/7"):
+ *  "step 3 of 7" and how far, 0–1. Null: not reported (a check, the switch). */
+export function progress(build: Pick<Build, "state" | "step" | "steps">): { text: string; done: number } | null {
+  if (build.state !== "running" || !build.step || !build.steps) return null;
+  return { text: `step ${build.step} of ${build.steps}`, done: Math.min(1, build.step / build.steps) };
+}

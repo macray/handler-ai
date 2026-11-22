@@ -223,10 +223,12 @@ def test_session_started_with_a_request(daemon: Daemon) -> None:
         sent = [
             u["content"]["text"] for u in replayed if u["sessionUpdate"] == "user_message_chunk"
         ]
-        told = f"You review code.\n\n{FILTERED_NETWORK}\n\nreport"  # its network is filtered
-        assert sent == [told]
+        assert sent == ["report"]  # the person's words alone
+        told = f"You review code.\n\n{FILTERED_NETWORK}"  # its network is filtered
+        lines = [u["params"] for u in client.updates if u["method"] == "_handler/line"]
+        assert [line["text"] for line in lines if line["event"] == "instructed"] == [told]
         report = json.loads(client.text())
-        assert report["prompt"] == [told]
+        assert report["prompt"] == [f"{told}\n\nreport"]
     finally:
         client.close()
 
@@ -409,3 +411,16 @@ def test_deleting_a_project_leaves_its_folder_as_it_is(daemon: Daemon) -> None:
         "src/main.py",
     ]
     assert (folder / "src" / "main.py").read_text() == "print('mine')\n"
+
+
+@pytest.mark.rule("project.a-move-rechecks-its-agents")
+def test_a_move_its_agents_cannot_follow_is_refused(daemon: Daemon, tmp_path: Path) -> None:
+    """If this fails: a project moved outside the work folders keeps agents working there."""
+    folder = daemon.make_scope()
+    project = create_project(daemon, folder)
+    with daemon.http() as c:
+        r = c.put(f"/v1/projects/{project['id']}", json={"folder": str(tmp_path)})
+        assert r.status_code == 403 and r.json()["title"] == "scope not allowed", r.text
+        after = c.get(f"/v1/projects/{project['id']}").json()
+        assert after["folder"] == str(folder)
+        assert [a["scope"] for a in after["agents"]] == [str(folder)]

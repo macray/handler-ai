@@ -5,6 +5,7 @@
   // leads to the editor. On the model alone (D.18), what it cannot have says why in one line, and
   // what it may do is that it does nothing outside the call, with what is sent to its provider.
   import Bot from "@lucide/svelte/icons/bot";
+  import Braces from "@lucide/svelte/icons/braces";
   import BookOpen from "@lucide/svelte/icons/book-open";
   import Folder from "@lucide/svelte/icons/folder";
   import Globe from "@lucide/svelte/icons/globe";
@@ -22,13 +23,14 @@
   import { PERMISSION_LABEL } from "../lib/agents";
   import type { Agent } from "../lib/contracts.gen";
   import { useOfAgent } from "../lib/interface";
+  import { shortFolder } from "../lib/projects.svelte";
   import { USE_ICON } from "./UseChip.svelte";
 
   let { agent, edit }: { agent: Agent; edit: string } = $props();
   const folder = $derived(agent.scope ?? null); // its project's, its own, or none: one per session
 
   type Tone = "" | "off" | "warn" | "danger";
-  type Line = { icon: typeof Bot; title: string; note: string; tone?: Tone };
+  type Line = { icon: typeof Bot; title: string; note: string; tone?: Tone; full?: string }; // full: its tooltip
 
   const alone = $derived(agent.modelAlone ?? false);
   const m = $derived(agent.model);
@@ -62,20 +64,31 @@
           { icon: Puzzle, title: "No tools", note: "a tool needs an agent program", tone: "off" },
         ]
       : [
-          { icon: Folder, title: folder ?? "A new folder each session", note: folder ? "reads and writes" : "kept with its session" },
+          { icon: Folder, title: folder ? shortFolder(folder) : "A new folder each session", full: folder ?? undefined, note: folder ? "reads and writes" : "kept with its session" },
           skills.length
             ? { icon: Sparkles, title: `${skills.length} skill${skills.length === 1 ? "" : "s"}`, note: list(skills) }
             : { icon: Sparkles, title: "No skills", note: "", tone: "off" },
           knowledgeLine("reads only"),
+          ...((agent.schemas ?? []).length
+            ? [{ icon: Braces, title: `Schemas: ${list((agent.schemas ?? []).map((u) => u.schemaId))}`, note: schemaNote() }]
+            : []),
           addons.length
             ? { icon: Puzzle, title: list(addons), note: "its tools" }
             : { icon: Puzzle, title: "No tools", note: "", tone: "off" },
         ],
   );
 
+  function schemaNote(): string {
+    const writes = (agent.schemas ?? []).filter((u) => u.access === "write").map((u) => u.schemaId);
+    return writes.length ? `writes ${list(writes)} documents` : "reads their documents";
+  }
+
   function knowledgeLine(how: string): Line {
-    const names = agent.knowledge ?? [];
-    return names.length ? { icon: BookOpen, title: `Notes: ${list(names)}`, note: how } : { icon: BookOpen, title: "No notes", note: "", tone: "off" };
+    const uses = agent.knowledge ?? [];
+    const writes = uses.filter((u) => u.access === "write").map((u) => u.folder);
+    if (!uses.length) return { icon: BookOpen, title: "No notes", note: "", tone: "off" };
+    if (!writes.length) return { icon: BookOpen, title: `Notes: ${list(uses.map((u) => u.folder))}`, note: how };
+    return { icon: BookOpen, title: `Notes: ${list(uses.map((u) => u.folder))}`, note: `writes ${list(writes)}: it can change or delete any file there`, tone: "warn" };
   }
 
   const hosts = $derived([...(agent.allow ?? []), ...(m.requiredHosts ?? []).map((r) => r.host)]);
@@ -125,7 +138,7 @@
         {@const LineIcon = l.icon}
         <li class="grid grid-cols-[1rem_1fr] gap-x-2 px-3.5 py-2 text-sm {TONE[l.tone ?? '']}">
           <LineIcon class="mt-0.5 size-4 {l.tone ? '' : 'text-muted-foreground'}" />
-          <span class="min-w-0 font-medium break-words">{l.title}</span>
+          <span class="min-w-0 font-medium break-words" title={l.full}>{l.title}</span>
           {#if l.note}<span class="col-start-2 text-xs break-words {l.tone === 'off' ? '' : 'text-muted-foreground'}">{l.note}</span>{/if}
         </li>
       {/each}

@@ -1,7 +1,7 @@
 <script lang="ts">
   // One thing a source offers (D.26), as Discover shows it: its kind, where it comes from (Handler's
   // in the accent, a source you added in grey), what it does in a few words (what weakens the
-  // sandbox in amber, first), and its button: Install, Get it (a new version of one you have),
+  // sandbox in amber, first), and its button: Install, Update… (a new version of an app you have: its page),
   // Set up… (agents), or Installed. Its name opens its page.
   import AppWindow from "@lucide/svelte/icons/app-window";
   import Bot from "@lucide/svelte/icons/bot";
@@ -13,6 +13,7 @@
   import { Button } from "$lib/components/ui/button";
   import type { Source, SourceItem } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
+  import { appTitle } from "../lib/apps";
   import { actionWords, fromWords, itemRoute, type OfferedKind } from "../lib/sources";
 
   let { source, item, busy, ontake }: { source: Source; item: SourceItem; busy: boolean; ontake: () => void } = $props();
@@ -27,7 +28,7 @@
   <a class="flex items-center gap-3 text-foreground no-underline" href={href(itemRoute(source, item))} data-testid="discover-item-open">
     <span class="flex size-11 shrink-0 items-center justify-center rounded-xl {kind.tile}"><kind.icon class="size-5" /></span>
     <span class="min-w-0">
-      <span class="block truncate font-semibold">{item.name}</span>
+      <span class="block truncate font-semibold">{appTitle(item)}</span>
       <span class="fact block">{label}</span>
     </span>
   </a>

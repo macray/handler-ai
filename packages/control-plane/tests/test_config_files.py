@@ -8,6 +8,7 @@ from handler_contracts import EnvSecret, FileContent, FileSecret
 from handler_control import config_files
 
 
+@pytest.mark.rule("provider.its-files-are-read-whole-at-each-start")
 def test_inline_env_and_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HANDLER_T_CONFIG", 'active_model = "x"\n')
     f = tmp_path / "config.toml"
@@ -17,6 +18,7 @@ def test_inline_env_and_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert config_files.resolve(FileSecret(file=str(f))) == f.read_text()  # whole file, not a line
 
 
+@pytest.mark.rule("provider.its-files-are-read-whole-at-each-start")
 def test_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("HANDLER_T_MISSING", raising=False)
     with pytest.raises(config_files.ConfigFileError, match="not set"):

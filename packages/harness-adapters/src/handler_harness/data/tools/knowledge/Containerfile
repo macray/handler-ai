@@ -1,0 +1,25 @@
+# knowledge tool image (contract G.1): the format's command in a venv of its own, on the
+# toolbox's Python, mounted read-only at /opt/tools/knowledge. handlerd writes the build context:
+# this folder, `handler_smd/` (a copy of the installed package) and `requirements.txt` (its
+# dependencies at the versions handlerd itself runs with). Only `bin/` goes on PATH: the venv's
+# own python and pip stay out of it.
+ARG TOOLBOX_IMAGE=localhost/handler-ai-toolbox:latest
+FROM ${TOOLBOX_IMAGE} AS build
+ARG PREFIX=/opt/tools/knowledge
+ARG HANDLER_VERSION=unknown
+COPY requirements.txt /tmp/knowledge/requirements.txt
+COPY handler_smd /tmp/knowledge/handler_smd
+RUN uv venv --python /usr/bin/python3 --no-python-downloads "$PREFIX/venv" \
+    && uv pip install --python "$PREFIX/venv/bin/python" --no-cache -r /tmp/knowledge/requirements.txt \
+    && site="$("$PREFIX/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
+    && cp -r /tmp/knowledge/handler_smd "$site/handler_smd" \
+    && mkdir -p "$PREFIX/bin" \
+    && printf '#!%s\nimport sys\nfrom handler_smd.cli import main\nsys.exit(main())\n' "$PREFIX/venv/bin/python" > "$PREFIX/bin/handler-smd" \
+    && chmod 0755 "$PREFIX/bin/handler-smd" \
+    && ln -s handler-smd "$PREFIX/bin/smd" \
+    && "$PREFIX/bin/handler-smd" --help > /dev/null \
+    && echo "handler-smd ${HANDLER_VERSION}" > "$PREFIX/version"
+
+FROM scratch
+COPY --from=build /opt/tools/knowledge /
+LABEL org.opencontainers.image.title="handler-ai-tool-knowledge"

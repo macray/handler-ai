@@ -46,7 +46,11 @@ def test_areas_are_named_coloured_and_kept_while_used(daemon: Daemon) -> None:
         assert c.delete("/v1/areas/Work").status_code == 204
 
 
-@pytest.mark.rule("session.the-area-decides-the-models", "area.a-project-keeps-to-its-area")
+@pytest.mark.rule(
+    "session.the-area-decides-the-models",
+    "area.a-project-keeps-to-its-area",
+    "project.a-move-rechecks-its-agents",
+)
 def test_a_project_runs_only_the_accounts_made_for_its_area(daemon: Daemon) -> None:
     with daemon.http() as c:
         for name, color in (("Client", "cyan"), ("Home", "pink")):

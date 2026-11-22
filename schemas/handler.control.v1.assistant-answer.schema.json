@@ -30,7 +30,7 @@
     },
     "ActionResult": {
       "additionalProperties": false,
-      "description": "What an action gives (H.12): how it went, one or two sentences readable aloud, and what else\nthe app wants to show. A route answers it; an agent's run gives it from its result (its\n`status` and `summary`, I.3's rule).",
+      "description": "What an action gives (H.12): how it went, one or two sentences readable aloud, and what else\nthe app wants to show. A route answers it; a job's run gives it from its result (its\n`status` and `summary`, I.3's rule).",
       "properties": {
         "status": {
           "enum": [
@@ -50,6 +50,20 @@
         "data": {
           "default": null,
           "title": "Data"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9/_.~%-]*(\\?[A-Za-z0-9=&_.~%-]*)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open"
         }
       },
       "required": [

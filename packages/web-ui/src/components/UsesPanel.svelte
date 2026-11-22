@@ -21,6 +21,7 @@
     agent: "agent",
     skill: "skill",
     knowledge: "notes",
+    schema: "schema",
     addon: "tool",
     account: "account",
     provider: "provider",
@@ -38,8 +39,10 @@
         return { view: "skill", name: r.id };
       case "knowledge":
         return r.id === "." ? { view: "knowledge" } : { view: "knowledge", path: r.id };
+      case "schema":
+        return { view: "library", shelf: "schemas" };
       case "addon":
-        return { view: "addons" };
+        return { view: "library", shelf: "tools" };
       case "account":
       case "provider":
         return { view: "settings", section: "models" };

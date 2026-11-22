@@ -57,11 +57,11 @@ def test_someone_new_to_talk_to_then_a_conversation(
     dialog = page.get_by_test_id("chat-new-dialog")
     dialog.get_by_test_id("chat-name").fill("Writing partner")
     dialog.get_by_test_id("chat-instructions").fill("Ask before rewriting; keep my voice.")
-    dialog.get_by_test_id("model-choice-harness").click()  # Who works: the program's chip
-    page.get_by_test_id("model-choice-program-alone").click()
-    dialog.get_by_test_id("model-choice-access").click()
+    dialog.get_by_test_id("model-choice-access").click()  # Who works: the account first
     page.get_by_test_id("model-choice-access-row").filter(has_text="stub").click()
-    dialog.get_by_test_id("chat-name").click()  # the menu closes
+    dialog.get_by_test_id("model-choice-harness").click()  # then its program
+    page.get_by_test_id("model-choice-program-alone").click()
+    expect(dialog.get_by_test_id("model-choice-harness")).to_have_text("The model alone")
     dialog.get_by_test_id("chat-add").click()
     expect(page.get_by_test_id("chat-pick")).to_contain_text("Writing partner")
     with daemon.http() as c:

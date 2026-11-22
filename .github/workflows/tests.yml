@@ -34,7 +34,7 @@ jobs:
           podman version
           uv run handler-sandbox-podman check
           uv run handler-sandbox-docker check
-      - run: uv run pytest -n auto --dist loadfile -rs
+      - run: uv run pytest -n auto --dist loadgroup -rs
 
   macos:
     if: github.server_url == 'https://github.com'
@@ -46,7 +46,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3  # no major tags since its v8
       - run: uv sync --locked
       - run: uv run ty check --python-platform darwin
-      - run: uv run pytest -n auto --dist loadfile -rs
+      - run: uv run pytest -n auto --dist loadgroup -rs
 
   # what the release workflow checks before PyPI: the wheel, installed as a user does in a bare
   # container (scripts/smoke-install.sh); here too, so that a release is not the first to see it

@@ -16,6 +16,7 @@
   // `pinPlan`: the page keeps the current plan in view (Plan.svelte), so its updates here are one
   // line each, opened to see that version. `busy`: a turn is in progress (it has no footer yet).
   // `ondecide`: answers a host the network filter refused (F.9); without it, its card says where to.
+  // `agent`: the agent's name, in its host cards; `tells`: a later answer is told to it (not a run).
   // `providers`: where the person tests the providers (a model that does not answer points there).
   // `permissions`: the requests waiting for an answer, each shown under its step (a page that
   // passes them pins only those whose step is not in the timeline: `askedAtStep`).
@@ -30,6 +31,8 @@
     empty,
     first,
     ondecide,
+    agent,
+    tells = true,
     providers,
   }: {
     session: SessionState;
@@ -42,11 +45,41 @@
     empty?: Snippet; // shown while there is nothing yet (the page's start)
     first?: Snippet; // shown in place of the first user message: what the page started it with
     ondecide?: (host: string, decision: HostDecision) => Promise<void>;
+    agent?: string;
+    tells?: boolean;
     providers?: string;
   } = $props();
   const firstUser = $derived(first ? session.entries.findIndex((e) => e.kind === "user") : -1);
+  // a step's requests, under it
+  const askedAt = (id: string) => (permissions ?? []).filter((p) => p.request.toolCall.toolCallId === id);
 
   // Copy: a message's text, a code block's
+  // The message being streamed is rendered again (markdown, sanitized: tens of ms for a long
+  // one) at most every LIVE_MS, not on each of its chunks: re-rendered per chunk, a long answer
+  // kept a core busy. Once its turn ends, or another entry comes, it is shown whole at once.
+  const LIVE_MS = 120;
+  const live = $derived(busy && session.entries.at(-1)?.kind === "agent" ? session.entries.length - 1 : -1);
+  let liveText = $state("");
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
+  function streamed(): string {
+    const e = session.entries[live];
+    return e?.kind === "agent" ? e.text : "";
+  }
+  $effect(() => {
+    if (live < 0) return;
+    const text = streamed();
+    if (!text.startsWith(liveText) || !liveText) liveText = text; // a new message: at once
+    else if (liveTimer === null && text !== liveText) {
+      liveTimer = setTimeout(() => {
+        liveTimer = null;
+        if (live >= 0) liveText = streamed();
+      }, LIVE_MS);
+    }
+  });
+  $effect(() => () => {
+    if (liveTimer !== null) clearTimeout(liveTimer);
+  });
+
   let copied = $state<number | null>(null);
   async function copy(text: string, i: number): Promise<void> {
     await navigator.clipboard.writeText(text);
@@ -122,6 +155,15 @@
     {#if i === firstUser && first}
       {@render first()}
     {:else if entry.kind === "user"}
+      {#if entry.told}
+        <div class="line told" data-testid="handler-instructions">
+          <span class="gutter" aria-hidden="true">↳</span>
+          <details class="text">
+            <summary><span class="who">Handler gave the agent its instructions</span></summary>
+            <div class="instructions">{entry.told}</div>
+          </details>
+        </div>
+      {/if}
       <div class="line user">
         <span class="gutter" aria-hidden="true">&gt;</span>
         <div class="text" data-testid="user-message">
@@ -137,9 +179,12 @@
         </div>
       </div>
     {:else if entry.kind === "agent"}
+      <!-- its own text, apart from `live`: a message's markdown is rendered again only when its
+           text changes, not every message's when another entry comes during a turn -->
+      {@const text = i === live ? liveText : entry.text}
       <div class="line agent">
         <span class="gutter" aria-hidden="true">●</span>
-        <div class="text md" data-testid="agent-message" {@attach codeCopy(entry.text)}>{@html markdown(entry.text)}</div>
+        <div class="text md" data-testid="agent-message" {@attach codeCopy(text)}>{@html markdown(text)}</div>
         {#if !(busy && i === session.entries.length - 1)}
           <button type="button" class="copy message-copy" onclick={() => copy(entry.text, i)} title="Copy this message (markdown)">
             {copied === i ? "Copied" : "Copy"}
@@ -161,7 +206,7 @@
       </details>
     {:else if entry.kind === "tool"}
       <ToolCall tool={entry} {root} {onopen} asking={asking.includes(entry.id)} ended={i < current} />
-      {#each permissions?.filter((p) => p.request.toolCall.toolCallId === entry.id) ?? [] as pending (pending)}
+      {#each askedAt(entry.id) as pending (pending)}
         <div class="asked"><PermissionPrompt {pending} {root} /></div>
       {/each}
     {:else if entry.kind === "plan"}
@@ -188,7 +233,7 @@
         </div>
       {/if}
     {:else if entry.kind === "host"}
-      <HostCard {entry} past={i < lastTurn} {ondecide} />
+      <HostCard {entry} past={i < lastTurn} {ondecide} {agent} {tells} />
     {:else if entry.kind === "model"}
       <div class="line notice warning" data-testid="model-unreached">
         <span class="gutter" aria-hidden="true">!</span>
@@ -245,6 +290,10 @@
   /* what the agent adds comes in, not pops in */
   .timeline > :global(*) {
     animation: enter var(--dur-2) var(--ease) backwards;
+    /* out of view, an entry is not laid out (kept at its last height): a long session's
+       resize, or its streamed answer, no longer lays out the whole conversation */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1.5rem;
   }
   /* steps one after the other read as one block; a turn starts with some room */
   .timeline > :global(.tool + .tool) {
@@ -476,6 +525,12 @@
   }
   .told {
     color: var(--muted-foreground);
+  }
+  .told summary {
+    cursor: pointer;
+  }
+  .told .instructions {
+    white-space: pre-wrap;
   }
   .told .who {
     font-weight: 600;

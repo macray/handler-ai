@@ -1,6 +1,12 @@
 """Plain-text output shared by the commands."""
 
+from datetime import datetime
 from typing import Any
+
+
+def when_at(t: str | None, missing: str = "-") -> str:
+    """A time of the API (UTC) as the local time, to the minute; `missing` when there is none."""
+    return datetime.fromisoformat(t).astimezone().strftime("%Y-%m-%d %H:%M") if t else missing
 
 
 def one_line(text: str, width: int) -> str:

@@ -2,7 +2,9 @@
   // A run of an agent with an interface (D.18): what it was given, how it went, and its result,
   // shown from its schema. Polled while it runs; watching it live opens its session. Titled by what
   // it was given; run again with the same input and model; a job's run that ended well can be kept
-  // as a check (D.20).
+  // as a check (D.20). A run of an app's job (H.11: no agent) says the app and the job instead,
+  // under the app's page.
+  import { ask } from "../lib/ask.svelte";
   import When from "../components/When.svelte";
   import Eye from "@lucide/svelte/icons/eye";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
@@ -15,8 +17,11 @@
   import OutputView from "../components/OutputView.svelte";
   import PageHeader from "../components/PageHeader.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
-  import type { Agent, Session } from "../lib/contracts.gen";
+  import { menuUse } from "../lib/menuuse.svelte";
+  import type { Agent, App, Session } from "../lib/contracts.gen";
+  import { appTitle } from "../lib/apps";
   import { agentLabel, projects } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
   import { accessLabel } from "../lib/access";
@@ -26,6 +31,7 @@
 
   let run = $state<Session | null>(null);
   let agent = $state<Agent | null>(null);
+  let app = $state<App | null>(null); // a run of one of its jobs: the app
   let digest = $state<string | null>(null); // the subject skill's, now
   let error = $state<string | null>(null);
 
@@ -36,16 +42,20 @@
   const changed = $derived(Boolean(digest && run?.subject && digest !== run.subject.digest));
   const found = $derived(agent ? projects.of(agent) : undefined);
   const title = $derived(run ? (inputSummary(run) ?? run.title ?? "Run") : "Run");
+  const job = $derived(run?.job && app ? app.jobs?.find((j) => j.name === run?.job) : undefined);
   const parent = $derived(
     agent
       ? { label: found ? `${found.project.name} · ${agentLabel(found.agent)}` : agentLabel(agent), href: href({ view: "agent", id: agent.id }) }
-      : undefined,
+      : run?.app && run.job
+        ? { label: `Library › Apps › ${app ? appTitle(app) : run.app}`, href: href({ view: "apps", app: run.app }) }
+        : undefined,
   );
 
   async function refresh(): Promise<void> {
     try {
       run = await api.session(id);
-      if (!agent) agent = await api.agent(run.agentId).catch(() => null);
+      if (!agent && run.agentId) agent = await api.agent(run.agentId).catch(() => null);
+      if (!app && run.app && run.job) app = await api.app(run.app).catch(() => null);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -57,8 +67,7 @@
 
   $effect(() => {
     if (status !== "running") return;
-    const timer = setInterval(refresh, 1500);
-    return () => clearInterval(timer);
+    return onChange(["sessions"], () => void refresh());
   });
 
   $effect(() => {
@@ -107,8 +116,8 @@
   }
 
   async function remove(): Promise<void> {
-    if (!run || !confirm("Delete this run, its result and its conversation?")) return;
-    const back = agent ? { view: "agent" as const, id: agent.id } : { view: "projects" as const };
+    if (!run || !(await ask({ title: "Delete this run, its result and its conversation?", yes: "Delete", danger: true }))) return;
+    const back = agent ? { view: "agent" as const, id: agent.id } : run.app && run.job ? { view: "apps" as const, app: run.app } : { view: "projects" as const };
     await api.deleteSession(run.id);
     navigate(back, true);
   }
@@ -157,8 +166,14 @@
           <span class="text-muted-foreground">Verdict</span>
           <span class="inline-flex rounded-md border px-2 py-0.5 text-xs font-medium {TONE[verdict.tone]}" data-testid="run-verdict">{verdict.value}</span>
         {/if}
-        <span class="text-xs text-muted-foreground"><When at={run.createdAt} /> · {startedBy(run)} · {accessLabel(run)}</span>
+        <span class="text-xs text-muted-foreground"><When at={run.createdAt} /> · {startedBy(run, (n) => menuUse.title(n))} · {accessLabel(run)}</span>
       </section>
+      {#if run.job}
+        <p class="text-sm" data-testid="run-job">
+          The job “{job?.description ?? run.job}” of <a class="text-link hover:underline" href={href({ view: "apps", app: run.app ?? "" })}>{app ? appTitle(app) : run.app}</a>: its Who works and
+          what it can do are on {app ? appTitle(app) : "the app"}'s page.
+        </p>
+      {/if}
 
       <section class="space-y-3">
         <h2 class="text-base font-semibold">Given</h2>
@@ -179,7 +194,11 @@
         <h2 class="text-base font-semibold">Result</h2>
         {#if run.waitingFor}
           <p class="text-sm text-muted-foreground" data-testid="run-waiting">
-            It waits for <a class="text-link hover:underline" href={href({ view: "run", id: run.waitingFor })}>the run of its agent in progress</a>: one run of an agent at a time.
+            {#if run.job}
+              It waits for <a class="text-link hover:underline" href={href({ view: "run", id: run.waitingFor })}>the run writing its folder</a>: runs writing a folder take turns.
+            {:else}
+              It waits for <a class="text-link hover:underline" href={href({ view: "run", id: run.waitingFor })}>the run of its agent in progress</a>: one run of an agent at a time.
+            {/if}
             It starts when that one ends, and gives up after 30 minutes.
           </p>
         {:else if status === "running"}

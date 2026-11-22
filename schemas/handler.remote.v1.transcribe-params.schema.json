@@ -31,6 +31,17 @@
       ],
       "default": null,
       "title": "Language"
+    },
+    "via": {
+      "default": "web",
+      "enum": [
+        "web",
+        "phone",
+        "cli",
+        "key"
+      ],
+      "title": "Via",
+      "type": "string"
     }
   },
   "required": [

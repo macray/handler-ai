@@ -26,6 +26,24 @@
     "default": {
       "type": "boolean",
       "title": "Default"
+    },
+    "form": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Form"
+    },
+    "job": {
+      "default": false,
+      "title": "Job",
+      "type": "boolean"
     }
   },
   "required": [

@@ -198,6 +198,7 @@ def app_item(ctx: Context, source_id: str, name: str, folder: Path) -> SourceIte
     return SourceItem(
         kind="app",
         name=name,
+        title=manifest.title,
         description=manifest.description,
         version=manifest.version,
         installed=record is not None,
@@ -262,8 +263,8 @@ def app_notes(manifest: AppManifest) -> list[SourceNote]:
         SourceNote(text=f"uses {count(len(needs.files), 'folder', 'folders')} of yours")
         if needs.files
         else SourceNote(text="only its own data"),
-        SourceNote(text=f"brings {count(len(needs.agents), 'agent', 'agents')}")
-        if needs.agents
+        SourceNote(text=f"needs a model for {count(len(manifest.jobs), 'job', 'jobs')}")
+        if manifest.jobs
         else None,
         SourceNote(text=f"asks for {count(len(needs.secrets), 'secret', 'secrets')}")
         if needs.secrets

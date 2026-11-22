@@ -21,3 +21,9 @@ export function freeName(base: string, taken: string[], sep = "-"): string {
   for (let i = 2; used.has(name.toLowerCase()); i++) name = `${base}${sep}${i}`;
   return name;
 }
+
+/** A path with `~` for the home (/home/<you>, /Users/<you>), else as it is: "~/code/blog". The
+ *  whole path goes in its tooltip. */
+export function homePath(path: string): string {
+  return path.replace(/\/+$/, "").replace(/^\/(home|Users)\/[^/]+(?=\/|$)/, "~") || path;
+}

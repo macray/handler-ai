@@ -14,7 +14,8 @@ config/folders.toml   the work folders: the scope root (Daemon.scope_root)
 connections/browser   a connection of the fake-browser tool: its MCP server, for P8 tests
                       (the fake sandbox ignores the addon's folder)
 config/tools/         fake-browser and fake-shop, installed from the official source
-data/addons/<name>/   their folders, empty, as if built (G.4): the fake sandbox ignores them
+data/addons/<name>/   their folders, empty, as if built (G.4): the fake sandbox ignores them;
+                      the built-in knowledge tool's too (an agent with schemas gets it, D.29)
 official-source/      the official source (HANDLER_OFFICIAL_SOURCE): tests/fixtures/source/
                       (made up; `source=` another, e.g. the registry), committed in a git
                       repository of its own
@@ -79,6 +80,8 @@ home = "/home/agent"
 modelOption = "model"
 skillsDir = "~/.fake/skills"
 mcpTransports = ["stdio"]
+[unattendedEnv]
+FAKE_UNATTENDED = "1"
 [login]
 subscription = "Fake"
 unattended = "allowed"
@@ -420,7 +423,8 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
     )
     if "HANDLER_TOOLS_DIR" not in (extra_env or {}):  # else the test brings its own addons
         _install_official_addons(tmp / "config", source, addons)
-        _as_if_built(tmp / "data", addons)
+        data = Path((extra_env or {}).get("HANDLER_DATA_DIR", tmp / "data"))  # a test's own
+        _as_if_built(data, (*addons, "knowledge"))  # the built-in one an agent's schemas bring
     env = (
         os.environ
         | {
@@ -429,6 +433,8 @@ def start_daemon(  # noqa: PLR0915 — one setup, top to bottom
             "HANDLER_ACCOUNTS_DIR": str(accounts),
             "HANDLER_PROVIDERS_DIR": str(providers),
             "HANDLER_DATA_DIR": str(tmp / "data"),
+            # its own notes root: the default (~/notes) is made in the home ("": the default)
+            "HANDLER_NOTES_DIR": str(tmp / "notes"),
             "HANDLER_CACHE_DIR": str(tmp / "cache"),
             "HANDLER_RUNTIME_DIR": str(tmp / "run"),
             "HANDLER_HARNESSES_DIR": str(harnesses),

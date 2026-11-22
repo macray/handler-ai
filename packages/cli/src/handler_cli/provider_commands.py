@@ -15,7 +15,8 @@ handler provider add NAME --from TEMPLATE [--key] [--endpoint PROTOCOL=URL …] 
                                      --area: the areas it is made for (Work, Personal…, or any;
                                      none: it runs nowhere a project has an area)
 handler provider test NAME           ask its server for its models, from where a sandbox would:
-                                     ready once it answers, else why not
+                                     ready once it answers, else why not (an endpoint
+                                     that redirects, http:// to https://: the one to use)
 handler provider rm NAME             it and its key (agents using it cannot start until given
                                      another)
 
@@ -114,10 +115,12 @@ def request(d: Daemon, args: argparse.Namespace) -> dict[str, Any]:
         reach = d.call("POST", "/v1/providers/test", {"endpoints": endpoints})
         if not reach["ok"]:
             hint = f"\n{reach['hint']}" if reach.get("hint") else ""
-            raise ClientError(
-                f"{args.template}: not reached: {reach['error']}{hint}\n"
-                "Start the server, or name its models with --model ID"
-            )
+            then = "Start the server, or name its models with --model ID"
+            if reach.get("redirects"):
+                then = "Give it with " + " ".join(
+                    f"--endpoint {p}={url}" for p, url in reach["redirects"].items()
+                )
+            raise ClientError(f"{args.template}: not reached: {reach['error']}{hint}\n{then}")
         models = reach["models"]
         if not models:
             raise ClientError(f"{args.template}: the server serves no model yet")
@@ -151,6 +154,11 @@ def test(d: Daemon, name: str) -> int:
         print(f"{name}: not reached: {reach['error']}")
         if reach.get("hint"):
             print(reach["hint"])
+        if reach.get("redirects"):
+            print(
+                "Change it in the web UI (Settings → Model access) or in "
+                f"~/.config/handler-ai/providers/{name}.toml"
+            )
         return 1
     print(f"{name}: ready, {asked} answered")
     provider = next(p for p in d.call("GET", "/v1/providers") if p["name"] == name)

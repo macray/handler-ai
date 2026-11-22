@@ -6,6 +6,7 @@
   // Listed by name once there is one, as "API keys and local models": a line is its description
   // and model count after a dot, its state said unless ready; a provider that cannot be read is
   // deleted from its line. The list comes from Model access.
+  import { ask } from "../lib/ask.svelte";
   import { productName } from "../lib/harnesses.svelte";
   import AreaTag from "./AreaTag.svelte";
   import Dialog from "./Dialog.svelte";
@@ -19,17 +20,33 @@
   let {
     providers,
     listed,
+    dialogOnly = false,
     onchange,
+    onclosed,
   }: {
     providers: ProviderInfo[];
     listed: boolean; // the section shown, even empty (once there is an account or a provider)
+    dialogOnly?: boolean; // its dialog alone, never its section (a Connect over another page, ConnectDialogs)
     onchange: () => Promise<void>; // reloads `providers`
+    onclosed?: (made: string | null) => void; // its dialog closed: the provider made there, if any
   } = $props();
 
   // the panel open: a new provider's form, or a provider's
   type Panel = { kind: "new"; start: ProviderTemplate } | { kind: "edit"; provider: ProviderInfo };
   let panel = $state<Panel | null>(null);
   let error = $state<string | null>(null);
+
+  let made: string | null = null; // the provider its dialog made, told when it closes
+  let shown = false; // its dialog open, last we looked
+  $effect(() => {
+    const open = panel !== null;
+    if (open === shown) return;
+    shown = open;
+    if (!open) {
+      onclosed?.(made);
+      made = null;
+    }
+  });
 
   const EMPTY: ProviderTemplate = { name: "", endpoints: {}, models: [{ id: "" }] };
 
@@ -49,7 +66,6 @@
     error = null;
     panel = { kind: "new", start: template ? { ...template, name: freeName(template.name, providers.map((p) => p.name)) } : EMPTY };
   }
-
 
   /** Who can use it, in one line: its models, the programs speaking it, the config files it gives. */
   const reach = (p: ProviderInfo) =>
@@ -82,17 +98,15 @@
 
   const sorted = $derived([...providers].sort((a, b) => a.name.localeCompare(b.name)));
 
-  const create = (body: ProviderRequest) => run(() => api.createProvider(body));
+  const create = (body: ProviderRequest) => run(async () => (made = (await api.createProvider(body)).name));
   const update = (name: string, body: ProviderRequest) => run(() => api.updateProvider(name, body));
-  function remove(p: ProviderInfo): void {
-    const used = p.agents?.length
-      ? `\n\nUsed by ${p.agents.join(", ")}: they will not start until you give them another provider.`
-      : "";
-    if (confirm(`Delete the provider ${p.name} and its key?${used}`)) void run(() => api.deleteProvider(p.name));
+  async function remove(p: ProviderInfo): Promise<void> {
+    const detail = p.agents?.length ? `Used by ${p.agents.join(", ")}: they will not start until you give them another provider.` : undefined;
+    if (await ask({ title: `Delete the provider ${p.name} and its key?`, detail, yes: "Delete", danger: true })) void run(() => api.deleteProvider(p.name));
   }
 </script>
 
-{#if providers.length || listed}
+{#if !dialogOnly && (providers.length || listed)}
   <section class="enter space-y-3" id="providers" data-testid="providers">
     <h2 class="flex flex-wrap items-baseline gap-x-2 text-base font-semibold">
       API keys and local models

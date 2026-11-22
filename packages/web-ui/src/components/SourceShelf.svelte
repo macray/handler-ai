@@ -1,5 +1,5 @@
 <script lang="ts">
-  // What the sources offer of one kind (D.26), a shelf's Get more: a search (and a source, with
+  // What the sources offer of one kind (D.26), a shelf's Community: a search (and a source, with
   // several), the items as cards (SourceItemCard: where each comes from, its notes, its button to
   // its kind's own install page), what cannot be read now. `extra`: the shelf's own ways to get
   // one, after the cards (an app file, a tool from a folder); `project`: agents got are set up

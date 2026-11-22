@@ -27,7 +27,7 @@ from .settings import Settings
 log = logging.getLogger("handler.terminal")
 
 READY_LINE = "handler-ready"  # the sandbox's, on its stderr: it waits for the client's `attach` (A)
-READY_TIMEOUT = 600.0  # seconds: a first start may build the egress proxy's image
+READY_TIMEOUT = 120.0  # seconds: its sandbox's start (a VM's on a Mac); a launch builds no image
 
 _followed: set[asyncio.Task[None]] = set()  # until each launcher ends
 
@@ -117,4 +117,5 @@ async def _follow(
             os.close(output)
         shutil.rmtree(paste, ignore_errors=True)
         record.connections.pop(conn.id, None)
+        registry.connected()
         addon_folders.sweep_soon(settings)  # a folder it mounted may be free

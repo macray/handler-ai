@@ -12,7 +12,7 @@ HANDLER_CACHE_DIR             the toolbox's global caches (default ~/.cache/hand
 HANDLER_RUNTIME_DIR           app backends' sockets
                               (default $XDG_RUNTIME_DIR/handler-ai, else <state>)
 HANDLER_NOTES_DIR             notes root: folders agents can be given; when unset, the root
-                              set from the web UI (<config>/notes.toml), else <data>/notes
+                              set from the web UI (<config>/notes.toml), else ~/notes
 HANDLER_ALLOWED_ORIGINS       extra browser origins, comma-separated (the daemon's own is allowed)
 HANDLER_SESSION_IDLE_TIMEOUT  seconds before an unattached, idle session is stopped (default 1800)
 HANDLER_SESSION_MAX_ATTACH    clients attached to one session at once; beyond, the oldest is
@@ -69,6 +69,7 @@ class Settings:
     accounts_dir: Path = Path.home() / ".config" / "handler-ai" / "accounts"
     providers_dir: Path = Path.home() / ".config" / "handler-ai" / "providers"
     skills_dir: Path = Path.home() / ".config" / "handler-ai" / "skills"  # skill library (D.17)
+    schemas_dir: Path = Path.home() / ".config" / "handler-ai" / "schemas"  # the Library's, D.29
     automations_dir: Path = Path.home() / ".config" / "handler-ai" / "automations"  # I.1
     cache_dir: Path = Path.home() / ".cache" / "handler-ai"  # the toolbox's global caches
     # sockets: short paths, tmpfs
@@ -118,6 +119,7 @@ class Settings:
             accounts_dir=Path(os.environ.get("HANDLER_ACCOUNTS_DIR", config_dir / "accounts")),
             providers_dir=Path(os.environ.get("HANDLER_PROVIDERS_DIR", config_dir / "providers")),
             skills_dir=config_dir / "skills",
+            schemas_dir=config_dir / "schemas",
             automations_dir=config_dir / "automations",
             allowed_origins=frozenset(own | extra),
             web_ui_dir=WEB_UI,

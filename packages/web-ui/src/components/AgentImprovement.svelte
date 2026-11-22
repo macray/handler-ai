@@ -5,6 +5,7 @@
   // ordinary save of the agent's instructions; attempt 0 puts them back). Polled while it runs.
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import { Button } from "$lib/components/ui/button";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { Agent, Improvement } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
@@ -31,8 +32,7 @@
   });
   $effect(() => {
     if (!running) return;
-    const timer = setInterval(load, 1000);
-    return () => clearInterval(timer);
+    return onChange(["agents"], () => void load());
   });
 
   async function stop(): Promise<void> {

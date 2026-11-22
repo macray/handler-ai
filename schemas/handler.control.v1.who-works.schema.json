@@ -1,0 +1,64 @@
+{
+  "$id": "urn:handler.control/v1/who-works",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Who runs an app's jobs (H.2): a program (a harness) on an account or a provider, and a\nmodel; no program: the model alone, on a provider (D.18), for a job reaching no folder, tool\nor host. One per app, chosen by the person, and maybe one of a job's own.",
+  "properties": {
+    "program": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Program"
+    },
+    "account": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Account"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    }
+  },
+  "title": "WhoWorks",
+  "type": "object"
+}

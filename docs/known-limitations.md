@@ -4,12 +4,34 @@
 
 Handler runs on Linux (rootless Podman, or Docker), and on Windows inside WSL 2
 ([install on Windows](windows.md)). On a Mac it is experimental: with Apple's `container` (macOS
-26, Apple silicon; the default), agents that run containers themselves, privileged agents and
-windows on your screen are not available; with Docker Desktop or OrbStack, windows on your
-screen, apps and automations whose scripts call models are not (a socket cannot cross Docker's
-virtual machine).
+26, Apple silicon; the default), privileged agents and windows on your screen are not available;
+with Docker Desktop or OrbStack, windows on your screen, apps and automations whose scripts call
+models are not (a socket cannot cross Docker's virtual machine).
 
 With Apple's `container`:
+
+- **Caches: an agent only adds to them.** Each sandbox is a virtual machine of its own, and two
+  of them cannot share a lock on a folder, so no cache is written by two sandboxes at once. A
+  sandbox sees a cache as the sandboxes that ended before it left it; what it downloads there is
+  added when it ends (also after a crash: the next agent start adds it). What it changes or
+  deletes in a cache stays its own: the next sandbox gets the cache's file again, and at worst
+  downloads it again. Two sandboxes running at once may both add the same package under
+  different names (uv does): emptying the cache frees it (Settings → Expert → Caches), which
+  waits while a sandbox's additions are still to be added.
+- **A disk of its own, 20 GB at most**, for what a sandbox writes in its caches and, for an agent
+  that runs containers, its containers' images and temporary files. It takes on your Mac only
+  what was written (it does not shrink when files are deleted in it), and goes with the sandbox.
+  A sandbox that fills it gets "No space left on device" for what it writes there; a Mac with
+  less free space than that fills first.
+- **Agents that run containers** (Podman or Docker): each sandbox keeps its containers' images
+  on its own disk, so a new sandbox unpacks the images it uses again (seconds). What is shared,
+  at the caches' level of its project, is what was downloaded: the images of Docker Hub,
+  `ghcr.io`, `quay.io`, `registry.k8s.io`, `gcr.io`, `public.ecr.aws` and `mcr.microsoft.com`
+  (with Docker: Docker Hub's only) come through a mirror kept in the Container images cache. An
+  image's name (a tag, such as `python:3.13`) is always asked of its registry, so you get its
+  current version; a registry the sandbox's network does not allow is not reached for it either.
+  Private images (a registry you signed in to) and other registries are pulled directly, not
+  cached.
 
 - **Windows on your screen:** the one way to show Linux windows on a Mac (cocoa-way) also gives
   every window what you copy on your Mac, at any time: Handler does not offer it.

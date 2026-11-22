@@ -39,13 +39,14 @@ import sys
 import time
 from typing import Any
 
-from . import terminal
-from .agent_commands import addon_label, program
+from . import image_commands, terminal
+from .agent_commands import addon_label, program, use_label
 from .client import ClientError, Daemon
-from .output import table
+from .output import table, when_at
 from .session_bridge import run_session_bridge
 
 START_TIMEOUT = 300.0
+REFUSED_WITHIN = 3.0  # s: a start refused before its sandbox (an image not built) is said by then
 
 
 def add_parsers(sub: Any, add_agent_options: Any) -> None:
@@ -177,8 +178,9 @@ def described(name: str | None, harness: str | None, model: str | None) -> str:
 def flag_changes(agent: dict[str, Any], args: Any) -> tuple[dict[str, Any], list[str]]:
     """What the agent flags typed (cli.add_agent_options) change in the agent's settings: those
     settings, and each change in words. A flag not typed changes nothing; --allow,
-    --keep-blocked, --tool and --notes add to its lists (--allow and --keep-blocked each take
-    their hosts off the other's, A.3; --tool with another connection replaces that tool's). (--name
+    --keep-blocked, --tool, --notes and --schema add to its lists (--allow and --keep-blocked each take
+    their hosts off the other's, A.3; --tool with another connection replaces that tool's);
+    --env NAME=VALUE sets a variable, NAME= removes it (D.8). (--name
     says which agent; the account or provider, --harness and --model, the model this time only,
     D.19.)"""
     changed: dict[str, Any] = {}
@@ -195,7 +197,7 @@ def flag_changes(agent: dict[str, Any], args: Any) -> tuple[dict[str, Any], list
         if value is not None and now != value:
             changed[key] = value
             said.append(f"{key} {shown(now)} → {shown(value)}")
-    lists = {"allow": args.allow, "blocked": args.keep_blocked, "knowledge": args.notes}
+    lists = {"allow": args.allow, "blocked": args.keep_blocked}
     for key, given in lists.items():
         if added := sorted(set(given or []) - set(agent.get(key, []))):
             changed[key] = sorted({*agent.get(key, []), *added})
@@ -203,16 +205,66 @@ def flag_changes(agent: dict[str, Any], args: Any) -> tuple[dict[str, Any], list
     for key, other in (("allow", "blocked"), ("blocked", "allow")):  # never both (A.3)
         if taken := set(changed.get(key, [])) & set(agent.get(other, [])):
             changed[other] = sorted(set(agent.get(other, [])) - taken)
+    for key, flags in (("knowledge", args.notes), ("schemas", args.schema)):
+        if found := use_changes(key, agent.get(key, []), flags or []):
+            changed[key], change = found
+            said.append(change)
     uses = {u["addon"]: u for u in agent.get("addons", [])}
     added = [u for u in map(addon_use, args.tool or []) if uses.get(u["addon"]) != u]
     if added:
         uses |= {u["addon"]: u for u in added}
         changed["addons"] = [uses[a] for a in sorted(uses)]
         said.append(f"tools + {', '.join(map(addon_label, added))}")
+    env, env_said = env_changes(agent.get("env", {}), args.env or [])
+    said += env_said
+    if env != agent.get("env", {}):
+        changed["env"] = env
     return changed, said
 
 
-LIST_WORDS = {"blocked": "kept blocked", "knowledge": "notes"}
+def env_changes(now: dict[str, str], flags: list[str]) -> tuple[dict[str, str], list[str]]:
+    """The agent's variables once `--env NAME=VALUE` flags are applied (NAME= removes it), and
+    each change in words."""
+    env, said = dict(now), []
+    for flag in flags:
+        name, sep, value = flag.partition("=")
+        if not sep:
+            raise ClientError(f"--env {flag}: NAME=VALUE (NAME= removes it)")
+        if value and env.get(name) != value:
+            env[name] = value
+            said.append(f"env {name}={value}")
+        elif not value and name in env:
+            del env[name]
+            said.append(f"env - {name}")
+    return env, said
+
+
+LIST_WORDS = {"blocked": "kept blocked"}
+
+
+# what names a use in an agent's list, and how the list is said (D.5, D.29)
+USE_KEYS = {"knowledge": ("folder", "notes"), "schemas": ("schemaId", "schemas")}
+
+
+def use_changes(
+    key: str, now: list[dict[str, str]], flags: list[str]
+) -> tuple[list[dict[str, str]], str] | None:
+    """An agent's notes folders (`--notes FOLDER[=write]`) or schemas (`--schema ID[=write]`)
+    once the flags are added, read-only unless `=write` (one already given another way is
+    changed), and the change in words; None when they change nothing."""
+    name, word = USE_KEYS[key]
+    uses = {u[name]: u for u in now}
+    added = []
+    for flag in flags:
+        what, _, access = flag.rpartition("=")
+        use = {name: what, "access": access} if access in ("read", "write") else None
+        use = use or {name: flag, "access": "read"}
+        if uses.get(use[name]) != use:
+            added.append(use)
+    if not added:
+        return None
+    uses |= {u[name]: u for u in added}
+    return [uses[k] for k in sorted(uses)], f"{word} + {', '.join(use_label(u) for u in added)}"
 
 
 def addon_use(flag: str) -> dict[str, str]:
@@ -277,7 +329,7 @@ def confirm_toolbox(e: ClientError) -> list[str]:
 
 
 SETTINGS = ("network", "egress", "allow", "blocked", "confinement", "permissions", "addons")
-SETTINGS += ("knowledge", "display", "interface")
+SETTINGS += ("knowledge", "schemas", "display", "env", "interface")
 
 
 def request_of(agent: dict[str, Any], project: dict[str, Any] | None) -> dict[str, Any]:
@@ -398,7 +450,7 @@ def open_session(
     prompt: str | None,
     model: dict[str, Any] | None = None,
 ) -> int:
-    body: dict[str, Any] = {"agentId": agent_id}
+    body: dict[str, Any] = {"agentId": agent_id, "origin": "cli"}
     if prompt:
         body["prompt"] = prompt
     if model is not None:
@@ -409,9 +461,60 @@ def open_session(
         session = wait_running(d, session)
         d.call("PUT", f"/v1/sessions/{session['id']}/remote", {"enabled": True})
         print("shared with your paired devices")
-    if args.detach:
+    if args.detach:  # an image not built is said before its sandbox starts: a moment to tell
+        session = settled(d, session, REFUSED_WITHIN)
+        return prepare(d, session, detach=True) or 0
+    code = use(d, session)
+    session = d.call("GET", f"/v1/sessions/{session['id']}")
+    if session["state"] == "stopped" and session.get("missingImage"):
+        if failed := prepare(d, session, detach=False):
+            return failed
+        return use(d, session)  # prepared: it starts, with its request
+    return code
+
+
+def settled(d: Daemon, session: dict[str, Any], within: float) -> dict[str, Any]:
+    """The session once its start ended (running, or stopped saying why), or still starting
+    after `within` seconds."""
+    deadline = time.monotonic() + within
+    while session["state"] == "starting" and time.monotonic() < deadline:
+        time.sleep(0.2)
+        session = d.call("GET", f"/v1/sessions/{session['id']}")
+    return session
+
+
+def prepare(d: Daemon, session: dict[str, Any], *, detach: bool) -> int | None:
+    """A session whose start waits for an image not built (F.1 `missingImage`): its build
+    started (or the one running followed), as the web UI's Prepare now; followed here unless
+    `detach`. None when there is nothing to prepare, or once it is prepared."""
+    target = session.get("missingImage")
+    if session["state"] != "stopped" or not target:
+        return None
+    what = image_commands.Stages(d).products.get(target, target.removeprefix("addon:"))
+    print(f"{what} is not prepared on this computer yet: preparing it now (a few minutes, once).")
+    if target in ("toolbox", "network-filter"):
+        api = target
+    elif target.startswith("addon:"):
+        api = f"addons/{target.removeprefix('addon:')}"
+    else:
+        api = f"harnesses/{target}"
+    try:
+        build = d.call("POST", f"/v1/{api}/rebuild")
+    except ClientError as e:  # another build runs: followed, the session starts after it
+        running = [b for b in d.call("GET", "/v1/builds") if b["state"] == "running"]
+        if e.status != 409 or not running:
+            raise
+        build = running[0]
+    if detach:
+        then = (
+            "with your request" if session.get("request") else f"`handler attach {session['id']}`"
+        )
+        print(f"The session starts once it is ready: {then}.")
         return 0
-    return use(d, session)
+    if code := image_commands.watch(d, build):
+        print(f"Preparing {what} failed: `handler image rebuild {target}` tries again.")
+        return code
+    return None
 
 
 def use(d: Daemon, session: dict[str, Any]) -> int:
@@ -478,27 +581,40 @@ def find_session(d: Daemon, session_id: str | None, here: str) -> dict[str, Any]
     return session
 
 
+def state_of(s: dict[str, Any], *, full: bool = False) -> str:
+    """Its state in the web UI's words: a running session is working, idle or needs you; a
+    stopped one whose start waits for an image says so (F.1)."""
+    if s.get("pendingPermissions"):
+        return "needs you"
+    if s.get("busy"):
+        return "working"
+    if s.get("waitingFor"):
+        whose = "the run writing its folder" if s.get("job") else "its agent's run"
+        return f"waiting for {whose} {s['waitingFor']}" if full else "waiting"
+    if s["state"] == "running":
+        return "idle"
+    if s["state"] == "stopped" and s.get("missingImage"):
+        return f"waiting for {s['missingImage']} to be prepared" if full else "waiting"
+    return s["state"]
+
+
 def show_session(d: Daemon, s: dict[str, Any]) -> None:
     access = f"account {s['account']}" if s.get("account") else f"provider {s.get('provider')}"
     model = f" · {s['model']}" if s.get("model") else ""
-    state = s["state"]
-    if s.get("pendingPermissions"):
-        state = "needs you"
-    elif s.get("busy"):
-        state = "working"
-    elif s.get("waitingFor"):
-        state = f"waiting for its agent's run {s['waitingFor']}"
+    state = state_of(s, full=True)
     print(f"{s['id']} · {labels(d).get(s['agentId'], s['harness'])} · {state}")
     if s.get("title"):
         print(f"  {s['title']}")
     print(f"  runs      {s['harness']} · {access}{model}")
     print(f"  folder    {s['scope']}")
     origin = f"app {s['app']}" if s.get("app") else s.get("origin", "ui")
-    print(f"  started   {s['createdAt'][:16].replace('T', ' ')} ({origin})")
-    print(f"  active    {s['lastActivityAt'][:16].replace('T', ' ')}")
+    print(f"  started   {when_at(s['createdAt'])} ({origin})")
+    print(f"  active    {when_at(s['lastActivityAt'])}")
     shared = ", shared with your paired devices" if s.get("remote") else ""
     print(f"  attached  {s.get('attached', 0)} client(s){shared}")
-    if s["state"] not in ("running", "starting"):
+    if s["state"] == "stopped" and s.get("missingImage") and s.get("request"):
+        print("  resume    by itself, with its request, once it is prepared")
+    elif s["state"] not in ("running", "starting"):
         resume = f"handler attach {s['id']}" if s.get("canResume") else "not possible"
         print(f"  resume    {resume}")
     if s.get("error"):
@@ -512,13 +628,8 @@ def print_sessions(d: Daemon, everything: bool) -> None:
     for s in d.call("GET", "/v1/sessions"):
         if not everything and s["state"] not in ("running", "starting"):
             continue
-        state = s["state"]
-        if s.get("pendingPermissions"):
-            state = "needs you"
-        elif s.get("busy"):
-            state = "working"
-        elif s.get("waitingFor"):
-            state = "waiting"
-        agent = names.get(s["agentId"], s.get("harness") or "the model alone")
+        state = state_of(s)
+        who = f"{s['app']}: {s['job']}" if s.get("job") else s.get("harness") or "the model alone"
+        agent = names.get(s.get("agentId") or "", who)
         rows.append([s["id"], state, agent, (s.get("title") or "-")[:50], s["scope"]])
     table(rows)

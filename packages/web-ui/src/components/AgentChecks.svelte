@@ -3,6 +3,7 @@
   // check (its name, its input, what it compares, its last result; changed, deleted, its run
   // opened). Run when the person asks, never on their own. Polled while a check run goes on.
   // *Improve until they pass* (D.21) starts an improvement, followed under the block.
+  import { ask } from "../lib/ask.svelte";
   import CircleCheck from "@lucide/svelte/icons/circle-check";
   import CircleDashed from "@lucide/svelte/icons/circle-dashed";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -10,6 +11,7 @@
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import Target from "@lucide/svelte/icons/target";
   import { Button } from "$lib/components/ui/button";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { Agent, AgentChecks, Check, CheckResult } from "../lib/contracts.gen";
   import { href } from "../lib/router.svelte";
@@ -31,6 +33,8 @@
   const result = $derived(agent.interface?.result as Schema | undefined);
   const titles = $derived(Object.fromEntries(fieldsOf(result).map((f) => [f.key, f.title])));
   const running = $derived(!!data?.last && !data.last.endedAt);
+  const runnable = $derived(!!data?.checks.some((c) => !c.problem)); // one check at least can run
+  const notRunnable = $derived(runnable || running ? undefined : data?.checks.length ? "None of its checks can run" : "No check yet"); // the buttons' tooltip
   const resultOf = (c: Check): CheckResult | undefined => data?.last?.results.find((r) => r.checkId === c.id);
   const ended = $derived(data?.last?.results.filter((r) => r.state === "passed" || r.state === "failed" || r.state === "error") ?? []);
   const passed = $derived(ended.filter((r) => r.state === "passed").length);
@@ -53,8 +57,7 @@
   });
   $effect(() => {
     if (!running) return;
-    const timer = setInterval(load, 1000);
-    return () => clearInterval(timer);
+    return onChange(["agents"], () => void load());
   });
 
   async function runAll(): Promise<void> {
@@ -68,7 +71,7 @@
   }
 
   async function remove(c: Check): Promise<void> {
-    if (!confirm(`Delete the check "${c.name}"?`)) return;
+    if (!(await ask({ title: `Delete the check "${c.name}"?`, yes: "Delete", danger: true }))) return;
     await api.deleteCheck(agent.id, c.id);
     await load();
   }
@@ -87,8 +90,8 @@
         {#if running}running, {ended.length} of {data.last.results.length} done{:else}{passed} of {ended.length} pass{/if}
       </span>
     {/if}
-    <Button size="sm" variant="outline" class="ml-auto" disabled={running || !data?.checks.some((c) => !c.problem)} onclick={runAll} data-testid="checks-run"><Play />Run all</Button>
-    <Button size="sm" variant="outline" disabled={running || !data?.checks.some((c) => !c.problem)} onclick={() => (improving = true)} data-testid="checks-improve"><Sparkles />Improve until they pass</Button>
+    <Button size="sm" variant="outline" class="ml-auto" disabled={running || !runnable} title={notRunnable} onclick={runAll} data-testid="checks-run"><Play />Run all</Button>
+    <Button size="sm" variant="outline" disabled={running || !runnable} title={notRunnable} onclick={() => (improving = true)} data-testid="checks-improve"><Sparkles />Improve until they pass</Button>
   </header>
   {#if data?.changed?.length}
     <p class="flex items-center gap-1.5 border-b bg-warn/5 px-3.5 py-2 text-xs text-warn" data-testid="checks-changed">

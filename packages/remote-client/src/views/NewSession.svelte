@@ -2,22 +2,39 @@
   // A new session from the phone: a project, one of its agents allowed from devices (their
   // "Can be started from your phone" setting in handler), or Chat and who you talk to there; and
   // the request — typed (Ask's "Start a chat about it": what you asked), or dictated (tap to start,
-  // tap to stop: written down on the host with its speech model, D.25, when Voice is on). The host
+  // tap to stop: written down on the host with its speech model, D.25, when Voice is on). An agent
+  // with a form (a brief, a job: D.18) is started with its form filled in instead. The host
   // starts it, shares it, and this screen opens it.
   import { app } from "../lib/app.svelte";
+  import { fieldsOf, fieldValues, type Schema } from "../lib/nudges";
   import type { RemoteProject } from "../lib/remote.gen";
   import { canRecord, record, type Recording } from "../lib/voice";
+  import FormFields from "./FormFields.svelte";
 
   const CHAT = "chat"; // Chat's entry among the projects (none has this id: theirs are random)
   const places = $derived<RemoteProject[]>([
     ...(app.chats.length ? [{ projectId: CHAT, project: "Chat", agents: app.chats }] : []),
     ...app.agents,
   ]);
-  let projectId = $state(app.composeChat && app.chats.length ? CHAT : (app.agents[0]?.projectId ?? (app.chats.length ? CHAT : "")));
+  // the agent whose start failed, else Chat when asked from Ask, else the first project
+  // svelte-ignore state_referenced_locally
+  const again = places.find((p) => p.agents.some((a) => a.id === app.composeAgent));
+  let projectId = $state(
+    again?.projectId ?? (app.composeChat && app.chats.length ? CHAT : (app.agents[0]?.projectId ?? (app.chats.length ? CHAT : ""))),
+  );
   const project = $derived(places.find((p) => p.projectId === projectId));
-  let agentId = $state("");
+  let agentId = $state(app.composeAgent ?? "");
+  const agent = $derived(project?.agents.find((a) => a.id === agentId));
+  const fields = $derived(agent?.form ? fieldsOf(agent.form as Schema) : []);
   let request = $state(app.composeSay);
+  let values = $state<Record<string, unknown>>({});
   let starting = $state(false);
+
+  // another agent: its own form, empty
+  $effect(() => {
+    void agentId;
+    values = {};
+  });
 
   // the project's default agent, when it is one of those allowed
   $effect(() => {
@@ -56,8 +73,17 @@
   async function start(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     if (!agentId) return;
+    let filled: Record<string, unknown> | null = null;
+    if (agent?.form) {
+      try {
+        filled = fieldValues(fields, values);
+      } catch (e) {
+        app.startError = (e as Error).message;
+        return;
+      }
+    }
     starting = true;
-    await app.start(agentId, request);
+    await app.start(agentId, request, filled);
     starting = false;
   }
 </script>
@@ -85,16 +111,21 @@
       <select bind:value={agentId} data-testid="new-session-agent">
         {#each project?.agents ?? [] as a (a.id)}<option value={a.id}>{a.name}{a.default && projectId !== CHAT ? " (default)" : ""}</option>{/each}
       </select>
-      {#if project?.agents.find((a) => a.id === agentId)?.description}
-        <span class="hint">{project?.agents.find((a) => a.id === agentId)?.description}</span>
+      {#if agent?.description}
+        <span class="hint">{agent.description}</span>
       {/if}
     </label>
-    <label>
-      <span>What do you want to do?</span>
-      <textarea bind:value={request} rows="5" placeholder="Empty: an empty chat" data-testid="new-session-request"></textarea>
-    </label>
+    {#if agent?.form}
+      <FormFields {fields} bind:values testid="new-session-field" />
+      {#if agent.job}<p class="hint" data-testid="new-session-job">A job: it runs on its own, and its result shows in Handler.</p>{/if}
+    {:else}
+      <label>
+        <span>What do you want to do?</span>
+        <textarea bind:value={request} rows="5" placeholder="Empty: an empty chat" data-testid="new-session-request"></textarea>
+      </label>
+    {/if}
     <div class="actions">
-      {#if listens}
+      {#if listens && !agent?.form}
         <button type="button" class="secondary" onclick={dictate} disabled={hearing} data-testid="dictate">
           {recording ? "Stop" : hearing ? "Writing it down…" : "Dictate"}
         </button>

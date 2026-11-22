@@ -1,10 +1,11 @@
 <script lang="ts" module>
-  // Two lights: can this device reach the gateway, and has the host polled it lately.
+  // Where this device's link is, in a few words and one light (the header of each screen); the
+  // two parts it is made of (the gateway reached, the computer listening) are in Settings.
   import type { Mailbox } from "../lib/mailbox.svelte";
 
   export type Light = "ok" | "warn" | "danger" | "unknown";
 
-  /** Each light's color and what it means (the Settings screen spells it out). */
+  /** Each part's color and what it means (the Settings screen spells it out). */
   export function lights(mailbox: Mailbox): { gateway: Light; gatewayText: string; host: Light; hostText: string } {
     return {
       gateway: mailbox.unauthorized ? "warn" : mailbox.reachable === null ? "unknown" : mailbox.reachable ? "ok" : "danger",
@@ -17,40 +18,71 @@
             : "connecting to the gateway…",
       host: mailbox.hostSeen === null ? "unknown" : mailbox.hostOnline ? "ok" : "danger",
       hostText: mailbox.hostOnline
-        ? "the host is polling"
+        ? "your computer is listening"
         : mailbox.hostSeen
-          ? `host last seen ${new Date(mailbox.hostSeen).toLocaleTimeString()} (nothing shared, or offline)`
-          : "the host has not polled yet",
+          ? `your computer last listened at ${new Date(mailbox.hostSeen).toLocaleTimeString()} (nothing shared, or it is off)`
+          : "your computer has not listened yet",
     };
+  }
+
+  /** The two parts as one: the light and its words. */
+  export function status(mailbox: Mailbox | null): { light: Light; words: string; title: string } {
+    if (!mailbox || mailbox.reachable === null) return { light: "unknown", words: "Connecting…", title: "connecting to your computer…" };
+    const l = lights(mailbox);
+    if (mailbox.unauthorized) return { light: "warn", words: "Not recognized", title: l.gatewayText };
+    if (!mailbox.reachable) return { light: "danger", words: "No connection", title: l.gatewayText };
+    if (!mailbox.hostOnline) return { light: "danger", words: "Computer away", title: l.hostText };
+    return { light: "ok", words: "Connected", title: l.hostText };
   }
 </script>
 
 <script lang="ts">
-  let { mailbox }: { mailbox: Mailbox } = $props();
+  import { ago } from "../lib/time";
 
-  const l = $derived(lights(mailbox));
+  // `updated`: when the host sent what is shown, while it is the last launch's (said quietly)
+  let { mailbox, updated = null }: { mailbox: Mailbox | null; updated?: number | null } = $props();
+
+  const l = $derived(status(mailbox));
+  const since = $derived(updated === null ? null : ago(updated, mailbox?.now ?? Date.now()));
 </script>
 
-<span class="lights" data-testid="lights">
-  <span class="light {l.gateway}" title={l.gatewayText} aria-label={l.gatewayText}></span>gateway
-  <span class="light {l.host}" title={l.hostText} aria-label={l.hostText}></span>host
+<span class="lights" data-testid="lights" title={l.title} role="status">
+  <span class="light {l.light}" aria-hidden="true"></span>
+  <span class="words">
+    <span>{l.words}</span>
+    {#if since !== null}<span class="since" data-testid="updated-ago">{since === "now" ? "updated just now" : `updated ${since} ago`}</span>{/if}
+  </span>
 </span>
 
 <style>
   .lights {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.4rem;
+    min-width: 0;
     font-size: 0.75em;
+    line-height: 1.25;
     color: var(--muted-foreground);
     white-space: nowrap;
   }
+  .words {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .since {
+    font-size: 0.9em;
+    opacity: 0.8;
+  }
   .light {
-    width: 0.6rem;
-    height: 0.6rem;
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     background: var(--muted-foreground);
-    margin-left: 0.3rem;
+  }
+  .unknown {
+    animation: waiting 1.4s var(--ease) infinite alternate; /* a status that works */
   }
   .ok {
     background: var(--ok);
@@ -60,5 +92,10 @@
   }
   .danger {
     background: var(--danger);
+  }
+  @keyframes waiting {
+    to {
+      opacity: 0.25;
+    }
   }
 </style>

@@ -1,13 +1,17 @@
-"""The person's inbox: apps' notifications, automations' results, plans stopped, hosts refused
-while nobody watched (H.9, I.3, D.27, F.9); a message's hosts refused answered from it."""
+"""The person's inbox: apps' notifications and nudges, automations' results, plans stopped, hosts
+refused while nobody watched (H.9, H.17, I.3, D.27, F.9); a message's hosts refused answered from
+it; a nudge dismissed, its page opened, its form filled from what was said."""
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import Response
 
-from handler_contracts import InboxAnswerRequest, InboxMessage
+from handler_contracts import AppLink, InboxAnswerRequest, InboxMessage, NudgeFillRequest
 
 from .. import refusals
+from ..apps import AppError, AppNotFoundError
+from ..assistant import AssistantError
 from ..automations import AutomationError
+from ..nudges import NudgeError
 from ..plans import PlanError
 from .common import Context, ProblemError, dump, parse_body
 
@@ -68,3 +72,38 @@ def add_inbox_routes(app: FastAPI, ctx: Context) -> None:
         if failures:
             raise ProblemError(409, "saved, but not applied", "; ".join(failures))
         return dump(answered(ctx.inbox.get(message_id) or message))
+
+
+def add_nudge_routes(app: FastAPI, ctx: Context) -> None:
+    """A nudge in the inbox (H.17): dismissed, its page opened, its form filled from speech."""
+    authed = [Depends(ctx.require_auth)]
+
+    @app.post("/v1/inbox/{message_id}/dismiss", dependencies=authed)
+    def dismiss(message_id: str) -> Response:
+        """An open nudge dismissed by the person (H.17): no more reminders."""
+        try:
+            ctx.apps.nudges.get(message_id)
+            return dump(ctx.apps.nudges.end(message_id, "dismissed"))
+        except NudgeError as e:
+            raise ProblemError(e.status, "cannot dismiss", str(e)) from None
+
+    @app.post("/v1/inbox/{message_id}/open", dependencies=authed)
+    def open_nudge(message_id: str) -> Response:
+        """A one-time link to the page of its app an open nudge opens (H.17)."""
+        try:
+            return dump(AppLink(url=ctx.apps.nudge_link(message_id)))
+        except AppNotFoundError as e:
+            raise ProblemError(404, "nudge not found", str(e)) from None
+        except AppError as e:
+            raise ProblemError(409, "cannot open", str(e)) from None
+
+    @app.post("/v1/inbox/{message_id}/fill", dependencies=authed)
+    async def fill(message_id: str, request: Request) -> Response:
+        """What the person said fills the form of the nudge's action, never sent (H.17)."""
+        body = parse_body(NudgeFillRequest, await request.body())
+        try:
+            return dump(await ctx.assistant.fill(message_id, body.said, body.timezone))
+        except NudgeError as e:
+            raise ProblemError(e.status, "cannot fill", str(e)) from None
+        except AssistantError as e:
+            raise ProblemError(e.status, "cannot fill", str(e)) from None

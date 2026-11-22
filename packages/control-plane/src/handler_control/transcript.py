@@ -130,6 +130,7 @@ def line(event: Event) -> str | None:
         "stopped": f"Session stopped{how}: {detail}",
         "permission answered": f"Permission answered: {detail}",
         "told agent": f"Handler told the agent: {event.get('text', '')}",
+        "instructed": f"Handler gave the agent its instructions: {event.get('text', '')}",
         "model unreached": f"Handler: {model_unreached(event)}",
     }.get(event.get("event", ""))
     return f"[{seq}] {shown}" if shown else None

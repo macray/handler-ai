@@ -38,12 +38,14 @@ def test_with_nothing_pasted_the_clipboard_is_empty(folder: Path) -> None:
     assert xclip(folder, *PNG).returncode == 1
 
 
+@pytest.mark.rule("terminal.only-what-you-paste")
 def test_a_pasted_image_is_offered_as_png(folder: Path) -> None:
     """If this fails: Claude Code finds no image to paste."""
     (folder / PASTE_IMAGE).write_bytes(IMAGE)
     assert xclip(folder, *TARGETS).stdout == b"image/png\n"
 
 
+@pytest.mark.rule("terminal.only-what-you-paste")
 def test_a_pasted_image_is_read_as_it_was_written(folder: Path) -> None:
     """If this fails: the harness gets a broken image."""
     (folder / PASTE_IMAGE).write_bytes(IMAGE)

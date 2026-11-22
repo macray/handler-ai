@@ -1,5 +1,5 @@
 """Notes folders (D.5; `knowledge` in the code and the API): folders of the notes root given to
-an agent, per agent, read-only at /notes/<folder name>; and the root itself, set and browsed from
+an agent, per agent, at /notes/<folder name>, read-only or read-write; and the root itself, set and browsed from
 the web UI.
 
 handler knows nothing of what the folders hold (a skill may teach the agent to read them): to
@@ -15,6 +15,8 @@ from typing import Literal, NamedTuple
 
 from handler_contracts import (
     HostFolder,
+    KnowledgeAccess,
+    KnowledgeFolderUse,
     KnowledgeFolderView,
     KnowledgeListing,
     KnowledgeNote,
@@ -28,6 +30,7 @@ MOUNT_ROOT = "/notes"
 LISTING_DEPTH = 3
 CONFIG_FILE = "notes.toml"  # in the config dir: `root = "…"`, written by set_root
 INDEX = "_index.md"
+GIT = ".git"  # a vault's own history, never written by an agent
 MAX_NOTE_BYTES = 1024 * 1024
 
 Source = Literal["env", "config", "default"]
@@ -45,9 +48,9 @@ class KnowledgeConflictError(KnowledgeError):
 
 
 def root(settings: Settings) -> tuple[Path, Source]:
-    """HANDLER_NOTES_DIR, else the root set through the API, else <data dir>/notes, made when
-    missing so there is nothing to set up. Read on every call: a change applies to the next check
-    or agent start, no restart needed."""
+    """HANDLER_NOTES_DIR, else the root set through the API, else ~/notes, made when missing so
+    there is nothing to set up (outside Handler's data, which apps are never given: H.9). Read on
+    every call: a change applies to the next check or agent start, no restart needed."""
     if settings.knowledge_dir is not None:
         return settings.knowledge_dir, "env"
     config = settings.config_dir / CONFIG_FILE
@@ -57,14 +60,10 @@ def root(settings: Settings) -> tuple[Path, Source]:
         configured = None
     if isinstance(configured, str) and os.path.isabs(configured):
         return Path(configured), "config"
-    default = default_root(settings)
+    default = Path.home() / "notes"
     with contextlib.suppress(OSError):  # listed as not existing; the next call tries again
         default.mkdir(parents=True, exist_ok=True)
     return default, "default"
-
-
-def default_root(settings: Settings) -> Path:
-    return settings.data_dir / "notes"
 
 
 def check_root(path: str) -> KnowledgeRootCheck:
@@ -104,13 +103,20 @@ def set_root(settings: Settings, path: str | None, create: bool = False) -> None
 # ── folders given to agents ─────────────────────────────────────────────
 
 
-def check(root: Path, folders: list[str]) -> list[str]:
-    """The folders as sorted paths relative to `root` ("." for the root itself), all usable;
-    raises KnowledgeError otherwise. Absolute paths inside the root are accepted too."""
-    if not folders:
+def check(root: Path, uses: list[KnowledgeFolderUse]) -> list[KnowledgeFolderUse]:
+    """The folders as sorted paths relative to `root` ("." for the root itself), all usable, each
+    with its access; raises KnowledgeError otherwise. Absolute paths inside the root are accepted
+    too. A read-write folder's own `.git` must be a folder: it is mounted read-only over it."""
+    if not uses:
         return []
     base = os.path.realpath(root)
-    selected = sorted({_folder(base, folder)[1] for folder in folders})
+    access: dict[str, KnowledgeAccess] = {}
+    for use in uses:
+        _, folder = _folder(base, use.folder)
+        if access.get(folder, use.access) != use.access:
+            raise KnowledgeError(f"notes folder {folder} is given twice: read-only and read-write")
+        access[folder] = use.access
+    selected = sorted(access)
     names: dict[str, str] = {}
     for folder in selected:
         for other in selected:
@@ -119,27 +125,44 @@ def check(root: Path, folders: list[str]) -> list[str]:
         name = mount_name(base, folder)
         if name in names:
             raise KnowledgeError(
-                f"notes folders {names[name]} and {folder} would both be {MOUNT_ROOT}/{name}"
+                f"notes folder {names[name]} and {folder} would both be {MOUNT_ROOT}/{name}"
             )
         names[name] = folder
-    return selected
+        git = Path(_source(base, folder), GIT)
+        if access[folder] == "write" and os.path.lexists(git) and not _real_folder(git):
+            raise KnowledgeError(
+                f"notes folder {folder}: its {GIT} is not a folder (a link or a worktree's file),"
+                " so it cannot be kept read-only: give the folder read-only"
+            )
+    return [KnowledgeFolderUse(folder=f, access=access[f]) for f in selected]
 
 
 def mount_name(root: str | Path, folder: str) -> str:
     return Path(root).name if folder == "." else PurePosixPath(folder).name
 
 
-def folders(root: Path, chosen: list[str]) -> list[HostFolder]:
-    """The `chosen` folders, read-only; they must already be checked."""
+def folders(root: Path, chosen: list[KnowledgeFolderUse]) -> list[HostFolder]:
+    """The `chosen` folders (checked), read-only or read-write; a read-write folder's own `.git`
+    (a vault's history) read-only over it, so no agent rewrites it."""
     base = os.path.realpath(root)
-    return [
-        HostFolder(
-            source=os.path.join(base, folder) if folder != "." else base,
-            target=f"{MOUNT_ROOT}/{mount_name(base, folder)}",
-            writable=False,
-        )
-        for folder in chosen
-    ]
+    found: list[HostFolder] = []
+    for use in chosen:
+        source = _source(base, use.folder)
+        target = f"{MOUNT_ROOT}/{mount_name(base, use.folder)}"
+        writable = use.access == "write"
+        found.append(HostFolder(source=source, target=target, writable=writable))
+        git = os.path.join(source, GIT)
+        if writable and _real_folder(Path(git)):
+            found.append(HostFolder(source=git, target=f"{target}/{GIT}", writable=False))
+    return found
+
+
+def _source(base: str, folder: str) -> str:
+    return os.path.join(base, folder) if folder != "." else base
+
+
+def _real_folder(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
 
 
 def listing(root: Path, source: Source) -> KnowledgeListing:

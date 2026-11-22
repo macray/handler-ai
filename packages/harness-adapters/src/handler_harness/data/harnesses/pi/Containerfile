@@ -1,7 +1,10 @@
 # pi harness image: toolbox + the pi coding agent + pi-acp, its ACP adapter (spawns `pi --mode rpc`)
 # + pi-mcp-adapter, the pi extension that gives it MCP servers. pi-acp starts handler-pi instead of pi
 # (PI_ACP_PI_COMMAND, harness.toml): pi with that extension, which reads the servers `render`
-# writes to ~/.config/mcp/mcp.json.
+# writes to ~/.config/mcp/mcp.json. handler-pi-acp runs pi-acp with npm offline: at each new
+# session pi-acp runs `npm view` for pi's latest version (an update notice), which the network
+# filter would show as a blocked host the person never asked for; handler-pi gives pi, and the
+# agent's own npm, the network back.
 #
 # Not pinned: every rebuild (`handler image rebuild pi`, or the web UI) installs the latest releases.
 # What was installed is recorded in /usr/share/handler/version (contract B.6); the build fails if
@@ -15,8 +18,9 @@ RUN npm install -g --no-fund --no-audit @earendil-works/pi-coding-agent pi-acp p
     && command -v pi-acp \
     && modules="$(npm root -g)" \
     && test -f "$modules/pi-mcp-adapter/index.ts" \
-    && printf '#!/bin/sh\nexec pi --extension %s "$@"\n' "$modules/pi-mcp-adapter" > /usr/local/bin/handler-pi \
-    && chmod 755 /usr/local/bin/handler-pi \
+    && printf '#!/bin/sh\nexec env -u npm_config_offline pi --extension %s "$@"\n' "$modules/pi-mcp-adapter" > /usr/local/bin/handler-pi \
+    && printf '#!/bin/sh\nnpm_config_offline=true exec pi-acp "$@"\n' > /usr/local/bin/handler-pi-acp \
+    && chmod 755 /usr/local/bin/handler-pi /usr/local/bin/handler-pi-acp \
     && pi_version="$(jq -er .version "$modules/@earendil-works/pi-coding-agent/package.json")" \
     && acp_version="$(jq -er .version "$modules/pi-acp/package.json")" \
     && mcp_version="$(jq -er .version "$modules/pi-mcp-adapter/package.json")" \

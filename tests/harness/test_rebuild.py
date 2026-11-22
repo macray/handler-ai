@@ -24,6 +24,7 @@ REPO = "localhost/handler-ai-vibe"
 LATEST = images.ref(REPO, images.LATEST)
 
 pytestmark = [
+    pytest.mark.shared_images,
     pytest.mark.skipif(
         not (image_present(LATEST) and image_present("localhost/handler-ai-toolbox:latest")),
         reason="toolbox and vibe images not built (run: handler image rebuild toolbox)",
@@ -94,7 +95,7 @@ def test_rebuild_checks_then_switches(daemon: Daemon) -> None:
         # the replaced image is removed, or kept and said why: in use (the parallel suite's other
         # tests may run vibe containers on it)
         assert before is None or image_id(before) is None or f"{before[:12]} kept: " in log
-        info = next(h for h in c.get("/v1/harnesses").json() if h["name"] == "vibe")
+        info = next(h for h in c.get("/v1/harness-images").json() if h["name"] == "vibe")
         assert info["version"] == build["versions"]["vibe"]
 
 

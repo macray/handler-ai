@@ -23,7 +23,8 @@
   "caches": [
     {
       "source": "/home/you/.cache/handler-ai/cargo",
-      "target": "/home/agent/.cargo"
+      "target": "/home/agent/.cargo",
+      "kind": "folder"
     }
   ],
   "keptFiles": [
@@ -56,6 +57,11 @@
         "url": "https://mcp.example.org/sse",
         "headers": []
       }
-    ]
+    ],
+    "meta": {
+      "systemPrompt": {
+        "append": "To create or change a file, use your file tools (Write, Edit), not shell commands (sed, a heredoc, a script that writes it): the person following this session sees a file tool's change as a diff, and nothing of what a shell command changed. Shell commands are for running things; a change only a command can make (a generated file, a formatter, a rename across many files) stays a command."
+      }
+    }
   }
 }

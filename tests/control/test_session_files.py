@@ -2,6 +2,7 @@
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -75,13 +76,12 @@ def test_session_folder_and_changes(daemon: Daemon) -> None:
 @pytest.mark.rule("files.access-lists-what-the-sandbox-sees")
 def test_what_the_sandbox_sees(daemon: Daemon) -> None:
     """Every mount of its last start listed; knowledge read like its folder, never caches."""
-    root = daemon.make_scope()
-    (root / "notes").mkdir()
+    root = Path(daemon.env["HANDLER_NOTES_DIR"])  # its own notes root
+    (root / "notes").mkdir(parents=True, exist_ok=True)
     (root / "notes" / "me.md").write_text("# me\n")
     scope = daemon.make_scope()
     with daemon.http() as c:
-        c.put("/v1/knowledge/root", json={"root": str(root)}).raise_for_status()
-        agent = {"model": {"account": "fake"}, "name": "dev", "knowledge": ["notes"]}
+        agent = {"model": {"account": "fake"}, "name": "dev", "knowledge": [{"folder": "notes"}]}
         agent = create_project(daemon, scope, agents=[agent])["agents"][0]
         sid = c.post("/v1/sessions", json={"agentId": agent["id"]}).json()["id"]
     running(daemon, sid)

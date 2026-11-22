@@ -41,9 +41,6 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
     async def create_session(request: Request) -> Response:  # async: it starts on the event loop
         body = parse_body(CreateSessionRequest, await request.body())
         agent = ctx.get_agent(body.agent_id)
-        if agent.app is not None:  # H.14: its app starts it (an ask, its screen, its schedule)
-            why = f"{agent.name or agent.id} is one of the app {agent.app}'s parts: ask the app"
-            raise ProblemError(409, "started by its app only", why)
         with check_problems():
             runs = save_rules.session_model(ctx.settings, agent, body.model)
         run, subject = checked_input(ctx, agent, body)
@@ -91,8 +88,6 @@ def add_session_routes(app: FastAPI, ctx: Context) -> None:
     @app.delete("/v1/sessions/{session_id}", dependencies=authed)
     async def delete_session(session_id: str) -> Response:
         ctx.get_session(session_id)
-        if (opened := ctx.apps.preview_of(session_id)) is not None:
-            await ctx.apps.close_draft(opened)  # a draft thrown away: its opened copy too
         await ctx.sessions.delete(session_id)
         return Response(status_code=204)
 

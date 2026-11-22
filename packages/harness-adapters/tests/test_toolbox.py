@@ -30,6 +30,7 @@ def package(root: Path, name: str, **fields: list[str]) -> None:
     (folder / "check.sh").write_text(f"command -v {name}\n")
 
 
+@pytest.mark.rule("toolbox.a-system-package-holds-together")
 def test_the_builtin_system_packages_load() -> None:
     assert toolbox.names() == ["chromium", "docker", "gcc", "podman", "wl-clipboard"]
     for name in toolbox.names():
@@ -46,6 +47,7 @@ def test_the_builtin_system_packages_load() -> None:
     ]
 
 
+@pytest.mark.rule("toolbox.the-default-gives-what-nested-and-display-need")
 def test_the_default_toolbox_turns_on_the_engine_of_nested_sandboxes() -> None:
     """podman, and the display's clipboard (B.6: what `nested` and `display` need)."""
     text = (catalog.DEFAULT_TOOLBOX / "toolbox.toml").read_text()
@@ -54,7 +56,26 @@ def test_the_default_toolbox_turns_on_the_engine_of_nested_sandboxes() -> None:
     assert list(default.system_packages) == ["podman", "wl-clipboard"]
 
 
-@pytest.mark.rule("toolbox.made-of-its-three-parts")
+@pytest.mark.rule("toolbox.inner-podman-keeps-its-state-in-its-sandbox")
+def test_inner_podman_keeps_its_sandbox_s_state_out_of_the_shared_image_store() -> None:
+    """The podman package's image store is a cache other sandboxes share (its `[[caches]]`):
+    what belongs to one sandbox, its container database, volumes and networks, is in the
+    sandbox's `/tmp` (A.5).
+
+    If this fails: another sandbox's podman sees this one's networks, and a sweep there, which
+    takes this one's launchers for dead, removes them while they are used."""
+    folder = toolbox.BUILTIN_DIR / "podman"
+    [store] = tomllib.loads((folder / "package.toml").read_text())["caches"]
+    conf = tomllib.loads((folder / "files" / "containers.conf").read_text())
+    own = [
+        conf["engine"]["static_dir"], conf["engine"]["volume_path"],
+        conf["network"]["network_config_dir"],
+    ]  # fmt: skip
+    assert store["target"] == "~/.local/share/containers/storage"
+    assert all(path.startswith("/tmp/") for path in own)
+
+
+@pytest.mark.rule("toolbox.base-then-packages-then-your-lines")
 def test_the_golden_containerfile() -> None:
     """Handler's base, the system packages in their order, the user's lines last. Update the
     fixture deliberately."""
@@ -76,7 +97,7 @@ def test_the_build_context_holds_the_packages_folders(tmp_path: Path) -> None:
     assert "source=system-packages/podman" in (context / "Containerfile").read_text()
 
 
-@pytest.mark.rule("toolbox.made-of-its-three-parts")
+@pytest.mark.rule("toolbox.base-then-packages-then-your-lines")
 def test_layers_follow_the_order_added_moved_after_what_they_need(
     no_users_packages: Path,
 ) -> None:
@@ -90,7 +111,7 @@ def test_layers_follow_the_order_added_moved_after_what_they_need(
     assert toolbox.with_dependencies(["c", "b"]) == ["c", "b", "a"]
 
 
-@pytest.mark.rule("toolbox.made-of-its-three-parts")
+@pytest.mark.rule("toolbox.base-then-packages-then-your-lines")
 def test_what_cannot_be_generated_says_why(no_users_packages: Path) -> None:
     package(no_users_packages, "a", dependsOn=["b"])
     package(no_users_packages, "b", installsAfter=["a"])
@@ -109,6 +130,7 @@ def test_what_cannot_be_generated_says_why(no_users_packages: Path) -> None:
         toolbox.ordered(manifest("b"))
 
 
+@pytest.mark.rule("tool.yours-replaces-a-built-in-of-its-name")
 def test_a_users_system_package_replaces_a_builtin_one(no_users_packages: Path) -> None:
     package(no_users_packages, "gcc")
     mine = toolbox.get("gcc")
@@ -116,6 +138,7 @@ def test_a_users_system_package_replaces_a_builtin_one(no_users_packages: Path) 
     assert toolbox.names().count("gcc") == 1
 
 
+@pytest.mark.rule("toolbox.a-system-package-holds-together")
 def test_invalid_system_packages_say_what_is_wrong(no_users_packages: Path) -> None:
     package(no_users_packages, "x")
     (no_users_packages / "x" / "check.sh").unlink()

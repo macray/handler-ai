@@ -22,23 +22,35 @@
     if (!error) text = "";
   }
 
+  // dates in words people say: "today 09:12", "yesterday 18:40", "14 Nov"
+  function when(iso: string): string {
+    const d = new Date(iso);
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+    if (days === 0) return `today ${time}`;
+    if (days === 1) return `yesterday ${time}`;
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  }
+
   $effect(() => {
     void run(() => api<Note[]>("notes"));
   });
 </script>
 
 <main>
-  <h1>Notes</h1>
-  <form onsubmit={add}>
+  <header><h1>Notes</h1>{#if notes.length}<small>{notes.length} {notes.length === 1 ? "note" : "notes"}</small>{/if}</header>
+  <form class="row" onsubmit={add}>
     <input bind:value={text} placeholder="A note" aria-label="note" />
-    <button disabled={!text.trim()}>Add</button>
+    <button class="primary" disabled={!text.trim()}>Add</button>
   </form>
   {#if error}<p class="error">{error}</p>{/if}
-  <ul>
-    {#each notes as note (note.id)}
-      <li>{note.text} <small>{new Date(note.createdAt).toLocaleString()}</small></li>
-    {:else}
-      <li class="empty">No notes yet.</li>
-    {/each}
-  </ul>
+  {#if notes.length}
+    <ul class="card">
+      {#each notes as note (note.id)}
+        <li class="row"><span>{note.text}</span><small class="end">{when(note.createdAt)}</small></li>
+      {/each}
+    </ul>
+  {:else}
+    <div class="empty"><p>No notes yet</p><p>Write one above: a line is enough.</p></div>
+  {/if}
 </main>

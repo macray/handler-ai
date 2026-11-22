@@ -1,6 +1,7 @@
 <script lang="ts">
   // One app, full screen: its page in the sandboxed frame (public/appframe.html), its
-  // backend calls carried to handler by this client.
+  // backend calls carried to handler by this client. The page it is opened at (a nudge's,
+  // `/log?day=…&nudge=…`; else "/") goes with the app's HTML: the frame cannot be navigated.
   import { carry, type FrameFetch } from "../lib/apps";
   import { app } from "../lib/app.svelte";
   import Lights from "./Lights.svelte";
@@ -26,13 +27,14 @@
   $effect(() => {
     const name = shared?.name;
     const html = page?.html;
+    const path = app.appPath;
     if (!frame || !name || !shared || html === undefined) return;
     const target = frame;
     const onMessage = (event: MessageEvent): void => {
       if (event.source !== target.contentWindow || !app.mailbox || leftFrame) return;
       const m = event.data as { type?: string } | null;
       if (m?.type === "handler-frame-ready") {
-        target.contentWindow?.postMessage({ type: "handler-app-load", html }, "*");
+        target.contentWindow?.postMessage({ type: "handler-app-load", html, path }, "*");
       } else if (m?.type === "handler-app-fetch") {
         void carry(app.mailbox, shared, m as FrameFetch).then((answer) =>
           // the frame is an opaque origin: "*" is the only target that reaches it

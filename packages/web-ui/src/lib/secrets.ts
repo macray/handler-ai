@@ -8,7 +8,7 @@ import { href, type Route } from "./router.svelte";
 const OWNERS: Record<string, { page: string; route: (name: string, tool?: string) => Route }> = {
   accounts: { page: "Model access", route: () => ({ view: "settings", section: "models" }) },
   providers: { page: "Model access", route: () => ({ view: "settings", section: "models" }) },
-  connections: { page: "Tools", route: (_, tool) => (tool ? { view: "tool", name: tool } : { view: "addons" }) },
+  connections: { page: "Tools", route: (_, tool) => (tool ? { view: "tool", name: tool } : { view: "library", shelf: "tools" }) },
   apps: { page: "Apps", route: (name) => ({ view: "apps", app: name }) },
 };
 
@@ -41,6 +41,10 @@ export function stateOf(s: SecretInfo): SecretState {
 
 /** What needs you: a value missing, or one an agent reads. */
 export const needsYou = (s: SecretInfo): boolean => ["missing", "exposed"].includes(stateOf(s));
+
+/** An agent can read its real value today (unsealed, and an agent has it): the one thing that puts
+ *  a dot on Settings' Expert (E1). */
+export const agentReads = (s: SecretInfo): boolean => stateOf(s) === "exposed";
 
 /** Its owners' names ("openrouter") and its slot in words ("key", "theme token"). */
 export function names(s: SecretInfo): { owner: string; slot: string } {

@@ -111,7 +111,7 @@ AGENT: dict[str, Any] = {
 def test_addon_catalog(addons_dir: Path) -> None:
     shop = addon_catalog.get("shopify")
     assert [s.name for s in shop.skills] == ["shopify"]
-    assert addon_catalog.names() == ["app-builder", "logs", "shopify"]  # + the built-in one
+    assert addon_catalog.names() == ["app-builder", "knowledge", "logs", "shopify"]  # + built-in
     assert not shop.builtin and not shop.overrides_builtin  # shopify is in the catalog only
     logs, builder = addon_catalog.get("logs"), addon_catalog.get("app-builder")
     assert not logs.builtin and not logs.overrides_builtin
@@ -225,7 +225,7 @@ def test_g3_no_command_twice(tmp_path: Path, addons_dir: Path, bindings_dir: Pat
         addons.check(bindings_dir, [SHOP, AddonUse(addon="other")])
 
 
-@pytest.mark.rule("tool.its-use-is-checked-when-saved")
+@pytest.mark.rule("tool.its-use-is-checked-when-saved", "cache.declared-ones-never-share-a-folder")
 def test_g3_an_addon_s_cache_has_a_folder_of_its_own(addons_dir: Path, bindings_dir: Path) -> None:
     """A cache is its target (D.8): one whose folder would be another target's is refused."""
     (addons_dir / "m2").mkdir()
@@ -309,6 +309,7 @@ def test_g4_addon_env_never_overrides_the_harness(tmp_path: Path, bindings_dir: 
         )
 
 
+@pytest.mark.rule("history.the-log-holds-no-secret")
 def test_secret_values_for_redaction(tmp_path: Path, bindings_dir: Path) -> None:
     assert addons.secret_values(bindings_dir, [SHOP], STORE) == ["shptka_s3cr3t"]
     missing = AddonUse(addon="shopify", binding="missing")

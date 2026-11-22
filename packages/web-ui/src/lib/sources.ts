@@ -36,19 +36,22 @@ export const itemRoute = (source: Source | string, item: SourceItem) =>
 
 /** Its button's words: what pressing it does. */
 export function actionWords(item: SourceItem): string | null {
-  if (item.update) return item.kind === "addon" ? "See the update" : "Get it";
+  if (item.update) return item.kind === "addon" ? "See the update" : item.kind === "app" ? "Update…" : "Get it";
   if (item.kind === "agents") return "Set up…";
   return item.installed ? null : "Install";
 }
 
-/** Installing it goes to its kind's own page (D.26): an app's code taken, then its install page
- *  (its own page for the next version of one you have); agents read, then their set-up page (where
+/** Installing it goes to its kind's own page (D.26): an app's code taken, then its install page;
+ *  the next version of an app you have: its page's Settings, whose Update takes it (H.6, what it
+ *  adds said first); agents read, then their set-up page (where
  *  they go is asked there, `project` chosen if given); a tool's preview, in Library → Tools → Get
  *  more. */
 export async function takeItem(source: string, item: SourceItem, project?: string): Promise<void> {
-  if (item.kind === "app") {
+  if (item.kind === "app" && item.update) {
+    navigate({ view: "apps", app: item.name, tab: "settings" });
+  } else if (item.kind === "app") {
     const { app, added } = await api.appFromSource(source, item.name);
-    navigate(added ? { view: "install-app", name: app.name } : { view: "apps", app: app.name });
+    navigate(added ? { view: "install-app", name: app.name } : { view: "apps", app: app.name, tab: "settings" });
   } else if (item.kind === "agents") {
     const read = await api.agentsFromSource(source, item.name);
     navigate({ view: "setup", file: read.name, ...(project ? { project } : {}) });
@@ -70,11 +73,11 @@ export function itemFacts(d: SourceItemDetail, addons: AddonInfo[]): { mayDo: { 
         ...files.map((f) => ({ text: `${f.mode === "ro" ? "read" : "read and write"} a folder you choose: ${f.description ?? "a folder"}` })),
         ...(n.egress ?? []).map((h) => ({ text: `reach ${h}`, weakens: true })),
         ...(n.notify ? [{ text: "notify you, here and on your phone" }] : []),
-        ...Object.values(n.agents ?? {}).map((a) => ({ text: `run an agent: ${a.description ?? "its agent"}` })),
+        ...Object.values(d.app.jobs ?? {}).map((j) => ({ text: `run its job: ${j.description}` })),
       ],
       needs: [
         ...files.map((f) => `a folder: ${f.description ?? "one you choose"}`),
-        ...Object.values(n.agents ?? {}).map((a) => `an agent, on a model you choose: ${a.description ?? ""}`.replace(/: $/, "")),
+        ...(Object.keys(d.app.jobs ?? {}).length ? ["who works on its jobs: a program and a model you choose"] : []),
         ...(n.secrets ?? []).map((s) => `a secret: ${s}`),
       ],
     };
@@ -108,4 +111,17 @@ export function itemFacts(d: SourceItemDetail, addons: AddonInfo[]): { mayDo: { 
     ],
     needs: [...(a.settings ?? []).map((s) => `a setting: ${s.name}${s.required ? "" : " (optional)"}`), ...(a.secretSlots ?? []).map((s) => `a secret: ${s.name}`)],
   };
+}
+
+/** An offered item's README read for its page (E8: one h1, its display name): the title of its
+ *  leading `# …` line, which the page takes as its title (else null: the item's name), and the
+ *  rest. */
+export function readmeTitle(readme: string): { title: string | null; body: string } {
+  const m = /^\s*#[ \t]+(.+?)[ \t#]*(?:\r?\n|$)/.exec(readme);
+  return m ? { title: m[1]!.trim(), body: readme.slice(m[0].length) } : { title: null, body: readme };
+}
+
+/** Rendered README headings one level down: the page's own h1 stays its only one. */
+export function belowTitle(html: string): string {
+  return html.replace(/<(\/?)h([1-5])\b/g, (_, slash: string, n: string) => `<${slash}h${Number(n) + 1}`);
 }

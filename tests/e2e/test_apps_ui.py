@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Browser, FilePayload, expect
 
-from ..apps.conftest import app_file, copy_fixture
+from ..apps.conftest import add_app, app_file, copy_fixture
 from ..sandbox.conftest import podman_usable
 from ..support import dev_env
 from ..support.daemon import Daemon, start_daemon
@@ -68,11 +68,27 @@ def daemon(data_root: Path, stub: StubLlm) -> Iterator[Daemon]:
     yield from start_daemon(extra_env=env, extra_providers={"stub": stub.provider()})
 
 
+@pytest.fixture(scope="module")
+def source(data_root: Path) -> Path:
+    return copy_fixture("app", data_root)
+
+
+@pytest.fixture(scope="module")
+def counter(daemon: Daemon, source: Path) -> None:
+    """The counter installed and deployed: through the API, unless the test of the UI's install
+    ran before (the same file installed again would only be its next version)."""
+    with daemon.http() as c:
+        if "current" in c.get("/v1/apps/counter").json():
+            return
+        assert add_app(daemon, source).status_code == 201
+        r = c.post("/v1/apps/counter/deploy", timeout=300)
+        assert r.status_code == 200, r.text
+
+
 @pytest.mark.rule("phone-app.only-to-whom-it-is-shared-with", "phone-app.its-page-reaches-nothing")
 def test_desk_and_family_phone_share_one_app(
-    browser: Browser, daemon: Daemon, gateway: Gateway, data_root: Path
+    browser: Browser, daemon: Daemon, gateway: Gateway, source: Path
 ) -> None:
-    source = copy_fixture("app", data_root)
     desk = browser.new_context().new_page()
     desk.goto(daemon.ui_url())
 
@@ -136,19 +152,32 @@ def test_desk_and_family_phone_share_one_app(
     assert left == []
 
 
-def test_an_action_is_tried_from_the_app_s_page(browser: Browser, daemon: Daemon) -> None:
-    """H.12 in the UI: the deployed counter's page lists what you can ask it; Try runs it once
-    and shows its answer."""
+def test_an_action_is_tried_from_the_app_s_page(
+    browser: Browser, daemon: Daemon, counter: None
+) -> None:
+    """H.12 in the UI: the deployed counter's page lists what you can ask it; its switch takes it
+    out of Ask (D.24), and Try still runs it once and shows its answer."""
     desk = browser.new_page()
     desk.goto(daemon.ui_url())
-    desk.goto(f"{daemon.base_url}/#/apps/counter")
+    desk.goto(f"{daemon.base_url}/#/apps/counter/settings")
     action = desk.get_by_test_id("app-action").filter(has_text="Count one more")
     expect(action).to_contain_text("instant")
+    switch = action.get_by_test_id("app-action-in-ask")
+    expect(switch).to_have_attribute("aria-checked", "true")
+    switch.click()
+    expect(switch).to_have_attribute("aria-checked", "false")
+    expect(desk.get_by_test_id("app-ask-all")).not_to_be_checked()
+    with daemon.http() as c:
+        listed = c.get("/v1/apps/counter").json()["actions"]
+        assert [x.get("inAsk", True) for x in listed if x["name"] == "count"] == [False]
     action.get_by_test_id("app-action-try").click()
     desk.get_by_test_id("action-run").click()
     expect(desk.get_by_test_id("action-answer")).to_contain_text(
         re.compile(r"Counted: \d+\."), timeout=60_000
     )
+    desk.keyboard.press("Escape")
+    desk.get_by_test_id("app-ask-all").check()  # all of them back in Ask
+    expect(switch).to_have_attribute("aria-checked", "true")
 
 
 ROUTER = Path(__file__).parents[2] / (
@@ -158,15 +187,18 @@ ROUTER = Path(__file__).parents[2] / (
 
 @pytest.mark.rule(
     "ask.a-pick-runs-at-once-as-the-owner",
-    "router.the-one-you-gave",
+    "ask.its-router-is-the-agent-you-gave",
     "voice.off-until-a-speech-model-is-chosen",
     "voice.where-it-goes-is-said",
     "voice.heard-is-asked-at-once",
 )
-def test_ask_picks_the_app_and_answers(browser: Browser, daemon: Daemon, stub: StubLlm) -> None:
+def test_ask_picks_the_app_and_answers(
+    browser: Browser, daemon: Daemon, counter: None, stub: StubLlm
+) -> None:
     """D.24 in the UI, Chat's Ask tab: with no router, Ask says it needs one; with one (the model alone, a stub
     provider), what you type is routed to the counter's action, which answers on the page. D.25:
-    Settings → Voice chooses the stub's speech model, then what is said is heard and asked."""
+    Settings → Voice chooses the stub's speech model, then what is said is heard and asked.
+    Ask's history shows an ask made elsewhere (a key) at once, and after a reload."""
     desk = browser.new_page()
     desk.goto(daemon.ui_url())
     desk.goto(f"{daemon.base_url}/#/chat")
@@ -192,6 +224,20 @@ def test_ask_picks_the_app_and_answers(browser: Browser, daemon: Daemon, stub: S
         re.compile(r"Counted: \d+\."), timeout=60_000
     )
     expect(desk.get_by_test_id("ask-can")).to_contain_text("counter")
+    expect(entry.get_by_test_id("ask-how")).to_be_visible()  # the router's run, kept with it
+
+    # Ask's history: an ask from a key shows at once, with where it came from (D.24, D.30)
+    with daemon.http() as c:
+        said = {"turns": [{"who": "you", "text": "count again"}], "via": "key", "spoken": True}
+        assert c.post("/v1/ask", json=said).is_success
+    from_key = desk.get_by_test_id("ask-entry").first
+    expect(from_key.get_by_test_id("ask-said")).to_have_text("count again", timeout=30_000)
+    expect(from_key.get_by_label("from a key")).to_be_visible()
+    expect(from_key.get_by_test_id("ask-answer")).to_contain_text(
+        re.compile(r"Counted: \d+\."), timeout=60_000
+    )
+    desk.reload()  # kept by Handler, not by this page
+    expect(desk.get_by_test_id("ask-said").first).to_have_text("count again")
 
     # D.25: off, the microphone leads to Settings → Voice; there, the stub's speech model chosen
     desk.get_by_test_id("ask-mic-setup").click()
@@ -232,7 +278,9 @@ navigator.mediaDevices.getUserMedia = async () => {
 """
 
 
-def test_a_draft_is_opened_from_the_app_s_page(browser: Browser, daemon: Daemon) -> None:
+def test_a_draft_is_opened_from_the_app_s_page(
+    browser: Browser, daemon: Daemon, counter: None
+) -> None:
     """H.16 in the UI: while a change of the counter waits, Open the draft opens it in a new tab
     at its own address, its banner first, and the bar says what it works on (copies)."""
     with daemon.http() as c:
@@ -241,7 +289,7 @@ def test_a_draft_is_opened_from_the_app_s_page(browser: Browser, daemon: Daemon)
         session = c.post("/v1/sessions", json=body).json()
     desk = browser.new_page()
     desk.goto(daemon.ui_url())
-    desk.goto(f"{daemon.base_url}/#/apps/counter")
+    desk.goto(f"{daemon.base_url}/#/apps/counter/settings")
     bar = desk.get_by_test_id("app-draft")
     with desk.context.expect_page() as opened:
         bar.get_by_test_id("draft-open").click()

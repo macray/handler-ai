@@ -34,14 +34,15 @@ def test_pins_are_the_persons_order_of_what_exists(daemon: Daemon) -> None:
         assert r.status_code == 200 and r.json()["items"] == order
         assert pins(daemon) == order  # reordered: the whole list, as given
 
-        for refused in (
-            [*order, {"kind": "project", "id": "p_0000000000"}],  # no such project
-            [{"kind": "app", "id": "chat"}],  # Chat is no app: it has its own menu entry
-            [*order, order[0]],  # twice
-        ):
-            r = c.put("/v1/pins", json={"items": refused})
-            assert r.status_code == 422, refused
-        assert pins(daemon) == order  # nothing changed
+        given = [
+            {"kind": "project", "id": "p_0000000000"},  # no such project (deleted elsewhere)
+            *order,
+            {"kind": "app", "id": "chat"},  # Chat is no app: it has its own menu entry
+            order[0],  # twice
+        ]
+        r = c.put("/v1/pins", json={"items": given})
+        assert r.status_code == 200 and r.json()["items"] == order  # kept without them
+        assert pins(daemon) == order
 
         assert c.delete(f"/v1/projects/{b['id']}").status_code == 204
         assert pins(daemon) == order[1:]

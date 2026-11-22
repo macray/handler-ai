@@ -86,7 +86,7 @@
 {#snippet invalidLine()}
   {#if invalid}
     <p class="text-xs text-muted-foreground">
-      {invalid} broken tool(s) or connection(s): see <a class="text-link hover:underline" href={href({ view: "addons" })}>Library → Tools</a>.
+      {invalid} broken tool(s) or connection(s): see <a class="text-link hover:underline" href={href({ view: "library", shelf: "tools" })}>Library → Tools</a>.
     </p>
   {/if}
 {/snippet}
@@ -106,7 +106,7 @@
         {@render options()}
         {#if !rows.length && !given.length}
           <p class="px-3 py-2 text-xs text-muted-foreground">
-            No tool yet: get one in the <a class="text-link hover:underline" href={href({ view: "addons" })}>Library</a>.
+            No tool yet: get one in the <a class="text-link hover:underline" href={href({ view: "library", shelf: "tools" })}>Library</a>.
           </p>
         {/if}
       </div>

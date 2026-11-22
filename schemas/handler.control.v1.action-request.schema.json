@@ -1,13 +1,25 @@
 {
   "$id": "urn:handler.control/v1/action-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "`POST /v1/apps/{name}/actions/{action}`: the action's form, filled.",
+  "description": "`POST /v1/apps/{name}/actions/{action}`: the action's form, filled; from a nudge (H.17),\nwhich it makes done when it succeeds.",
   "properties": {
     "fields": {
       "additionalProperties": true,
       "default": {},
       "title": "Fields",
       "type": "object"
+    },
+    "nudge": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nudge"
     }
   },
   "title": "ActionRequest",

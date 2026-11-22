@@ -1,0 +1,76 @@
+{
+  "$id": "urn:handler.control/v1/schema-info",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A schema of the Library (D.29): one kind of document, found by its `$id` alone. `error`:\nwhy no agent can use it (a file that is not a schema, an `extends` not there); `content`\n(its file) only when one is read.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "extends": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Extends"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "content": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "SchemaInfo",
+  "type": "object"
+}

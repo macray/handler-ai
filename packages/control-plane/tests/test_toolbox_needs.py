@@ -12,6 +12,7 @@ from handler_control import toolbox
 from handler_control.agents import AgentRecord, AgentRegistry, RunsAs
 from handler_control.settings import Settings
 from handler_harness import catalog
+from handler_harness import toolbox as parts
 
 RUNS = RunsAs(harness="codex", provider="local")
 
@@ -97,7 +98,10 @@ def test_each_need_says_what_provides_it(tmp_path: Path, mine: Path) -> None:
     info = toolbox.info(s, agents)
     assert info.distro == "fedora" and info.problem is None
     assert [p.name for p in info.system_packages] == ["podman", "wl-clipboard"]
-    assert info.system_packages[0].version == 1 and info.system_packages[0].built_version is None
+    assert (
+        info.system_packages[0].version == parts.get("podman").manifest.version
+        and info.system_packages[0].built_version is None
+    )
     assert info.system_packages[0].needed_by == ["agent:a1"]
     provided = {tuple(n.commands): n.provided_by for n in info.needs}
     assert provided[("node",)] == "base"
@@ -121,7 +125,7 @@ def test_each_need_says_what_provides_it(tmp_path: Path, mine: Path) -> None:
     assert toolbox.info(s, agents).problem == "unknown system package 'nope'"
 
 
-@pytest.mark.rule("toolbox.made-of-its-three-parts", "toolbox.gives-every-need-in-use")
+@pytest.mark.rule("toolbox.base-then-packages-then-your-lines", "toolbox.gives-every-need-in-use")
 def test_turning_system_packages_on_and_off(tmp_path: Path, mine: Path) -> None:
     agents = registry(tmp_path, nested())
     toolbox.set_system_packages(agents, ["chromium", "podman"])
@@ -152,6 +156,7 @@ def test_known_commands_are_every_need_and_every_package(mine: Path) -> None:
         assert command in known
 
 
+@pytest.mark.rule("save.toolbox-additions-are-confirmed")
 def test_what_a_save_needs_is_answered_by_system_packages(
     tmp_path: Path, mine: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -185,7 +190,7 @@ def test_what_a_save_needs_is_answered_by_system_packages(
     assert toolbox.agent_needs(nested().model_copy(update={"model_alone": True}), [], "x") == []
 
 
-@pytest.mark.rule("toolbox.a-daemon-only-where-its-ability-is")
+@pytest.mark.rule("toolbox.a-daemon-only-for-agents-given-its-ability")
 def test_the_daemons_are_those_of_the_built_toolbox_s_system_packages(tmp_path: Path) -> None:
     """B.7: what the toolbox `:latest` was built with (its record) starts its daemons."""
     s = settings(tmp_path)

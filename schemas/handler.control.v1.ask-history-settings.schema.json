@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.control/v1/ask-history-settings",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`PUT /v1/ask/history`: whether Handler keeps what you ask (off: it is emptied).",
+  "properties": {
+    "keep": {
+      "title": "Keep",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "keep"
+  ],
+  "title": "AskHistorySettings",
+  "type": "object"
+}

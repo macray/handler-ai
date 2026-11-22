@@ -4,9 +4,11 @@
   // of Handler's needs: an agent on the model alone), runs it at once, and answers here: the app
   // and action it picked, why, the answer (an agent's, read again until it ends). A question back
   // is answered in the same box (one more turn of the exchange, which the tab keeps and sends
-  // whole). Not this: the other actions, the picked one's form as the router filled it. Today's
-  // asks stay on the tab (this browser); older ones are on their app and in the Inbox. Below: what
-  // you can ask, by app. When no app does it: a chat about it, in Chat's Talk tab (what was said
+  // whole). Not this: the other actions, the picked one's form as the router filled it. Asked:
+  // Ask's history, every ask Handler received from anywhere (this tab, a phone, `handler ask`, a
+  // key), what was said, where it went, how it ended (a job's: once it ends), read again on its
+  // topics (D.30); each can be deleted, the history turned off (then only this visit's asks show,
+  // kept nowhere). Below: what you can ask, by app. When no app does it: a chat about it, in Chat's Talk tab (what was said
   // typed in its box). With no router yet, the tab sets one up first. Speaking (D.25): the
   // microphone records until clicked again (Esc drops it), what was heard is sent at once, marked
   // as heard, and the answer read aloud (Settings → Voice); Voice off, the microphone leads there.
@@ -14,24 +16,30 @@
   import AppWindow from "@lucide/svelte/icons/app-window";
   import MessagesSquare from "@lucide/svelte/icons/messages-square";
   import Mic from "@lucide/svelte/icons/mic";
+  import Keyboard from "@lucide/svelte/icons/keyboard";
+  import Smartphone from "@lucide/svelte/icons/smartphone";
+  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import X from "@lucide/svelte/icons/x";
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
   import ActionTry from "./ActionTry.svelte";
   import Dialog from "./Dialog.svelte";
   import { api } from "../lib/api";
-  import type { App, AppAction, AskTurn, AssistantAnswer, HandlerNeed, Voice } from "../lib/contracts.gen";
+  import type { App, AppAction, AskHistory, AskRecord, AskTurn, AssistantAnswer, HandlerNeed, Voice } from "../lib/contracts.gen";
+  import { onChange } from "../lib/events.svelte";
+  import { appTitle } from "../lib/apps";
   import { href } from "../lib/router.svelte";
   import HelperCard from "./HelperCard.svelte";
-  import { canRecord, readAloud, record, type Recording } from "../lib/voice";
+  import { canRecord, clock, readAloud, type Recording } from "../lib/voice";
+  import MicButton from "./MicButton.svelte";
 
-  type Entry = { said: string; at: string; answer?: AssistantAnswer; error?: string; spoken?: boolean };
-
-  const KEY = "handler.ask.today";
-  const today = new Date().toDateString();
+  // one ask shown: from the history (`id`), or under way / this visit's with the history off
+  type Entry = { id?: string; at: string; via: AskRecord["via"]; said: string; answer?: AssistantAnswer; error?: string; spoken?: boolean };
 
   let apps = $state<App[] | null>(null);
   let router = $state<HandlerNeed | null>(null);
-  let entries = $state<Entry[]>(load());
+  let history = $state<AskHistory | null>(null);
+  let mine = $state<Entry[]>([]); // this visit's: the one under way, and all of them with the history off
   let words = $state("");
   let busy = $state(false);
   let pending = $state<AskTurn[]>([]); // an exchange under way: a question was asked back
@@ -41,22 +49,80 @@
   let recording = $state<Recording | null>(null);
   let hearing = $state(false); // the recording is being written down
   let now = $state(Date.now());
+  let problem = $state<string | null>(null); // an app that did not open
+  let toSpeak: string | null = null; // a spoken ask's job still running (its router run): read aloud once it ends
   const listens = $derived(Boolean(voice?.model && !voice.problem && canRecord()));
 
   const TONE: Record<string, string> = { ok: "bg-ok", attention: "bg-warn", failed: "bg-danger" };
-  const askable = $derived((apps ?? []).filter((a) => a.current && a.askable && a.actions?.length));
+  const VIA: Record<AskRecord["via"], string> = { web: "here", phone: "your phone", cli: "the terminal", key: "a key" };
+  const askable = $derived((apps ?? []).filter((a) => a.current && a.actions?.some((x) => x.inAsk !== false)));
+  // the history, the ask under way first; off: this visit's only
+  const entries = $derived(history?.keep ? [...(busy ? mine.slice(0, 1) : []), ...history.asks.map(entry)] : mine);
+  const days = $derived(byDay(entries));
 
-  function load(): Entry[] {
-    try {
-      const kept = JSON.parse(localStorage.getItem(KEY) ?? "null") as { day: string; entries: Entry[] } | null;
-      return kept?.day === today ? kept.entries : [];
-    } catch {
-      return [];
+  function entry(r: AskRecord): Entry {
+    const said = r.turns.filter((t) => t.who === "you").map((t) => t.text).join(" · ");
+    return { id: r.id, at: r.at, via: r.via, said, spoken: r.spoken, answer: r.answer ?? undefined, error: r.answer ? undefined : r.summary };
+  }
+
+  function byDay(list: Entry[]): { day: string; entries: Entry[] }[] {
+    const out: { day: string; entries: Entry[] }[] = [];
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 86_400_000).toDateString();
+    for (const e of list) {
+      const d = new Date(e.at).toDateString();
+      const day = d === today ? "today" : d === yesterday ? "yesterday" : new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+      if (out.at(-1)?.day !== day) out.push({ day, entries: [] });
+      out.at(-1)!.entries.push(e);
+    }
+    return out;
+  }
+
+  async function readHistory(): Promise<void> {
+    const read = await api.askHistory().catch(() => null);
+    if (!read) return;
+    history = read;
+    const ended = toSpeak ? read.asks.find((r) => r.answer?.routerRun === toSpeak && r.outcome !== "running") : undefined;
+    if (ended) {
+      toSpeak = null;
+      speak({ ...entry(ended), spoken: true });
     }
   }
 
-  function keep(): void {
-    localStorage.setItem(KEY, JSON.stringify({ day: today, entries: entries.slice(0, 30) }));
+  $effect(() => {
+    void readHistory();
+    return onChange(["ask", "inbox", "apps"], () => void readHistory()); // a job's end: its inbox message
+  });
+
+  async function setKeep(keep: boolean): Promise<void> {
+    history = await api.setAskHistory(keep);
+    mine = [];
+  }
+
+  async function forget(e: Entry): Promise<void> {
+    if (e.id) await api.deleteAsk(e.id).catch(() => null);
+    else mine = mine.filter((m) => m !== e);
+    await readHistory();
+  }
+
+  /** The app picked, in a new tab, on the page its answer names (what it did, H.12), else its home. */
+  async function openApp(a: AssistantAnswer): Promise<void> {
+    const tab = window.open("about:blank", "_blank"); // now, while the click counts (popup blockers)
+    try {
+      const link = await api.openApp(a.app!, a.run?.result?.open ?? "/");
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = link.url;
+      }
+    } catch (e) {
+      tab?.close();
+      problem = `${titleOf(a.app!)} did not open: ${(e as Error).message}`;
+    }
+  }
+
+  async function clearAll(): Promise<void> {
+    await api.clearAskHistory();
+    await readHistory();
   }
 
   $effect(() => {
@@ -72,40 +138,14 @@
 
   $effect(() => {
     if (!recording) return;
+    now = Date.now();
     const tick = setInterval(() => (now = Date.now()), 250);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && cancelRecording();
-    window.addEventListener("keydown", esc);
-    return () => (clearInterval(tick), window.removeEventListener("keydown", esc));
+    return () => clearInterval(tick);
   });
 
-  async function startRecording(): Promise<void> {
-    try {
-      recording = await record(() => void stopRecording());
-      now = Date.now();
-    } catch (e) {
-      entries = [{ said: "", at: new Date().toISOString(), error: `The microphone: ${(e as Error).message}`, spoken: true }, ...entries];
-    }
-  }
-
-  function cancelRecording(): void {
-    recording?.cancel();
-    recording = null;
-  }
-
-  async function stopRecording(): Promise<void> {
-    const r = recording;
-    if (!r) return;
-    recording = null;
-    hearing = true;
-    try {
-      const speech = await r.stop();
-      const heard = speech ? (await api.transcribe(speech)).text : "";
-      if (heard) await send(undefined, heard);
-    } catch (e) {
-      entries = [{ said: "", at: new Date().toISOString(), error: `Nothing was written down: ${(e as Error).message}`, spoken: true }, ...entries];
-    } finally {
-      hearing = false;
-    }
+  function micError(error: string): void {
+    mine = [{ via: "web", said: "", at: new Date().toISOString(), error, spoken: true }, ...mine];
+    void readHistory(); // what could not be written down is in the history too
   }
 
   /** Reads an answer aloud when Voice says so for how it was asked (an agent's: once it ended). */
@@ -123,36 +163,22 @@
     busy = true;
     if (heard === undefined) words = "";
     const turns: AskTurn[] = [...pending, { who: "you", text: said }];
-    const entry: Entry = { said, at: new Date().toISOString(), spoken: heard !== undefined };
-    entries = [entry, ...entries];
+    const you = turns.filter((t) => t.who === "you").map((t) => t.text);
+    const sent: Entry = { via: "web", said: you.join(" · "), at: new Date().toISOString(), spoken: heard !== undefined };
+    mine = [sent, ...mine];
     try {
-      const answer = await api.ask(turns, Intl.DateTimeFormat().resolvedOptions().timeZone);
-      entries[0] = { ...entry, answer };
+      const answer = await api.ask(turns, Intl.DateTimeFormat().resolvedOptions().timeZone, sent.spoken ?? false);
+      mine[0] = { ...sent, answer };
       pending = answer.kind === "needs" ? [...turns, { who: "handler", text: answer.question ?? answer.summary }] : [];
-      speak(entries[0]);
-      if (answer.kind === "pick" && answer.run?.state === "running") void follow(0);
+      speak(mine[0]);
+      if (sent.spoken && answer.kind === "pick" && answer.run?.state === "running") toSpeak = answer.routerRun ?? null;
     } catch (e) {
-      entries[0] = { ...entry, error: (e as Error).message };
+      mine[0] = { ...sent, error: (e as Error).message };
       pending = [];
     } finally {
+      await readHistory();
       busy = false;
-      keep();
     }
-  }
-
-  /** An agent's action: read again until it ends (its answer is in the Inbox too). */
-  async function follow(i: number): Promise<void> {
-    let answer = entries[i]?.answer;
-    while (answer?.run?.state === "running" && answer.run.runId && answer.app && answer.action) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const run = await api.actionRun(answer.app, answer.action, answer.run.runId).catch(() => null);
-      if (!run) return;
-      answer = { ...answer, run };
-      const at = entries.findIndex((e) => e.at === entries[i]?.at);
-      if (at >= 0) entries[at] = { ...entries[at]!, answer };
-      if (at >= 0 && answer.run?.state !== "running") speak(entries[at]!);
-    }
-    keep();
   }
 
   function key(event: KeyboardEvent): void {
@@ -162,6 +188,12 @@
   function notThis(answer: AssistantAnswer, app: string, action: AppAction): void {
     other = { app, action, initial: app === answer.app && action.name === answer.action ? (answer.fields ?? {}) : {} };
     otherOpen = true;
+  }
+
+  /** What the app of that name is called (H.1). */
+  function titleOf(name: string): string {
+    const app = apps?.find((a) => a.name === name);
+    return app ? appTitle(app) : name;
   }
 
   function actionOf(app: string, name: string | null | undefined): AppAction | undefined {
@@ -176,7 +208,7 @@
           {#snippet preview()}
             <div class="space-y-2.5">
               <p class="rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground">Add “dentist Thursday 3pm” to my week</p>
-              <p class="flex items-center gap-2 text-xs"><AppWindow class="size-3.5" /><b class="font-medium">{askable[0]?.name ?? "Planner"}</b> can do this <span class="rounded-md border bg-background px-2 py-0.5">Ask {askable[0]?.name ?? "Planner"}</span></p>
+              <p class="flex items-center gap-2 text-xs"><AppWindow class="size-3.5" /><b class="font-medium">{askable[0] ? appTitle(askable[0]) : "Planner"}</b> can do this <span class="rounded-md border bg-background px-2 py-0.5">Ask {askable[0] ? appTitle(askable[0]) : "Planner"}</span></p>
             </div>
           {/snippet}
         </HelperCard>
@@ -200,7 +232,7 @@
         <div class="mt-1 flex items-center gap-2">
           {#if recording}
             <span class="flex-1 text-xs text-muted-foreground" data-testid="ask-listening"
-              ><span class="font-mono text-danger">● {Math.floor((now - recording.started) / 60000)}:{String(Math.floor(((now - recording.started) / 1000) % 60)).padStart(2, "0")}</span>
+              ><span class="font-mono text-danger">● {clock(now - recording.started)}</span>
               Listening · click the microphone to stop and send · Esc cancels</span
             >
           {:else}
@@ -208,45 +240,51 @@
               >{hearing ? "Writing down what you said…" : pending.length ? "It asked you something: answer it, or say something else" : "Enter to send · Handler picks the app"}</span
             >
           {/if}
-          {#if listens}
-            <Button
-              type="button"
-              size="icon"
-              variant={recording ? "destructive" : "outline"}
-              class="rounded-full"
-              disabled={busy || hearing}
-              aria-label={recording ? "stop and send" : "speak"}
-              onclick={() => (recording ? stopRecording() : startRecording())}
-              data-testid="ask-mic"><Mic /></Button
-            >
-          {:else}
-            <a
-              class="flex size-9 items-center justify-center rounded-full text-muted-foreground/60 ring-1 ring-border hover:text-foreground"
-              href={href({ view: "settings", section: "voice" })}
-              title="Speak instead of typing: Settings → Voice"
-              aria-label="set up speaking"
-              data-testid="ask-mic-setup"><Mic class="size-4" /></a
-            >
-          {/if}
+          <MicButton {listens} disabled={busy} bind:recording bind:hearing onheard={(heard) => send(undefined, heard)} onerror={micError} testid="ask-mic" />
           <Button type="submit" size="icon" class="rounded-full" disabled={busy || !words.trim()} aria-label="send" data-testid="ask-send"><ArrowUp /></Button>
         </div>
       </form>
     {/if}
 
-    {#if entries.length}
-      <p class="font-mono text-xs text-muted-foreground">today</p>
+    {#if history}
+      <div class="flex items-baseline gap-3 pt-2" data-testid="ask-history">
+        <h2 class="font-semibold">Asked</h2>
+        <span class="flex-1 text-xs text-muted-foreground"
+          >{history.keep ? "from anywhere: here, your phone, the terminal, a key · the last 200, 30 days" : "Handler keeps nothing: only what you ask on this page now"}</span
+        >
+        {#if history.keep && history.asks.length}
+          <button type="button" class="cursor-pointer text-xs text-muted-foreground hover:text-foreground" onclick={clearAll} data-testid="ask-history-clear">Clear</button>
+        {/if}
+        <button type="button" class="cursor-pointer text-xs text-link hover:underline" onclick={() => setKeep(!history!.keep)} data-testid="ask-history-keep"
+          >{history.keep ? "Stop keeping" : "Keep a history"}</button
+        >
+      </div>
+    {/if}
+    {#if problem}<p class="text-sm text-danger" data-testid="ask-problem">{problem}</p>{/if}
+    {#each days as d (d.day)}
+      <p class="font-mono text-xs text-muted-foreground">{d.day}</p>
       <ul class="space-y-6" data-testid="ask-entries">
-        {#each entries as e (e.at)}
+        {#each d.entries as e (e.id ?? e.at)}
           {@const a = e.answer}
-          <li class="space-y-2" data-testid="ask-entry">
-            {#if e.said}<p class="flex items-center gap-1.5 font-medium">{#if e.spoken}<Mic class="size-3.5 shrink-0 text-muted-foreground" aria-label="heard" />{/if}{e.said}</p>{/if}
+          <li class="group space-y-2" data-testid="ask-entry">
+            <p class="flex items-center gap-1.5 font-medium">
+              {#if e.spoken}<Mic class="size-3.5 shrink-0 text-muted-foreground" aria-label="heard" />{/if}
+              {#if e.via === "key"}<Keyboard class="size-3.5 shrink-0 text-muted-foreground" aria-label="from a key" />
+              {:else if e.via === "cli"}<SquareTerminal class="size-3.5 shrink-0 text-muted-foreground" aria-label="from the terminal" />
+              {:else if e.via === "phone"}<Smartphone class="size-3.5 shrink-0 text-muted-foreground" aria-label="from your phone" />{/if}
+              <span class="flex-1" data-testid="ask-said">{e.said || "Nothing written down"}</span>
+              <span class="font-mono text-xs font-normal text-muted-foreground" title={`from ${VIA[e.via]}`}>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+              {#if e.answer || e.error}
+                <button type="button" class="cursor-pointer text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100" aria-label="delete this ask" title="Delete this ask" onclick={() => forget(e)} data-testid="ask-delete"><X class="size-3.5" /></button>
+              {/if}
+            </p>
             {#if e.error}
               <p class="text-sm text-danger">{e.error}</p>
             {:else if !a}
               <p class="fact">Finding which app does it…</p>
             {:else if a.kind === "pick" && a.app}
               <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="ask-pick">
-                <AppWindow class="size-4 text-primary" /><b class="font-medium text-foreground">{a.app} · {actionOf(a.app, a.action)?.description ?? a.action}</b>
+                <AppWindow class="size-4 text-primary" /><b class="font-medium text-foreground">{titleOf(a.app)} · {actionOf(a.app, a.action)?.description ?? a.action}</b>
                 {#if a.why}<i>· {a.why}</i>{/if}
               </p>
               <div class="flex items-start gap-3 rounded-xl bg-card px-4 py-3 shadow-panel">
@@ -256,23 +294,23 @@
                 {:else if a.run?.state === "failed"}
                   <p class="flex-1 text-danger">{a.run.error ?? "It failed."}</p>
                 {:else}
-                  <p class="flex-1 text-muted-foreground">On it: {a.app}'s agent is working. Its answer comes here, and to your Inbox.</p>
+                  <p class="flex-1 text-muted-foreground">On it: {titleOf(a.app)}'s job is running. Its answer comes here, and to your Inbox.</p>
                 {/if}
                 <details class="relative">
                   <summary class="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground" data-testid="ask-not-this">Not this</summary>
                   <ul class="absolute right-0 z-10 mt-2 w-72 space-y-0.5 rounded-xl bg-popover p-1.5 text-sm shadow-lift">
                     {#each askable as app (app.name)}
-                      {#each app.actions ?? [] as action (action.name)}
+                      {#each (app.actions ?? []).filter((x) => x.inAsk !== false) as action (action.name)}
                         <li>
                           <button type="button" class="w-full cursor-pointer rounded-lg px-2.5 py-1.5 text-left hover:bg-muted" onclick={() => notThis(a, app.name, action)}
-                            >{app.name} · {action.description}</button
+                            >{appTitle(app)} · {action.description}</button
                           >
                         </li>
                       {/each}
                     {/each}
                   </ul>
                 </details>
-                <a class="text-xs text-link hover:underline" href={href({ view: "apps", app: a.app })}>{a.app}</a>
+                <button type="button" class="cursor-pointer text-xs text-link hover:underline" onclick={() => openApp(a)} data-testid="ask-open-app">Open {titleOf(a.app)}</button>
               </div>
             {:else if a.kind === "needs"}
               <p class="rounded-xl bg-card px-4 py-3 shadow-panel" data-testid="ask-question">{a.question ?? a.summary}</p>
@@ -283,10 +321,11 @@
                 <Button variant="outline" size="sm" class="mt-2.5" href={href({ view: "chat", say: e.said })} data-testid="ask-chat"><MessagesSquare />Start a chat about it</Button>
               </div>
             {/if}
+            {#if a?.routerRun}<a class="block text-xs text-muted-foreground hover:text-foreground hover:underline" href={href({ view: "run", id: a.routerRun })} data-testid="ask-how">How it decided</a>{/if}
           </li>
         {/each}
       </ul>
-    {/if}
+    {/each}
 
     {#if askable.length}
       <section class="space-y-2 pt-4">
@@ -294,8 +333,8 @@
         <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel" data-testid="ask-can">
           {#each askable as app (app.name)}
             <li class="flex gap-4 px-4 py-2.5">
-              <a class="flex w-36 shrink-0 items-center gap-2 font-medium text-foreground no-underline" href={href({ view: "apps", app: app.name })}><AppWindow class="size-4 text-primary" />{app.name}</a>
-              <span class="text-muted-foreground">{(app.actions ?? []).map((x) => x.description).join(" · ")}</span>
+              <a class="flex w-36 shrink-0 items-center gap-2 font-medium text-foreground no-underline" href={href({ view: "apps", app: app.name })}><AppWindow class="size-4 text-primary" />{appTitle(app)}</a>
+              <span class="text-muted-foreground">{(app.actions ?? []).filter((x) => x.inAsk !== false).map((x) => x.description).join(" · ")}</span>
             </li>
           {/each}
         </ul>
@@ -303,6 +342,6 @@
     {/if}
 </div>
 
-<Dialog bind:open={otherOpen} title={other ? `${other.app} · ${other.action.description}` : ""} wide testid="ask-other-dialog">
+<Dialog bind:open={otherOpen} title={other ? `${titleOf(other.app)} · ${other.action.description}` : ""} wide testid="ask-other-dialog">
   {#if other}{#key `${other.app}/${other.action.name}`}<ActionTry app={other.app} action={other.action} initial={other.initial} />{/key}{/if}
 </Dialog>

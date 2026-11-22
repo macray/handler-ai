@@ -34,7 +34,7 @@
       "type": "object"
     },
     "CacheFolder": {
-      "description": "A host folder kept between sandboxes, read-write, created if missing; its size and its\nclearing through the `cache` verbs (A.9). `path`, its folder of commands, on PATH after the\nimage's (B.6: `~/.cargo/bin`).",
+      "description": "A host folder kept between sandboxes, read-write, created if missing; its size and its\nclearing through the `cache` verbs (A.9). `path`, its folder of commands, on PATH after the\nimage's (B.6: `~/.cargo/bin`). Its kind (B.6): a container engine's images may be given as a\nstore of the sandbox's own with their downloads shared (Apple container, A.9); elsewhere it\nis a folder like the others.",
       "properties": {
         "source": {
           "title": "Source",
@@ -55,6 +55,15 @@
           ],
           "default": null,
           "title": "Path"
+        },
+        "kind": {
+          "default": "folder",
+          "enum": [
+            "folder",
+            "images"
+          ],
+          "title": "Kind",
+          "type": "string"
         }
       },
       "required": [
@@ -162,7 +171,7 @@
       "type": "object"
     },
     "HostFolder": {
-      "description": "A host folder at `target`; what the sandbox writes there (`writable`) is on the host.",
+      "description": "A host folder, or a file, at `target`; what the sandbox writes there (`writable`) is on the\nhost.",
       "properties": {
         "source": {
           "title": "Source",

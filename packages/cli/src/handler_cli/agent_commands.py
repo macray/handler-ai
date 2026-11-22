@@ -3,9 +3,9 @@ projects are created and edited in the web UI; agents outside projects are made 
 `terminal` and `acp` in a folder.
 
 handler agent list                   every agent, most recently used first, with its id
-handler agent show ID                its settings, models, folder, live sandboxes, the apps using it
+handler agent show ID                its settings, models, folder, live sandboxes, what uses it
 handler agent rm ID [--yes]          delete an agent outside projects (stops its sandboxes); asks
-                                     first when an app uses it
+                                     first when Handler or an automation uses it
 handler agent network ID [log-only|enforce]
                                      its network mode and recent connections (allowed, denied,
                                      unlisted: let through in log-only, enforcing would deny); with
@@ -32,7 +32,9 @@ def add_parser(sub: Any) -> None:
     a.add_parser("show").add_argument("id")
     rm = a.add_parser("rm")
     rm.add_argument("id")
-    rm.add_argument("--yes", action="store_true", help="do not ask when an app uses it")
+    rm.add_argument(
+        "--yes", action="store_true", help="do not ask when Handler or an automation uses it"
+    )
     network = a.add_parser("network")
     network.add_argument("id")
     network.add_argument("mode", nargs="?", choices=["log-only", "enforce"])
@@ -113,12 +115,12 @@ def print_agents(d: Daemon) -> None:
 
 
 def home(a: dict[str, Any], projects: dict[str, str]) -> str:
-    """Where it lives (D.1): `project NAME`, `app NAME`, `Chat`, `outside projects`."""
+    """Where it lives (D.1): `project NAME`, `Chat`, `outside projects`."""
     if a.get("projectId"):
         return f"project {projects.get(a['projectId'], a['projectId'])}"
     if a.get("chat"):
         return "Chat"
-    return f"app {a['app']}" if a.get("app") else "outside projects"
+    return "outside projects"
 
 
 def set_up_from(a: dict[str, Any]) -> str:
@@ -147,26 +149,31 @@ def show(d: Daemon, a: dict[str, Any]) -> None:
     given = [f"{addon_label(u)} (its project's)" for u in a.get("projectAddons", [])]
     if own or given:
         print(f"  {'tools':<12} {', '.join([*own, *given])}")
-    for key, word in (("knowledge", "notes"), ("skills", "skills")):
-        if a.get(key):
-            print(f"  {word:<12} {', '.join(a[key])}")
+    if a.get("knowledge"):
+        print(f"  {'notes':<12} {', '.join(map(use_label, a['knowledge']))}")
+    if a.get("schemas"):
+        print(f"  {'schemas':<12} {', '.join(map(use_label, a['schemas']))}")
+    if a.get("skills"):
+        print(f"  {'skills':<12} {', '.join(a['skills'])}")
     if a.get("confinement", "strict") != "strict":
         print(f"  containers   {'yes' if a['confinement'] == 'nested' else a['confinement']}")
     if a.get("display"):
         print("  display      yes")
+    for name, value in sorted(a.get("env", {}).items()):
+        print(f"  env          {name}={value}")
     print(f"  live         {len(a['connections'])} sandbox(es)")
     if uses := used_by(d, a["id"]):
         print(f"  used by      {', '.join(uses)}")
 
 
 def used_by(d: Daemon, agent_id: str) -> list[str]:
-    """What runs it and stops when it is deleted (D.22): Handler's roles, apps, automations:
-    "the app planner (needs it: plans your day)"."""
+    """What runs it and stops when it is deleted (D.22): Handler's needs, automations:
+    "Handler (its skill reviewer)", "the automation nightly (runs it)"."""
     refs = d.call("GET", f"/v1/uses/agent/{agent_id}").get("usedBy", [])
     return [
         f"{'Handler' if r['kind'] == 'handler' else f'the {r["kind"]} {r["label"]}'} ({r['how']})"
         for r in refs
-        if r["kind"] in ("handler", "app", "automation")
+        if r["kind"] in ("handler", "automation")
     ]
 
 
@@ -210,6 +217,14 @@ def model_label(m: dict[str, Any]) -> str:
     return " · ".join([program(m), access, *([m["model"]] if m.get("model") else [])])
 
 
+def use_label(use: dict[str, Any]) -> str:
+    """A notes folder (D.5) or a schema (D.29) an agent gets: `me`, `contacts (read-write)`,
+    `contacts@1 (writes)`."""
+    if "schemaId" in use:
+        return use["schemaId"] + (" (writes)" if use.get("access") == "write" else "")
+    return use["folder"] + (" (read-write)" if use.get("access") == "write" else "")
+
+
 def addon_label(use: dict[str, Any]) -> str:
     """A tool an agent uses (G.3): `app-builder`, `shopify=my-shop` (with its connection)."""
     return use["addon"] + (f"={use['binding']}" if use.get("binding") else "")
@@ -228,9 +243,13 @@ def describe_agent(w: dict[str, Any], *, runs_too: bool = True) -> str:
     if w.get("addons"):
         parts.append(f"tools={','.join(map(addon_label, w['addons']))}")
     if w.get("knowledge"):
-        parts.append(f"notes={','.join(w['knowledge'])}")
+        parts.append(f"notes={','.join(map(use_label, w['knowledge']))}")
+    if w.get("schemas"):
+        parts.append(f"schemas={','.join(map(use_label, w['schemas']))}")
     if w.get("confinement", "strict") != "strict":
         parts.append("containers" if w["confinement"] == "nested" else w["confinement"])
     if w.get("display"):
         parts.append("display")
+    if w.get("env"):
+        parts.append(f"env={','.join(sorted(w['env']))}")
     return "  ".join(parts)

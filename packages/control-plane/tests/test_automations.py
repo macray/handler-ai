@@ -41,7 +41,7 @@ def stop(seq: int, how: str, t: str = T1) -> dict[str, Any]:
     return {"seq": seq, "t": t, "kind": "lifecycle", "event": "stopped", "how": how}
 
 
-@pytest.mark.rule("stop.each-part-read-once")
+@pytest.mark.rule("automation.a-stop-reads-each-part-once")
 def test_a_stop_after_a_turn_fires() -> None:
     events = [turn(1), stop(2, "explicit")]
     assert pending_stop(events, 0, None) == events[1]
@@ -49,13 +49,13 @@ def test_a_stop_after_a_turn_fires() -> None:
     assert pending_stop([stop(1, "idle")], 0, None) is None  # no turn: nothing to read
 
 
-@pytest.mark.rule("stop.each-part-read-once")
+@pytest.mark.rule("automation.a-stop-reads-each-part-once")
 @pytest.mark.parametrize("how", ["deleted", "daemon_restarted"])
 def test_some_stops_never_fire(how: str) -> None:
     assert pending_stop([turn(1), stop(2, how)], 0, None) is None
 
 
-@pytest.mark.rule("stop.each-part-read-once")
+@pytest.mark.rule("automation.a-stop-reads-each-part-once")
 def test_the_part_before_a_restart_is_read_with_the_next_stop() -> None:
     """`_load` writes a `daemon_restarted` stop: it does not fire, the next stop reads both."""
     events = [turn(1), stop(2, "daemon_restarted"), turn(3), stop(4, "idle")]
@@ -63,7 +63,7 @@ def test_the_part_before_a_restart_is_read_with_the_next_stop() -> None:
     assert pending_stop(events, 0, None) == events[3]
 
 
-@pytest.mark.rule("stop.each-part-read-once")
+@pytest.mark.rule("automation.a-stop-reads-each-part-once")
 def test_stops_before_since_are_not_read() -> None:
     since = datetime.fromisoformat(T1)
     assert pending_stop([turn(1), stop(2, "explicit", T0)], 0, since) is None
@@ -106,7 +106,7 @@ def runner(tmp_path: Path) -> Automations:
         sessions,
         registry,
         projects,
-        apps=AppStore(settings, "t0ken", inbox, AppRuns(settings, sessions, projects, inbox)),
+        apps=AppStore(settings, "t0ken", inbox, AppRuns(settings, sessions, inbox)),
         inbox=inbox,
     )
 
@@ -130,7 +130,7 @@ def setup(runner: Automations, trial: bool = False) -> tuple[config.Loaded, Auto
     return config.load(folder), record, output
 
 
-@pytest.mark.rule("append.only-what-it-declares-once-it-succeeded")
+@pytest.mark.rule("script.appends-to-notes-only-what-it-declares-after-success")
 def test_appends_in_order_with_their_provenance(runner: Automations) -> None:
     loaded, record, output = setup(runner)
     (output / "note.md").write_text("- a finding")
@@ -146,7 +146,10 @@ def test_appends_in_order_with_their_provenance(runner: Automations) -> None:
     assert note.read_text().count("- a finding") == 2  # duplicates are kept
 
 
-@pytest.mark.rule("append.only-what-it-declares-once-it-succeeded", "try.now-on-or-off")
+@pytest.mark.rule(
+    "script.appends-to-notes-only-what-it-declares-after-success",
+    "automation.try-runs-it-now-even-off",
+)
 def test_a_try_appends_nothing(runner: Automations) -> None:
     loaded, record, output = setup(runner, trial=True)
     (output / "note.md").write_text("x" * 5000)
@@ -155,7 +158,7 @@ def test_a_try_appends_nothing(runner: Automations) -> None:
     assert not ((runner.settings.knowledge_dir or Path()) / "handler" / "a.md").exists()
 
 
-@pytest.mark.rule("append.only-what-it-declares-once-it-succeeded")
+@pytest.mark.rule("script.appends-to-notes-only-what-it-declares-after-success")
 def test_what_cannot_be_appended_fails_the_run(runner: Automations, tmp_path: Path) -> None:
     loaded, record, output = setup(runner)
     secret = tmp_path / "secret"
@@ -194,7 +197,7 @@ def test_an_agent_run_s_result_makes_a_message() -> None:
     assert result_problems(bad) == ["its result's status has ['good']: only ok, attention, failed"]
 
 
-@pytest.mark.rule("inbox.what-it-is-told")
+@pytest.mark.rule("inbox.told-by-handlerd-alone")
 def test_the_inbox_is_told_results_and_failures(runner: Automations) -> None:
     loaded, record, _ = setup(runner)
 
@@ -394,7 +397,7 @@ def hourly_and_on(runner: Automations, *names: str) -> None:
         config.write_state(runner.settings.state_dir, name, config.State(enabled=True, since=since))
 
 
-@pytest.mark.rule("runner.one-at-a-time")
+@pytest.mark.rule("automation.one-run-at-a-time-for-all")
 def test_runs_go_one_at_a_time_a_waiting_one_saying_what_it_is_behind(
     runner: Automations, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,7 +441,7 @@ async def until(condition: Any, timeout: float = 5) -> None:
         await asyncio.sleep(0.01)
 
 
-@pytest.mark.rule("runner.one-at-a-time")
+@pytest.mark.rule("automation.one-run-at-a-time-for-all")
 def test_past_100_runs_a_day_its_runs_wait_for_the_next_day_and_a_try_is_refused(
     runner: Automations, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -456,6 +459,21 @@ def test_past_100_runs_a_day_its_runs_wait_for_the_next_day_and_a_try_is_refused
     monkeypatch.setattr(automations, "now", lambda: today + timedelta(days=1))
     second = runner.next_item()
     assert second is not None and second.automation == "busy"
+
+
+def test_the_runs_counted_are_today_s_only(
+    runner: Automations, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A start counted on a new day forgets the days before.
+
+    If this fails: handlerd keeps a count per automation for every day it ran, for as long as
+    it runs."""
+    today = datetime.now(UTC)
+    runner.count_start("a")
+    runner.count_start("b")
+    monkeypatch.setattr(automations, "now", lambda: today + timedelta(days=1))
+    runner.count_start("a")
+    assert runner.started_today == {("a", (today + timedelta(days=1)).date().isoformat()): 1}
 
 
 @pytest.mark.rule("automation.with-problems-never-runs")
@@ -493,7 +511,7 @@ def a_record(n: int, days_ago: float = 0) -> AutomationRun:
     )
 
 
-@pytest.mark.rule("runner.keeps-its-runs")
+@pytest.mark.rule("automation.keeps-its-last-50-runs")
 def test_the_last_50_runs_are_kept_none_older_than_30_days(runner: Automations) -> None:
     """A run ending with 50 before it: the oldest goes. A run older than 30 days goes at the
     next end, however few there are.
@@ -521,3 +539,32 @@ def test_the_inbox_keeps_its_last_200_and_shows_the_last_50(runner: Automations)
     assert len(kept) == 200 and kept[0].title == "m1" and kept[-1].title == "m200"
     shown = inbox.list()
     assert len(shown) == 50 and shown[0].title == "m200" and shown[-1].title == "m151"
+
+
+@pytest.mark.rule("automation.a-deleted-one-s-run-is-given-30-s")
+@pytest.mark.parametrize("stops", [True, False], ids=["it-stops", "it-does-not"])
+def test_a_deleted_one_s_run_is_waited_for_its_time_only(
+    runner: Automations, monkeypatch: pytest.MonkeyPatch, stops: bool
+) -> None:
+    """Deleting an automation cancels its run under way and waits for it to end, at most
+    DELETE_WAIT (shortened here); then its folder and state go whatever the run does.
+
+    If this fails: deleting an automation hangs on a run that never ends, or removes its folder
+    under a run still writing in it."""
+    monkeypatch.setattr(automations, "DELETE_WAIT", 0.5)
+    loaded, record, _ = setup(runner)
+    runner.write_record(record)
+    running = automations.Running(record)
+    runner.running = running
+
+    async def delete() -> float:
+        if stops:  # the run ends, as a cancelled one does
+            asyncio.get_running_loop().call_later(0.1, setattr, runner, "running", None)
+        started = asyncio.get_running_loop().time()
+        await runner.delete("notes")
+        return asyncio.get_running_loop().time() - started
+
+    took = asyncio.run(delete())
+    assert running.cancelled
+    assert (took < 0.4) if stops else (took >= 0.5)
+    assert not loaded.path.exists() and not runner.runs_dir("notes").exists()

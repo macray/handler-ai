@@ -23,7 +23,8 @@ from typing import Any
 
 from . import image_commands
 from .client import Daemon
-from .output import table
+from .output import table, when_at
+from .source_commands import source_id
 
 
 def add_parser(sub: Any) -> None:
@@ -96,7 +97,8 @@ def dispatch(args: argparse.Namespace) -> int:
         d.call("DELETE", f"/v1/addons/{args.name}")
         print(f"removed {args.name}")
         return 0
-    seen = d.call("POST", "/v1/addons/preview", {"source": source(args.source, args.source_id)})
+    given = source_id(d, args.source_id) if args.source_id is not None else None
+    seen = d.call("POST", "/v1/addons/preview", {"source": source(args.source, given)})
     print(describe(seen))
     if not args.yes:
         if not sys.stdin.isatty():
@@ -146,7 +148,7 @@ def print_tools(d: Daemon) -> None:
                 ", ".join(a.get("commands", [])) or "-",
                 a.get("state", "-"),
                 version,
-                a.get("builtAt", "-")[:16].replace("T", " "),
+                when_at(a.get("builtAt")),
                 ", ".join(slots) or "-",
                 (a.get("error") or a.get("stateDetail") or "")[:80],
             ]

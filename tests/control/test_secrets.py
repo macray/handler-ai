@@ -13,7 +13,7 @@ VALUE = "sk-test-not-a-real-key"
 @pytest.mark.rule(
     "access.its-status-says-what-is-missing",
     "secrets.never-read-back",
-    "secrets.set-by-their-owner",
+    "secrets.named-and-set-by-their-owner",
     "secrets.kept-for-you-only",
 )
 def test_secrets(daemon: Daemon) -> None:

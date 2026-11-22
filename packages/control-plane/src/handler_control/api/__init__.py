@@ -5,7 +5,8 @@ pass are in save_rules.py) and turn its answer or its errors into HTTP. One modu
 section, wired by `create_app` in this order:
 
     common       problem details (RFC 9457), dump, parse_body, the Context every route gets
-    catalog      GET /v1/health · /v1/harnesses · /v1/addons · /v1/knowledge … · /v1/directories
+    catalog      GET /v1/health · /v1/harnesses · /v1/harness-images · /v1/addons ·
+                 /v1/knowledge … · /v1/directories
     accounts     /v1/accounts … and their login (D.9)
     providers    /v1/providers … · /v1/provider-templates (D.12)
     bindings     /v1/bindings … (G.2, D.15)
@@ -27,6 +28,7 @@ section, wired by `create_app` in this order:
                  (I.9)
     inbox        /v1/inbox … what handler tells the person (apps' notifications, automations'
                  results)
+    notes        /v1/knowledge/history … a read-write notes folder's changes, undone (D.5)
     ui           /v1/ui … the web UI's sign-in: a one-time link sets its cookie (auth.py)
     acp          WebSocket /v1/agents/{id}/acp → launcher.start → Relay(policy) (C)
                  WebSocket /v1/sessions/{id}/acp → attach to a daemon-held session (F.4)
@@ -35,6 +37,7 @@ section, wired by `create_app` in this order:
 
 import contextlib
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -47,12 +50,14 @@ from ..agents import AgentRecord, AgentRegistry
 from ..app_http import AppOrigins
 from ..app_runs import AppRuns
 from ..apps import AppStore
+from ..ask_history import AskHistoryStore
 from ..assistant import Assistant
 from ..automations import Automations
 from ..builds import BuildStore
 from ..image_updates import ImageUpdater
 from ..improvements import ImprovementStore
 from ..inbox import Inbox
+from ..notes_history import NotesHistories
 from ..plan_drafts import PlanDrafts
 from ..plans import PlanStore, install_skill
 from ..projects import ProjectRegistry
@@ -75,15 +80,18 @@ from .bindings import add_binding_routes
 from .caches import add_cache_routes
 from .catalog import add_catalog_routes
 from .common import Context, add_error_handlers
+from .events import add_event_routes
 from .folders import add_folder_routes
 from .handler_needs import add_handler_need_routes
 from .images import add_addon_image_routes, add_image_routes
-from .inbox import add_inbox_routes
+from .inbox import add_inbox_routes, add_nudge_routes
+from .notes import add_notes_history_routes
 from .pins import add_pin_routes
 from .plans import add_plan_routes
 from .projects import add_project_routes
 from .providers import add_provider_routes
 from .remote import add_remote_routes
+from .schemas import add_schema_routes
 from .secrets import add_secret_routes
 from .sessions import add_session_routes
 from .skills import add_skill_archive_routes, add_skill_file_routes, add_skill_routes
@@ -107,7 +115,7 @@ def create_app(settings: Settings) -> FastAPI:
         inbox.add(**refusals.session_message(rec, agent, hosts))
 
     sessions.refusal_listeners.append(refused_while_away)
-    apps = AppStore(settings, token, inbox, AppRuns(settings, sessions, projects, inbox))
+    apps = AppStore(settings, token, inbox, AppRuns(settings, sessions, inbox))
     ctx = Context(
         settings,
         token,
@@ -123,7 +131,7 @@ def create_app(settings: Settings) -> FastAPI:
         checks := CheckStore(settings, sessions),
         improvements := ImprovementStore(settings, registry, checks),
         UseGraph(settings, projects, automations, apps),
-        Assistant(settings, apps, sessions),
+        Assistant(settings, apps, sessions, AskHistoryStore(settings)),
         VoiceStore(settings),
         AgentService(
             settings,
@@ -131,11 +139,17 @@ def create_app(settings: Settings) -> FastAPI:
             sessions=sessions,
             checks=checks,
             improvements=improvements,
-            apps=apps,
         ),
         PlanStore(settings, registry, projects, sessions, inbox),
         PlanDrafts(settings, projects),
+        notes := NotesHistories(
+            settings, registry, inbox, lambda a: label(projects, a), apps.written_folders
+        ),
     )
+    registry.listeners.append(notes.begin_new)  # a folder given read-write: its first state
+    apps.history = notes  # an app's code reads its folders' history (H.9)
+    apps.listeners.append(notes.begin_new)  # an app's too
+    builds.listeners.append(sessions.image_built)  # a session waiting for it starts (F.1)
 
     ctx.remote.projects = ctx.projects
     ctx.remote.assistant = ctx.assistant
@@ -149,7 +163,9 @@ def create_app(settings: Settings) -> FastAPI:
         ctx.automations.start()
         install_skill(settings)
         ctx.plans.start_watching()
+        ctx.notes.start()
         yield
+        await ctx.notes.close()
         await ctx.plans.close()
         await ctx.improvements.close()
         await ctx.checks.close()
@@ -165,6 +181,12 @@ def create_app(settings: Settings) -> FastAPI:
     return app
 
 
+def label(projects: ProjectRegistry, agent: AgentRecord) -> str:
+    """An agent as the notes history names it: "project · agent", else its name, else its
+    folder's."""
+    return projects.label(agent) or Path(agent.scope or "").name or agent.id
+
+
 def add_routes(app: FastAPI, ctx: Context) -> None:
     """Every route of the Control API (D), one module per contract section."""
     add_error_handlers(app)
@@ -177,6 +199,7 @@ def add_routes(app: FastAPI, ctx: Context) -> None:
     add_skill_routes(app, ctx)
     add_skill_file_routes(app, ctx)
     add_skill_archive_routes(app, ctx)
+    add_schema_routes(app, ctx)
     add_handler_need_routes(app, ctx)
     add_agents_file_routes(app, ctx)
     add_folder_routes(app, ctx)
@@ -200,5 +223,8 @@ def add_routes(app: FastAPI, ctx: Context) -> None:
     add_voice_routes(app, ctx)
     add_automation_routes(app, ctx)
     add_inbox_routes(app, ctx)
+    add_event_routes(app, ctx)
+    add_nudge_routes(app, ctx)
+    add_notes_history_routes(app, ctx)
     add_ui_routes(app, ctx)
     add_acp_endpoint(app, ctx)

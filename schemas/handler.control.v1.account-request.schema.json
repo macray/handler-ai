@@ -1,7 +1,7 @@
 {
   "$id": "urn:handler.control/v1/account-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Create an account, or rename it and change its description, plan and connectors (not its\nharness).",
+  "description": "Create an account, or rename it and change its description, subscription and connectors (not its\nharness).",
   "properties": {
     "name": {
       "minLength": 1,
@@ -26,7 +26,7 @@
       "default": null,
       "title": "Description"
     },
-    "plan": {
+    "subscription": {
       "anyOf": [
         {
           "minLength": 1,
@@ -37,7 +37,7 @@
         }
       ],
       "default": null,
-      "title": "Plan"
+      "title": "Subscription"
     },
     "connectors": {
       "default": false,

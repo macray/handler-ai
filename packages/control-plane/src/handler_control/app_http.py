@@ -9,7 +9,8 @@ An app's draft opened (H.16) is served the same way at http://<name>--draft.loca
 from its own copies, each of its pages with a banner saying it is the draft.
 
 On an app's origin:
-    /_handler/login?code=…  redeems a one-time link (POST /v1/apps/{name}/open): sets the
+    /_handler/login?code=…  redeems a one-time link (POST /v1/apps/{name}/open; a nudge's page,
+                            H.17, opens at its path, the app's own): sets the
                             app's cookie
     /api/…                  the backend, started if needed; `X-HANDLER-Person: owner`
     anything else           the built UI (index.html for unknown paths, so client-side routes work)
@@ -49,9 +50,14 @@ HOP_BY_HOP = frozenset(
     }
 )  # fmt: skip
 COOKIE_MAX_AGE = 365 * 24 * 3600
-# taken out of a request before the backend gets it: handlerd sets the person and the start
-# token (H.4, H.11), and puts the cookies back without its own
-HANDLER_HEADERS = ("cookie", PERSON_HEADER.lower(), START_HEADER.lower())
+
+
+def from_handler(name: str) -> bool:
+    """A request header the backend gets from handlerd only, never from the client (H.4): every
+    `x-handler-*` (the person and the start token it sets; whatever else names handlerd's, such
+    as an action or an automation), and the cookies, put back without its own."""
+    return name == "cookie" or name.startswith("x-handler-")
+
 
 CSP = "; ".join(
     [
@@ -156,14 +162,16 @@ class AppOrigins:
         return None
 
     def login(self, request: Request, name: str) -> Response:
-        if not self.store.redeem(name, request.query_params.get("code", "")):
+        path = self.store.redeem(name, request.query_params.get("code", ""))
+        if path is None:
             text = "This link was already used or has expired. Open the app from handler again."
             return page("Link expired", text, 403)
         # A page, not a redirect: when the link comes from another site (handler's web UI), a
         # redirect would still count as cross-site and the new SameSite=Strict cookie would
         # not be sent. The refresh is a navigation from the app's own origin.
         response = HTMLResponse(
-            "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content='0;url=/'>"
+            "<!doctype html><meta charset=utf-8><meta http-equiv=refresh "
+            f"content='0;url={html.escape(path, quote=True)}'>"
             f"<title>{html.escape(name)}</title>",
             headers={"Cache-Control": "no-store"},
         )
@@ -225,7 +233,7 @@ class AppOrigins:
         headers = [
             (k, v)
             for k, v in request.headers.items()
-            if k not in HOP_BY_HOP and k not in HANDLER_HEADERS
+            if k not in HOP_BY_HOP and not from_handler(k)
         ]
         if cookies := without_handler_cookie(request.headers.get("cookie", "")):
             headers.append(("cookie", cookies))
@@ -234,9 +242,13 @@ class AppOrigins:
         token = self.store.issue_start(name, "owner") if start else None  # H.11: until answered
         if token is not None:
             headers.append((START_HEADER, token))
+        # the path as sent, not decoded: an encoded `/` (%2F) stays inside its segment, as an
+        # id holding a `/` is sent by the app's page (Planner's `2026-11-19/call-the-bank`)
+        raw = request.scope.get("raw_path")
+        path = raw.decode("latin-1").split("?", 1)[0] if raw else request.url.path
         upstream = backend.client.build_request(
             request.method,
-            request.url.path,
+            path,
             params=request.url.query,
             headers=headers,
             content=request.stream(),

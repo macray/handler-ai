@@ -3,7 +3,7 @@
 // other's envelopes.
 import { describe, expect, it } from "vitest";
 import { b64, deriveBits, directionKey, gatewayToken, importDeviceKey, open, seal, unb64, type Envelope } from "../src/lib/crypto";
-import { readFragment } from "../src/lib/pairing";
+import { computerName, readFragment } from "../src/lib/pairing";
 import fixture from "../../../tests/fixtures/remote-vectors.json";
 
 const vectors = fixture as unknown as {
@@ -64,12 +64,12 @@ describe("envelopes", () => {
 });
 
 describe("pairing links", () => {
-  const payload = { v: 1, g: "https://gw.example", h: vectors.hostId, d: vectors.deviceId, k: vectors.key, n: "phone" };
+  const payload = { v: 1, g: "https://gw.example", h: vectors.hostId, d: vectors.deviceId, k: vectors.key, n: "phone", c: "desk" };
   const fragment = `#pair=${b64(new TextEncoder().encode(JSON.stringify(payload)))}`;
 
   it("reads the QR code's fragment", () => {
     const info = readFragment(fragment);
-    expect(info).toMatchObject({ gateway: "https://gw.example", hostId: vectors.hostId, deviceId: vectors.deviceId, name: "phone" });
+    expect(info).toMatchObject({ gateway: "https://gw.example", hostId: vectors.hostId, deviceId: vectors.deviceId, name: "phone", computer: "desk" });
     expect(info?.key.length).toBe(32);
   });
 
@@ -78,5 +78,12 @@ describe("pairing links", () => {
     expect(readFragment("#/s/s_1")).toBeNull();
     const bad = { ...payload, k: b64(new Uint8Array(8)) };
     expect(() => readFragment(`#pair=${b64(new TextEncoder().encode(JSON.stringify(bad)))}`)).toThrow("not valid");
+    const { c: _, ...unnamed } = payload;
+    expect(() => readFragment(`#pair=${b64(new TextEncoder().encode(JSON.stringify(unnamed)))}`)).toThrow("not valid");
+  });
+
+  it("names the computer by its host id when paired before it had a name", () => {
+    expect(computerName({ gateway: "https://gw.example", hostId: vectors.hostId, deviceId: vectors.deviceId, name: "phone" })).toBe(vectors.hostId);
+    expect(computerName({ gateway: "https://gw.example", hostId: vectors.hostId, deviceId: vectors.deviceId, name: "phone", computer: "desk" })).toBe("desk");
   });
 });

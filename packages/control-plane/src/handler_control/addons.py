@@ -127,6 +127,18 @@ def resolve(selected: list[Selected], store: secrets.SecretStore) -> AddonLaunch
     return launch
 
 
+def env_owners(selected: list[Selected]) -> dict[str, str]:
+    """Each variable the addons set (their `env`, settings and secrets, filled or not) → the
+    addon setting it: those an agent's own variables may not set (D.8)."""
+    owners: dict[str, str] = {}
+    for s in selected:
+        manifest = s.addon.manifest
+        slots = [*manifest.settings.values(), *manifest.secret_slots.values()]
+        for name in [*(manifest.env or {}), *(slot.env for slot in slots)]:
+            owners[name] = s.addon.name
+    return owners
+
+
 def tools(settings: Settings, selected: list[Selected]) -> list[Addon]:
     """The folders of the addons with a tool, each read-only at <ADDONS_ROOT>/<name>, its bin/ on
     PATH; one not built yet names a folder that does not exist (a launch refuses it, A.7)."""

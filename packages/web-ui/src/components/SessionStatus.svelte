@@ -4,12 +4,14 @@
   // button: resuming is on the session's page.
   import { STATUS_LABEL, type SessionStatus } from "../lib/sessions.svelte";
 
-  // title: what it says on hover (a project's dot sums its sessions up), its state's name by default
-  let { status, label = false, title }: { status: SessionStatus; label?: boolean; title?: string } = $props();
+  // title: what it says on hover (a project's dot sums its sessions up), its state's name by default;
+  // text: its state in other words where the page knows more (stopped, waiting for its image)
+  let { status, label = false, title, text }: { status: SessionStatus; label?: boolean; title?: string; text?: string } = $props();
+  const named = $derived(text ?? STATUS_LABEL[status]);
 </script>
 
-<span class="status {status}" title={title ?? STATUS_LABEL[status]} data-testid="session-status" data-status={status}>
-  <span class="dot" aria-hidden="true"></span>{#if label}<span class="text">{STATUS_LABEL[status]}</span>{/if}
+<span class="status {status}" title={title ?? named} data-testid="session-status" data-status={status}>
+  <span class="dot" aria-hidden="true"></span>{#if label}<span class="text">{named}</span>{/if}
 </span>
 
 <style>

@@ -44,6 +44,7 @@ def front(tmp_path: Path) -> Iterator[Path]:
         server.close()
 
 
+@pytest.mark.rule("sandbox.relayed-streams-are-whole-and-independent")
 def test_the_front_joins_its_socket_to_the_proxy_s_port(front: Path) -> None:
     """If this fails: no request of an Apple container sandbox reaches its filter."""
     with socket.socket(socket.AF_UNIX) as c:

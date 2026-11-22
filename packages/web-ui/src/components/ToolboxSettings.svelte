@@ -5,6 +5,7 @@
   // gives it (amber when nothing does). Changes are saved at once and used once applied: Apply
   // builds the toolbox with the build cache, Update the system pulls and builds it all again; both
   // then rebuild and check every image on it (D.4). The generated Containerfile is shown folded.
+  import { ask } from "../lib/ask.svelte";
   import Box from "@lucide/svelte/icons/box";
   import Pencil from "@lucide/svelte/icons/pencil";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -84,13 +85,8 @@
   }
 
   async function toggle(p: SystemPackageInfo, wanted: boolean): Promise<void> {
-    if (
-      wanted &&
-      !confirm(
-        `Turn on ${p.name}? Its install script runs as root when the toolbox is built, and every agent gets what it installs. It is used once you apply it.`,
-      )
-    )
-      return;
+    const detail = "Its install script runs as root when the toolbox is built, and every agent gets what it installs. It is used once you apply it.";
+    if (wanted && !(await ask({ title: `Turn on ${p.name}?`, detail, yes: "Turn on" }))) return;
     busy = true;
     error = null;
     try {
@@ -103,11 +99,11 @@
     }
   }
 
-  function build(update: boolean): void {
+  async function build(update: boolean): Promise<void> {
     const question = update
-      ? "Update the toolbox's system? Everything is downloaded and built again (a large download), then every agent program and tool image already built is rebuilt on it and checked; they are used only if all pass."
-      : "Apply your changes to the toolbox? It is built again from the first change, then every agent program and tool image already built is rebuilt on it and checked; they are used only if all pass.";
-    if (confirm(question)) onbuild(update);
+      ? { title: "Update the toolbox's system?", detail: "Everything is downloaded and built again (a large download), then every agent program and tool image already built is rebuilt on it and checked; they are used only if all pass.", yes: "Update" }
+      : { title: "Apply your changes to the toolbox?", detail: "It is built again from the first change, then every agent program and tool image already built is rebuilt on it and checked; they are used only if all pass.", yes: "Apply" };
+    if (await ask(question)) onbuild(update);
   }
 
   function loadGenerated(): void {

@@ -3,33 +3,35 @@ import { describe, expect, it } from "vitest";
 import { imageSrc, markdown } from "@handler/acp-view/lib/render";
 import { SessionState, contextFill, modelText, tokens, type ToolEntry } from "@handler/acp-view/lib/session.svelte";
 import { counts, lines, rows } from "@handler/acp-view/lib/diff";
-import { activity, askedAtStep, changeLine, duration, headline, relative, summary, tail, turnChanges, turnSummary } from "@handler/acp-view/lib/tools";
+import { activity, askedAtStep, changeLine, duration, headline, permissionAnswers, permissionWhy, relative, summary, tail, turnChanges, turnSummary } from "@handler/acp-view/lib/tools";
 import { websocketStream, type Closed } from "../src/lib/acp/transport";
-import { dirname, resolveLink, splitFrontmatter } from "../src/lib/knowledge";
+import { changeTitle, diffLines, dirname, fileChange, resolveLink, splitFrontmatter } from "../src/lib/knowledge";
+import type { NotesCommit } from "../src/lib/contracts.gen";
 import * as access from "../src/lib/access";
-import { isEgressEntry, normalizeEntry, recentLines, withEntry, withList } from "../src/lib/hosts";
+import { allowAgain, isEgressEntry, normalizeEntry, recentLines, withEntry, withList } from "../src/lib/hosts";
 import { href, opening, parse } from "../src/lib/router.svelte";
 import { readSkill, writeSkill } from "../src/lib/skillmd";
 import { who } from "../src/lib/skills";
-import type { AddonInfo, AddonPreview, Agent, AgentDefinition, AgentsFile, App, BindingInfo, HandlerNeed, Project, Session, SourceItemDetail } from "../src/lib/contracts.gen";
+import type { AddonInfo, AddonPreview, Agent, AgentDefinition, AgentsFile, App, BindingInfo, HandlerNeed, Project, Session, Source, SourceItemDetail } from "../src/lib/contracts.gen";
 import * as projects from "../src/lib/projects.svelte";
 import * as safety from "../src/lib/safety";
-import { ago, appOf, dayOf, inFolder, isChat, modeTone, nextMode } from "../src/lib/agents";
+import { ago, dayOf, inFolder, isChat, lastSession, modeTone, modeWider, nextMode } from "../src/lib/agents";
 import * as runs from "../src/lib/runs";
 import * as job from "../src/lib/interface";
 import * as automations from "../src/lib/automations";
 import * as plans from "../src/lib/plans";
 import { ApiError } from "../src/lib/api";
 import type { PlanRead, PlanStepView, PlanView } from "../src/lib/contracts.gen";
-import type { AutomationRun, SecretInfo } from "../src/lib/contracts.gen";
+import type { AutomationRun, InboxMessage, SecretInfo } from "../src/lib/contracts.gen";
 import * as secrets from "../src/lib/secrets";
-import { bellState, menuShows, moved, placeDot } from "../src/lib/menu";
+import { loginProblem } from "../src/lib/accounts";
+import { bellState, emptyFor, moved, placeDot } from "../src/lib/menu";
 import { tabTitle, withDot } from "../src/lib/favicon";
-import { agentGroups, libraryTabs, yourAgents, type AgentFilter } from "../src/lib/library";
+import { agentGroups, communityCount, GETS_MORE, libraryTabs, listsLine, yourAgents, type AgentFilter } from "../src/lib/library";
 import * as tools from "../src/lib/tools";
 import * as providers from "../src/lib/providers";
 import * as helpers from "../src/lib/helpers";
-import { following, makes } from "../src/lib/builds";
+import { following, makes, progress, stageWords } from "../src/lib/builds";
 import type { Build } from "../src/lib/contracts.gen";
 import type { EgressEvent, ProviderInfo, ProviderReach } from "../src/lib/contracts.gen";
 
@@ -77,6 +79,21 @@ describe("SessionState", () => {
     expect(card()).toMatchObject({ queued: false });
     expect(s.entries.at(-1)).toEqual({ kind: "told", text: "Handler: pypi.org:443 is now allowed. Go on." });
     expect(s.entries.filter((e) => e.kind === "user").length).toBe(1); // never the person's
+  });
+
+  it("keeps the agent's instructions apart from the person's first words, replayed or sent here", () => {
+    const user = (text: string) => ({ sessionUpdate: "user_message_chunk", content: { type: "text", text } }) as SessionUpdate;
+    const replayed = new SessionState();
+    replayed.line({ seq: 1, event: "instructed", text: "Be brief." });
+    replayed.apply(user("hello"));
+    replayed.apply(user("again"));
+    expect(replayed.entries).toEqual([
+      { kind: "user", text: "helloagain", images: [], told: "Be brief." },
+    ]);
+    const sender = new SessionState(); // its own prompt shown first, the line after it
+    sender.addUserPrompt("hello");
+    sender.line({ seq: 1, event: "instructed", text: "Be brief." });
+    expect(sender.entries).toEqual([{ kind: "user", text: "hello", images: [], told: "Be brief." }]);
   });
 
   it("says when the model's host does not answer, and asks a server on this computer where it listens", () => {
@@ -262,10 +279,38 @@ describe("a tool call in one line", () => {
     expect(modeTone("default", "ask")).toBe("ask");
   });
 
+  it("calls a session's mode wider only past the agent's own", () => {
+    expect(modeWider("bypass", "bypass")).toBe(false); // the agent's own: neutral
+    expect(modeWider("bypass", "accept-edits")).toBe(true);
+    expect(modeWider("accept-edits", "ask")).toBe(true);
+    expect(modeWider("ask", "bypass")).toBe(false); // narrower
+    expect(modeWider(undefined, "ask")).toBe(false); // plan mode, a harness's other modes
+    expect(modeWider("accept-edits", undefined)).toBe(false); // own not known: only bypass
+    expect(modeWider("bypass", undefined)).toBe(true);
+  });
+
   it("knows a question's step is in the timeline", () => {
     const entries = [{ kind: "user" as const, text: "go", images: [] }, tool({ id: "t1" })];
     expect(askedAtStep(entries, "t1")).toBe(true);
     expect(askedAtStep(entries, "t2")).toBe(false); // asked before its step was told: pinned
+  });
+
+  it("answers a permission with Reject | Allow, then the others", () => {
+    const o = (optionId: string, kind: string) => ({ optionId, name: optionId, kind });
+    const claude = [o("always", "allow_always"), o("allow", "allow_once"), o("reject", "reject_once")];
+    expect(permissionAnswers(claude)).toEqual({ pair: [o("reject", "reject_once"), o("allow", "allow_once")], more: [o("always", "allow_always")] });
+    // only remembered answers: the first of each side
+    const kept = [o("a", "allow_always"), o("r", "reject_always")];
+    expect(permissionAnswers(kept)).toEqual({ pair: [o("r", "reject_always"), o("a", "allow_always")], more: [] });
+    expect(permissionAnswers([o("a", "allow_once")])).toEqual({ pair: [o("a", "allow_once")], more: [] });
+  });
+
+  it("says why the agent asks only when the harness gives it", () => {
+    expect(permissionWhy({ title: "rm -rf dist/", rawInput: { command: "rm -rf dist/", description: " Clear the old build " } })).toBe("Clear the old build");
+    expect(permissionWhy({ title: "rm -rf dist/", rawInput: { command: "rm -rf dist/" } })).toBeNull();
+    expect(permissionWhy({ title: "ls", rawInput: { description: "ls" } })).toBeNull(); // the title again
+    expect(permissionWhy({ title: "x", rawInput: "text" })).toBeNull();
+    expect(permissionWhy({ title: "x" })).toBeNull();
   });
 
   it("lists the files a turn changed, each with its diffs", () => {
@@ -361,13 +406,12 @@ describe("router", () => {
     ["#/library/tools/more", { view: "library", shelf: "tools", more: true }],
     ["#/library/tools/more?install=source%3Aofficial%2Fbun", { view: "library", shelf: "tools", more: true, install: "source:official/bun" }],
     ["#/library/tools/github", { view: "tool", name: "github" }],
-    ["#/discover", { view: "projects" }], // Discover is each shelf's Get more
+    ["#/discover", { view: "projects" }], // Discover is each shelf's Community
     ["#/projects/p1/agents/new?from=a1&job=1", { view: "edit-agent", project: "p1", from: "a1", job: true }],
     ["#/sessions/k1", { view: "session", key: "k1" }],
+    ["#/sessions/k1?panel=network", { view: "session", key: "k1", panel: "network" }],
     ["#/settings", { view: "settings", section: "models" }],
     ["#/settings/areas", { view: "settings", section: "areas" }],
-    ["#/tools", { view: "addons" }],
-    ["#/skills", { view: "skills" }],
     ["#/skills/code-review", { view: "skill", name: "code-review" }],
     ["#/skills/new", { view: "skill", name: null }],
     ["#/skills/code-review?imported=replaced", { view: "skill", name: "code-review", imported: "replaced" }],
@@ -394,7 +438,7 @@ describe("router", () => {
     expect(opening("", null)).toBe("#/projects");
     expect(opening("#/", "#/projects/p1")).toBe("#/projects/p1");
     expect(opening("#/", "#/")).toBe("#/projects");
-    expect(opening("#/skills", "#/projects/p1")).toBe("#/skills"); // a page asked for wins
+    expect(opening("#/library/skills", "#/projects/p1")).toBe("#/library/skills"); // a page asked for wins
     expect(opening("#/projects", "#/projects/p1")).toBe("#/projects"); // the logo
     expect(opening("#/", "#token=x")).toBe("#/projects"); // only a page's address is kept
   });
@@ -424,7 +468,8 @@ describe("router", () => {
     expect(parse("#/ask")).not.toEqual({ view: "ask" }); // gone
     expect(parse(href({ view: "agents", agent: "a 1" }))).toEqual({ view: "agents", agent: "a 1" });
     expect(parse(href({ view: "project", id: "p1", agent: "a b" }))).toEqual({ view: "project", id: "p1", agent: "a b" });
-    expect(parse(href({ view: "terminal", agent: "a1", connection: "c 1" }))).toEqual({ view: "terminal", agent: "a1", connection: "c 1" });
+    expect(parse(href({ view: "running" }))).toEqual({ view: "running" });
+    expect(parse(href({ view: "running", terminal: "c 1" }))).toEqual({ view: "running", terminal: "c 1" });
     expect(parse(href({ view: "skill", name: "a b", imported: "new" }))).toEqual({ view: "skill", name: "a b", imported: "new" });
     expect(parse(href({ view: "agent", id: "a1" }))).toEqual({ view: "agent", id: "a1" });
     expect(parse(href({ view: "edit-ad-hoc", id: "a1" }))).toEqual({ view: "edit-ad-hoc", id: "a1" });
@@ -573,6 +618,14 @@ describe("knowledge (D.5)", () => {
     });
     expect(splitFrontmatter("# no frontmatter\n")).toEqual({ meta: [], body: "# no frontmatter\n" });
     expect(splitFrontmatter("---\nsummary: only\n---")).toEqual({ meta: [["summary", "only"]], body: "" });
+    // a list or a nested value: its lines as written, not an empty value
+    expect(splitFrontmatter("---\ntags:\n  - a\n  - b\nwhen:\n  day: mon\n---\nx")).toEqual({
+      meta: [
+        ["tags", "- a\n- b"],
+        ["when", "day: mon"],
+      ],
+      body: "x",
+    });
   });
 
   it("resolves links between notes inside the root", () => {
@@ -675,9 +728,8 @@ describe("agents", () => {
   });
 
   it("reads an agent's home", () => {
-    expect([appOf(w("x", { app: "planner" })), isChat(w("x", { app: "planner" }))]).toEqual(["planner", false]);
-    expect([appOf(w("x", { chat: true })), isChat(w("x", { chat: true }))]).toEqual([null, true]);
-    expect([appOf(w("x")), isChat(w("x"))]).toEqual([null, false]);
+    expect(isChat(w("x", { chat: true }))).toBe(true);
+    expect(isChat(w("x"))).toBe(false);
   });
 
   it("says how long ago", () => {
@@ -687,6 +739,28 @@ describe("agents", () => {
     expect(ago("2026-09-26T12:00:00Z", now)).toBe("1 day ago");
     expect(ago(null, now)).toBe("never");
     expect(ago("2026-10-04T12:00:00Z", now)).toBe("in 7 days");
+  });
+
+  it("says a project's last session, never \"never\"", () => {
+    const now = Date.parse("2026-09-27T12:00:00Z");
+    expect(lastSession("2026-09-27T10:00:00Z", now)).toBe("last session 2 hours ago");
+    expect(lastSession(null, now)).toBe("no session yet");
+    expect(lastSession(undefined, now)).toBe("no session yet");
+  });
+
+  it("names the hosts and the agent an Allow runs again for", () => {
+    expect(allowAgain(["pypi.org:443"], "Dev", 2)).toBe("Allow pypi.org:443 for Dev, run again from step 2");
+    expect(allowAgain(["a.com:443", "b.com:443"], "Dev", null)).toBe("Allow a.com:443 and b.com:443 for Dev, run again");
+    expect(allowAgain(["a:1", "b:1", "c:1"], null, 3)).toBe("Allow 3 hosts, run again from step 3");
+  });
+
+  it("takes an offered item's title from its README, its other headings one level down", async () => {
+    const { belowTitle, readmeTitle } = await import("../src/lib/sources");
+    expect(readmeTitle("# Journal\n\nWrite a line a day.\n")).toEqual({ title: "Journal", body: "\nWrite a line a day.\n" });
+    expect(readmeTitle("\n#  Web designer #\nx")).toEqual({ title: "Web designer", body: "x" });
+    expect(readmeTitle("No title here\n# Later")).toEqual({ title: null, body: "No title here\n# Later" });
+    expect(readmeTitle("#hashtag")).toEqual({ title: null, body: "#hashtag" });
+    expect(belowTitle('<h1 id="a">A</h1><h2>B</h2><hr><h6>F</h6>')).toBe('<h2 id="a">A</h2><h3>B</h3><hr><h6>F</h6>');
   });
 
   it("heads a timeline's days", () => {
@@ -731,6 +805,26 @@ describe("projects", () => {
       default: true,
       confirmRisks: false,
     });
+  });
+
+  it("edits an agent's environment variables as rows, saved by name (D.8)", async () => {
+    const { envProblem } = await import("../src/lib/env");
+    const a = agent("a1", { name: "site", env: { NEXT_TELEMETRY_DISABLED: "1", ASTRO_TELEMETRY_DISABLED: "1" } });
+    const spec = projects.agentSpec(a, { defaultAgent: null });
+    expect(spec.env).toEqual([
+      { name: "ASTRO_TELEMETRY_DISABLED", value: "1" },
+      { name: "NEXT_TELEMETRY_DISABLED", value: "1" },
+    ]);
+    const rows = [...spec.env.slice(1), { name: " NODE_OPTIONS ", value: "--max-old-space-size=4096" }, { name: "", value: "" }];
+    expect(projects.agentBody({ ...spec, env: rows }, { projectId: "p1" }).env).toEqual({ NEXT_TELEMETRY_DISABLED: "1", NODE_OPTIONS: "--max-old-space-size=4096" });
+    expect(envProblem(rows)).toBeNull();
+    expect(envProblem([{ name: "", value: "1" }])).toBe("Give each environment variable a name.");
+    expect(envProblem([{ name: "1X", value: "1" }])).toContain("letters, digits and _ only");
+    expect(envProblem([{ name: "A", value: "1" }, { name: "A ", value: "2" }])).toBe("Environment variable A is set twice.");
+    expect(projects.withModelAlone(spec, true).env).toEqual([]); // no sandbox, no variables
+    const writing = { ...spec, knowledge: [{ folder: "me", access: "write" as const }] };
+    expect(projects.withModelAlone(writing, true).knowledge).toEqual([{ folder: "me", access: "read" }]); // no sandbox to write from
+    expect(projects.withModelAlone(writing, false).knowledge).toEqual(writing.knowledge);
   });
 
   it("duplicates an agent as a copy with a free name", () => {
@@ -971,6 +1065,13 @@ describe("runs (D.18)", () => {
     },
   };
 
+  it("says what a run was asked in one line: its plain values (an app's run, H.11)", () => {
+    expect(runs.fieldsSummary({ ad: "  Senior  dev\nBerlin ", lang: "fr", full: true, list: ["x"], empty: "" })).toBe("Senior dev Berlin · fr · true");
+    expect(runs.fieldsSummary({})).toBeNull();
+    expect(runs.fieldsSummary(undefined)).toBeNull();
+    expect(runs.fieldsSummary({ a: "x".repeat(200) })?.length).toBe(120);
+  });
+
   it("makes a form from the interface's fields", () => {
     const fields = runs.fieldsOf({
       type: "object",
@@ -1040,7 +1141,7 @@ describe("runs (D.18)", () => {
       interface: { result, fields: { type: "object", properties: { skill: { type: "string", "x-handler": "skill" } } } },
     });
     expect(spec.name).toBe("Skill reviewer");
-    expect([spec.knowledge, spec.display]).toEqual([["recipes"], true]);
+    expect([spec.knowledge, spec.display]).toEqual([[{ folder: "recipes", access: "read" }], true]); // read-only: write is yours to give
     expect([spec.permissions, spec.egress, spec.network]).toEqual(["ask", "enforce", "filtered"]);
     expect(runs.skillField(JSON.parse(spec.interface))).toBe("skill");
     expect(spec.model.account).toBeNull();
@@ -1076,6 +1177,8 @@ describe("automations (I)", () => {
     expect(automations.howOften({ kind: "every", n: 7, unit: "h" })).toBe("about 3 runs a day");
     expect(automations.howOften({ kind: "every", n: 48, unit: "h" })).toBe("about 4 runs a week");
     expect(automations.howOften({ kind: "every", n: 9999, unit: "h" })).toBe("less than one run a week");
+    expect(automations.howOften({ kind: "every", n: 1, unit: "d" })).toBe("1 run a day");
+    expect(automations.howOften({ kind: "every", n: 2, unit: "d" })).toBe("about 4 runs a week");
     expect(automations.howOften({ kind: "at", at: "08:30", days: ["mon"] })).toBe("1 run a week");
   });
 
@@ -1112,6 +1215,7 @@ describe("automations (I)", () => {
       description: "d",
     });
     expect(automations.formOf({ ...base, when: { every: "30m" }, run: agentRun })?.schedule).toEqual({ kind: "every", n: 30, unit: "m" });
+    expect(automations.formOf({ ...base, when: { every: "1d" }, run: agentRun })?.schedule).toEqual({ kind: "every", n: 1, unit: "d" });
     const app = automations.formOf({ ...base, when: "session.stopped", only: { project: ["shop"] }, run: { app: "coach", call: "POST /api/x" } });
     expect(app).toMatchObject({ on: "stop", stopProject: "shop", what: "app", app: "coach", call: "POST /api/x", agent: null, opens: "" });
     expect(automations.formOf({ ...base, when: "session.stopped", run: "python3 x.py" })).toBeNull();
@@ -1161,7 +1265,6 @@ describe("automations (I)", () => {
   });
 
   it("has its routes", () => {
-    expect(parse("#/automations")).toEqual({ view: "automations" });
     expect(parse("#/automations/env-issues")).toEqual({ view: "automation", name: "env-issues" });
     expect(parse("#/inbox")).toEqual({ view: "inbox" });
     expect(href({ view: "automation", name: "env-issues" })).toBe("#/automations/env-issues");
@@ -1196,6 +1299,15 @@ describe("secrets", () => {
     expect(secrets.needsYou(info({ ...used, visible: "x", agents: [] }))).toBe(false);
   });
 
+  it("puts a dot on Expert only when an agent reads a secret's real value today (E1)", () => {
+    const used = { usedBy: ["providers/openrouter"] };
+    expect(secrets.agentReads(info({ ...used, visible: "no host to give it to: …", agents: ["blog · Dev"] }))).toBe(true);
+    expect(secrets.agentReads(info({ ...used, visible: "no host to give it to: …", agents: [] }))).toBe(false);
+    expect(secrets.agentReads(info({ ...used, hasValue: false }))).toBe(false);
+    expect(secrets.agentReads(info({ ...used, hasValue: true }))).toBe(false);
+    expect(secrets.agentReads(info({ usedBy: [], visible: "x", agents: ["blog · Dev"] }))).toBe(false);
+  });
+
   it("links each to the page its owner is set on, by name", () => {
     expect(secrets.owner("accounts/perso")).toEqual({ page: "Model access", name: "perso", href: "#/settings/models" });
     expect(secrets.owner("connections/my-shop", { "my-shop": "shopify" })).toEqual({ page: "Tools", name: "my-shop", href: "#/library/tools/shopify" });
@@ -1222,46 +1334,35 @@ describe("apps (H)", () => {
     const { reaches } = await import("../src/lib/apps");
     const app = {
       files: [{ name: "tasks", mode: "rw", path: "/home/me/planner" }],
-      agents: [
-        { name: "planner", origin: { kind: "app", name: "planner", agent: "planner" }, agentId: "a1" },
-        { name: "notes", origin: { kind: "app", name: "planner", agent: "notes" } },
-      ],
-    } as App;
-    const label = (id: string): string => (id === "a1" ? "Planner (project home)" : id);
-    expect(reaches({}, app, label)).toEqual(["Reaches no host: no network."]);
+      jobs: [{ name: "plan", description: "Plans your day", canDo: { files: { tasks: "write" }, worksIn: ["tasks"] } }],
+    } as unknown as App;
+    expect(reaches({}, { ...app, jobs: [] })).toEqual(["Reaches no host: no network."]);
     expect(
       reaches(
         {
           egress: ["api.example.com:443"],
           files: { tasks: { mode: "rw" }, archive: {} },
           notify: true,
-          agents: { planner: { from: "agent" }, notes: { from: "notes" } },
         },
         app,
-        label,
       ),
     ).toEqual([
       "Reaches api.example.com:443.",
       "Reads and writes /home/me/planner.",
       "Reads the folder you give for archive.",
       "Sends you notifications (your inbox, desktop and phones).",
-      "Runs your agent Planner (project home) when you use it, and reads its results.",
-      "Runs the agent you give for notes when you use it, and reads its results.",
+      "Its job “Plans your day”: reads and writes ~/planner, working in it; no network.",
     ]);
   });
 
   it("says what deleting an agent stops", async () => {
     const { stopsWhenDeleted } = await import("../src/lib/apps");
-    const app = { kind: "app", id: "planner", label: "planner", how: "needs it: Tells you what to do next" } as const;
     const handler = { kind: "handler", id: "skill-review", label: "Handler", how: "its skill reviewer" } as const;
     const automation = { kind: "automation", id: "every-5h", label: "every-5h", how: "runs it" } as const;
     expect(stopsWhenDeleted([])).toBe("");
-    expect(stopsWhenDeleted([app])).toBe(" It is used by the app planner: it stops until you give it another agent.");
-    expect(stopsWhenDeleted([handler, app])).toBe(
-      " It is used by Handler (its skill reviewer) and the app planner: they stop until you give them another agent.",
-    );
-    expect(stopsWhenDeleted([app, automation])).toBe(
-      " It is used by the app planner and the automation every-5h: they stop until you give them another agent.",
+    expect(stopsWhenDeleted([automation])).toBe(" It is used by the automation every-5h: it stops until you give it another agent.");
+    expect(stopsWhenDeleted([handler, automation])).toBe(
+      " It is used by Handler (its skill reviewer) and the automation every-5h: they stop until you give them another agent.",
     );
   });
 
@@ -1270,46 +1371,53 @@ describe("apps (H)", () => {
     const { fileOrigin, needOrigin } = await import("../src/lib/setup");
     expect(setUpFrom({ kind: "agents-file", name: "tone-shop", version: 2, agent: "judge" })).toBe("tone-shop");
     expect(setUpFrom({ kind: "handler-need", name: "skill-review", version: 1 })).toBe("skill-review");
-    expect(setUpFrom({ kind: "app", name: "planner", agent: "planner" })).toBeNull();
     expect(setUpFrom(null)).toBeNull();
     expect(fileOrigin({ name: "tone-shop", version: 3 }, "judge")).toEqual({ kind: "agents-file", name: "tone-shop", version: 3, agent: "judge" });
     expect(needOrigin({ name: "skill-review", version: 2 })).toEqual({ kind: "handler-need", name: "skill-review", version: 2 });
   });
 
-  it("says what Handler or an app uses an agent for", async () => {
+  it("says what Handler uses an agent for", async () => {
     const { usedFor } = await import("../src/lib/apps");
-    const apps = [
-      { name: "planner", agents: [{ name: "planner", origin: { kind: "app", name: "planner", agent: "planner" }, agentId: "a1" }] },
-    ] as App[];
     const needs = [
       { name: "skill-review", version: 1, definition: { agentName: "Skill reviewer" }, description: "", agentId: "a1" },
       { name: "app-creator", version: 1, definition: { agentName: "App creator" }, description: "" },
     ] as HandlerNeed[];
-    const of = (id: string, extra: Partial<Agent> = {}) => usedFor({ id, model: {}, ...extra } as unknown as Agent, needs, apps);
-    expect(of("a1")).toEqual([
-      { label: "Skill reviewer", app: false },
-      { label: "planner", app: true },
-    ]);
+    const of = (id: string, extra: Partial<Agent> = {}) => usedFor({ id, model: {}, ...extra } as unknown as Agent, needs);
+    expect(of("a1")).toEqual(["Skill reviewer"]);
     expect(of("a2", { origin: { kind: "handler-need", name: "app-creator", version: 1 } })).toEqual([]); // set up from it, not given
     expect(of("a4")).toEqual([]);
+  });
+
+  it("calls an app by its title, else by its name (H.1)", async () => {
+    const { appTitle, appTitles } = await import("../src/lib/apps");
+    expect(appTitle({ name: "planner", title: "Planner" })).toBe("Planner");
+    expect(appTitle({ name: "planner" })).toBe("planner");
+    expect(appTitle({ name: "planner", title: null })).toBe("planner");
+    expect(appTitles([{ name: "planner", title: "Planner" }, { name: "counter" }])).toEqual({ planner: "Planner", counter: "counter" });
+  });
+
+  it("counts each app's news: its unread messages (E6)", async () => {
+    const { news } = await import("../src/lib/apps");
+    const m = (app: string | null, read = false) => ({ id: "x", source: "app", name: "n", person: "owner", title: "t", at: "", app, read }) as InboxMessage;
+    expect(news([m("planner"), m("planner"), m("planner", true), m("journal"), m(null)])).toEqual({ planner: 2, journal: 1 });
+    expect(news([])).toEqual({});
   });
 
   it("says what it needs that was not given", async () => {
     const { missing } = await import("../src/lib/apps");
     const app = {
       files: [{ name: "tasks", mode: "rw" }],
-      agents: [
-        { name: "planner", origin: { kind: "app", name: "planner", agent: "planner" }, agentId: "a1", problem: "the agent given was deleted" },
-        { name: "fine", origin: { kind: "app", name: "planner", agent: "fine" }, agentId: "a2" },
-      ],
+      jobs: [{ name: "plan", description: "Plans", canDo: {} }],
       secrets: [{ name: "KEY", set: false }],
     } as App;
-    expect(missing(app)).toEqual(["the folder tasks", "the agent planner", "the secret KEY"]);
+    expect(missing(app)).toEqual(["the folder tasks", "who works", "the secret KEY"]);
+    expect(missing({ ...app, whoWorks: { program: "fake", account: "fake" } })).toEqual(["the folder tasks", "the secret KEY"]);
   });
 
   it("says who started a run", () => {
     const run = { origin: "app", app: "planner" } as Session;
     expect(runs.startedBy(run)).toBe("by the app planner");
+    expect(runs.startedBy(run, (n) => (n === "planner" ? "Planner" : n))).toBe("by the app Planner");
     expect(runs.startedBy({ ...run, origin: "automation" })).toBe("by an automation");
     expect(runs.startedBy({ ...run, origin: "ui" })).toBe("by you");
   });
@@ -1348,7 +1456,7 @@ describe("agents set up from definitions (D.23, D.18)", () => {
       { kind: "agents-file", name: "shop-kit", version: 3, agent: "order-triage" },
       "Order triage",
       [{ addon: "app-builder" }, { addon: "shopify", binding: "shop-main" }],
-      ["shop/policies"],
+      [{ folder: "shop/policies", access: "read" }],
       ["tidy"],
       true,
     ]);
@@ -1415,13 +1523,14 @@ describe("installing an app (H.2)", () => {
       { name: "inbox", mode: "ro" },
       { name: "tasks", mode: "rw" },
     ] as App["files"];
-    expect(dataNeed({ files, agents: [] })?.name).toBe("tasks"); // its only read-write one
-    expect(dataNeed({ files, agents: [{ name: "a", worksIn: "inbox", origin: { kind: "app", name: "x", agent: "a" } }] as App["agents"] })?.name).toBe("inbox"); // where its agents work
-    expect(dataNeed({ files: [...files!, { name: "out", mode: "rw" }] as App["files"], agents: [] })).toBeUndefined();
-    const s = { description: "What to do next!", when: { every: "5h" }, run: { agent: "planner" } };
+    expect(dataNeed({ files, jobs: [] })?.name).toBe("tasks"); // its only read-write one
+    const reading = { name: "a", description: "Reads", canDo: { files: { inbox: "read" as const }, worksIn: ["inbox"] } };
+    expect(dataNeed({ files, jobs: [reading] })?.name).toBe("inbox"); // where its jobs work
+    expect(dataNeed({ files: [...files!, { name: "out", mode: "rw" }] as App["files"], jobs: [] })).toBeUndefined();
+    const s = { description: "What to do next!", when: { every: "5h" }, run: { job: "plan" } };
     const made = suggested({ name: "planner" }, s);
     expect(made.name).toBe("planner-what-to-do-next");
-    expect(made.definition).toMatchObject({ app: "planner", run: { agent: "planner" }, when: { every: "5h" } });
+    expect(made.definition).toMatchObject({ run: { app: "planner", job: "plan" }, when: { every: "5h" } });
   });
 
   it("opens its install page", () => {
@@ -1442,15 +1551,10 @@ describe("menu", () => {
     expect(placeDot(["needs-you", "idle", "needs-you"])).toEqual({ status: "needs-you", needYou: 2, title: "2 need you · 1 idle" });
   });
 
-  const empty = { projects: 0, modelReady: false };
-
-  it("is the bell, Projects and Settings on the first run", () => {
-    expect(menuShows(empty)).toEqual({ chat: false, apps: false, library: false });
-  });
-
-  it("shows Chat and Apps once a model is connected, the Library once a project exists", () => {
-    expect(menuShows({ ...empty, modelReady: true })).toEqual({ chat: true, apps: true, library: false });
-    expect(menuShows({ ...empty, projects: 1 })).toEqual({ chat: false, apps: false, library: true });
+  it("says a place is empty for want of a model, once the model access is read", () => {
+    expect(emptyFor({ known: false, ready: false })).toBeNull();
+    expect(emptyFor({ known: true, ready: false })).toBe("no-model");
+    expect(emptyFor({ known: true, ready: true })).toBe("nothing");
   });
 
   it("rings the bell: waiting first, then running, else quiet", () => {
@@ -1479,14 +1583,36 @@ describe("menu", () => {
       ["For your agents", "Tools"],
       ["For your agents", "Skills"],
       ["For your agents", "Notes"],
+      ["For your agents", "Schemas"],
       ["For your agents", "Automations"],
     ]);
     expect(tabs.filter((t) => t.active).map((t) => t.href)).toEqual(["#/library/skills"]);
-    expect(libraryTabs("apps", { tools: 3, notes: 0 }).map((t) => t.count)).toEqual([undefined, undefined, 3, undefined, 0, undefined]);
+    expect(libraryTabs("apps", { tools: 3, notes: 0 }).map((t) => t.count)).toEqual([undefined, undefined, 3, undefined, 0, undefined, undefined]);
+  });
+
+  it("heads a shelf's list with Yours · Community and a line saying which one you see", () => {
+    // If this fails: the line names the wrong list or the wrong things, Notes or Schemas get the
+    // segment, or Community's count leaves out Handler's own items or counts what cannot be read.
+    expect(Object.entries(GETS_MORE).filter(([, v]) => !v).map(([k]) => k)).toEqual(["notes", "schemas"]);
+    expect(listsLine("tools", false)).toEqual({ text: "You are looking at the tools you have. More are shared by Handler and the community:", link: "Community" });
+    expect(listsLine("apps", true)).toEqual({ text: "You are looking at the apps shared by Handler and the community. The ones you have:", link: "Yours" });
+    expect(listsLine("skills", true).link).toBe("Yours");
+    expect(listsLine("skills", true).text).toMatch(/^You are looking at the ways to get a skill/);
+    const item = (kind: string, name: string, error?: string) => ({ kind, name, ...(error ? { error } : {}) });
+    const sources = [
+      { id: "official", official: true, items: [item("app", "planner"), item("addon", "github"), item("addon", "broken", "bad")] },
+      { id: "mine", official: false, items: [item("app", "journal"), item("agents", "team")] },
+    ] as unknown as Source[];
+    expect(communityCount("apps", sources, 2)).toBe(2); // Handler's and another source's
+    expect(communityCount("tools", sources, 2)).toBe(1); // not one that cannot be read
+    expect(communityCount("agents", sources, 2)).toBe(1);
+    expect(communityCount("apps", null, 2)).toBeUndefined(); // not read yet
+    expect(communityCount("automations", sources, 2)).toBe(2); // Handler's examples
+    expect(communityCount("skills", sources, 2)).toBeUndefined(); // ways, not items
   });
 
   it("lists your agents on the Agents shelf by where they work, each saying where it came from", () => {
-    // If this fails: an app's agent, Chat's or a helper shows as yours, an agent is left out or
+    // If this fails: Chat's agent or a helper shows as yours, an agent is left out or
     // in the wrong group, or one set up from an agents file reads as made here.
     const agent = (id: string, extra: Partial<Agent> = {}): Agent => ({ ...({} as Agent), id, name: id, ...extra });
     const file = { kind: "agents-file" as const, name: "ponytail", agent: "ponytail", version: 1 };
@@ -1495,7 +1621,6 @@ describe("menu", () => {
       agent("Ponytail", { projectId: "p1", origin: file }),
       agent("Writer", { projectId: "p2" }),
       agent("Scratch"),
-      agent("Planner", { app: "planner" }),
       agent("Assistant", { chat: true }),
       agent("Namer", { origin: { kind: "handler-need", name: "namer", version: 1 } }),
     ];
@@ -1554,6 +1679,13 @@ describe("a provider's test", () => {
     expect(providers.statusOf(info({ status: "incomplete", local: true })).text).toBe("To finish");
   });
 
+  it("calls a server on this computer not ready only once its test failed", () => {
+    expect(providers.notReached(info({ local: true, reached: reach({ ok: false, error: "x" }) }))).toBe(true);
+    expect(providers.notReached(info({ local: true }))).toBe(false); // not tested since handlerd started
+    expect(providers.notReached(info({ local: true, reached: reach({}) }))).toBe(false);
+    expect(providers.notReached(info({ reached: reach({ ok: false, error: "x" }) }))).toBe(false); // a hosted API
+  });
+
   it("fills the models from what the server serves, or the context of those typed", () => {
     const served = [{ id: "qwen", contextWindow: 32768 }, { id: "small" }];
     expect(providers.fillModels([], served)).toEqual(served);
@@ -1595,6 +1727,24 @@ describe("the build a session that cannot start yet follows", () => {
     const before = build("codex", "succeeded", { endedAt: "2026-11-01T10:00:30Z" });
     expect(following([before], "codex", refused)).toBeNull();
     expect(following([build("toolbox", "failed", { harnesses: ["codex"], endedAt: "2026-11-01T10:03:00Z" })], "codex", refused)).toBeNull();
+  });
+
+  it("says a running build's step of its stage, only when the runtime reports it", () => {
+    expect(progress(build("toolbox", "running", { step: 3, steps: 7 }))).toEqual({ text: "step 3 of 7", done: 3 / 7 });
+    expect(progress(build("toolbox", "running"))).toBeNull(); // a check, the switch: no steps
+    expect(progress(build("toolbox", "succeeded", { step: 7, steps: 7 }))).toBeNull();
+  });
+
+  it("says a build's stage in words", () => {
+    const name = (h: string) => (h === "vibe" ? "Mistral Vibe" : h);
+    expect(stageWords("build toolbox", name)).toBe("Building the toolbox");
+    expect(stageWords("update toolbox", name)).toBe("Updating the toolbox");
+    expect(stageWords("build vibe", name)).toBe("Building Mistral Vibe");
+    expect(stageWords("check addon:browser", name)).toBe("Checking the browser tool");
+    expect(stageWords("build network filter", name)).toBe("Building the network filter");
+    expect(stageWords("switch", name)).toBe("Switching to the new images");
+    expect(stageWords(null, name)).toBeNull();
+    expect(stageWords("something new", name)).toBeNull();
   });
 });
 
@@ -1712,8 +1862,76 @@ describe("helpers", () => {
 
 describe("words made from values (text.ts)", () => {
   it("sizes, slugs and names not taken read the same on every page", async () => {
-    const { formatBytes, slug } = await import("../src/lib/text");
+    const { formatBytes, homePath, slug } = await import("../src/lib/text");
+    expect(homePath("/home/mcy/.config/handler/tools/shopify")).toBe("~/.config/handler/tools/shopify"); // whole, never cut
+    expect(homePath("/Users/me/")).toBe("~");
+    expect(homePath("/homework/x")).toBe("/homework/x");
+    expect(homePath("/srv/data")).toBe("/srv/data");
+    expect(homePath("/")).toBe("/");
     expect([formatBytes(512), formatBytes(2_000_000), formatBytes(143_400_000), formatBytes(1_234_000_000)]).toEqual(["512 B", "2.0 MB", "143 MB", "1.2 GB"]);
     expect(slug("  Daily news digest! ")).toBe("daily-news-digest");
+  });
+});
+
+describe("the notes history", () => {
+  const commit = (fields: Partial<NotesCommit>): NotesCommit => ({ id: "c", at: "2026-11-13T10:00:00Z", kind: "changes", couldWrite: [], files: [], fileCount: 2, ...fields });
+
+  it("titles each entry by who could have written it", () => {
+    // If this fails: an entry reads "2 files changed" and you cannot tell who did it.
+    expect(changeTitle(commit({ kind: "first", fileCount: 1 }))).toBe("History started · 1 file kept as it was");
+    expect(changeTitle(commit({ kind: "first", fileCount: 5 }))).toBe("History started · 5 files kept as they were");
+    expect(changeTitle(commit({ couldWrite: [{ app: "cv", name: "CV assistant" }] }))).toBe("CV assistant (app)");
+    expect(changeTitle(commit({ couldWrite: [{ agentId: "a", name: "website" }, { agentId: "b", name: "Keeper" }] }))).toBe("website or Keeper");
+    expect(changeTitle(commit({}))).toBe("You or another program");
+    expect(changeTitle(commit({ kind: "while-off" }))).toBe("Changed while Handler was not running · by you or another program");
+    expect(changeTitle(commit({ kind: "undo" }))).toBe("Undo (by you)");
+  });
+
+  it("shows a diff's lines with the sign apart from the text, a gap between hunks", () => {
+    // If this fails: "+- long walks" again, a diff's + glued to the list's own -.
+    expect(diffLines("@@ -1,2 +1,3 @@\n # Likes\n-- tea\n+- long walks\n@@ -9 +10 @@\n x\n")).toEqual([
+      { kind: "same", sign: "", text: "# Likes" },
+      { kind: "del", sign: "−", text: "- tea" },
+      { kind: "add", sign: "+", text: "- long walks" },
+      { kind: "gap", sign: "", text: "…" },
+      { kind: "same", sign: "", text: "x" },
+    ]);
+  });
+
+  it("says each file's change in a sentence, from what handlerd counted", () => {
+    // If this fails: a change reads as numbers instead of "added 1 line under Likes".
+    const say = (f: Parameters<typeof fileChange>[0], undo = false): string => {
+      const { says, under } = fileChange(f, undo);
+      return under ? `${says} under ${under}` : says;
+    };
+    expect(say({ path: "likes.md", change: "changed", added: 1, removed: 0, under: "Likes" })).toBe("added 1 line under Likes");
+    expect(say({ path: "people.md", change: "added", added: 1, removed: 0 })).toBe("new file, 1 line");
+    expect(say({ path: "likes.md", change: "changed", added: 0, removed: 1, under: "Likes" })).toBe("removed 1 line under Likes");
+    expect(say({ path: "a.md", change: "changed", added: 1, removed: 1 })).toBe("changed 1 line");
+    expect(say({ path: "a.md", change: "changed", added: 2, removed: 1, under: "Two" })).toBe("added 2 lines, removed 1 under Two");
+    expect(say({ path: "old.md", change: "deleted", added: 0, removed: 2 })).toBe("file removed, 2 lines");
+    expect(say({ path: "big.bin", change: "changed" })).toBe("changed"); // not text, or not counted
+    expect(say({ path: "l", change: "added", link: true, linkTarget: "/etc" } as Parameters<typeof fileChange>[0])).toBe("new file, a link to /etc");
+    expect(say({ path: "a.md", change: "changed", added: 2, removed: 0 }, true)).toBe("put back");
+    expect(say({ path: "new.md", change: "deleted", added: 0, removed: 3 }, true)).toBe("removed");
+  });
+});
+
+describe("an account's login when it does not work (E1, E8)", () => {
+  const now = Date.parse("2026-11-15T12:00:00Z");
+
+  it("says Logged out, and Log in again, when the login it had ended", () => {
+    const ended = { status: "incomplete" as const, expiresAt: "2026-11-13T12:00:00Z", problems: ["its token expired on 2026-11-13: make a new one"] };
+    expect(loginProblem(ended, now)).toEqual({ text: "Logged out 2 days ago", action: "Log in again", ended: true });
+  });
+
+  it("says Not logged in, and Log in, when it has none", () => {
+    expect(loginProblem({ status: "incomplete", problems: ["not logged in"] }, now)).toEqual({ text: "Not logged in", action: "Log in", ended: false });
+    expect(loginProblem({ status: "incomplete" }, now)?.text).toBe("Not logged in");
+  });
+
+  it("says nothing when it is ready or cannot be read", () => {
+    expect(loginProblem({ status: "ready", expiresAt: "2027-01-01T00:00:00Z" }, now)).toBeNull();
+    expect(loginProblem({ status: "invalid" }, now)).toBeNull();
   });
 });

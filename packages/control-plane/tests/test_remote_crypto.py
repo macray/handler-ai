@@ -36,7 +36,7 @@ def test_round_trip() -> None:
     assert rc.seal(KEY, HOST, DEV, "up", PLAIN)["nonce"] != envelope["nonce"]
 
 
-@pytest.mark.rule("envelope.bound-to-its-way")
+@pytest.mark.rule("envelope.bound-to-its-host-device-and-direction")
 @pytest.mark.parametrize(
     ("key", "host", "dev", "direction", "change"),
     [
@@ -64,7 +64,9 @@ def test_anything_else_is_refused(
 
 @pytest.mark.rule("envelope.sealed-end-to-end", "device.paired-from-this-computer-only")
 def test_pairing_fragment_carries_what_the_device_needs() -> None:
-    fragment = rc.pairing_fragment("https://gw.example", HOST, DEV, KEY, "phone")
+    fragment = rc.pairing_fragment(
+        "https://gw.example", HOST, DEV, KEY, name="phone", computer="desk"
+    )
     payload = json.loads(rc.unb64(fragment.removeprefix("pair=")))
     assert payload == {
         "v": 1,
@@ -73,6 +75,7 @@ def test_pairing_fragment_carries_what_the_device_needs() -> None:
         "d": DEV,
         "k": VECTORS["key"],
         "n": "phone",
+        "c": "desk",
     }
     # the gateway only ever gets the hash of a token derived from the key, never the key
     assert rc.gateway_token_hash(KEY) != rc.b64(KEY)

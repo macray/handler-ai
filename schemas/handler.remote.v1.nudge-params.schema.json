@@ -1,0 +1,16 @@
+{
+  "$id": "urn:handler.remote/v1/nudge-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/nudge_dismiss` \u2192 InboxMessage: a nudge of the device's person dismissed\n(H.17).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "NudgeParams",
+  "type": "object"
+}

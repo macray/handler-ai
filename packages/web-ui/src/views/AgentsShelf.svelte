@@ -2,7 +2,7 @@
   // The Library's Agents shelf: get agents and see the ones you have; they work in their
   // projects. Yours: every agent of your projects and outside projects, grouped by where it
   // works, each saying where it came from (an agents file's name, D.23, or made here), with All /
-  // From others / Made here and a search; a row opens the agent where it works. Get more: what
+  // From others / Made here and a search; a row opens the agent where it works. Community: what
   // the sources offer (D.26, SourceShelf) and an agents file (an export, D.23); either goes on to
   // the set-up page, which asks where they go. `project` (a project's Get agents…): they go there,
   // said above the cards, until "Not for a project".
@@ -13,16 +13,17 @@
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import LoadingCards from "../components/LoadingCards.svelte";
+  import ShelfBar from "../components/ShelfBar.svelte";
   import SourceShelf from "../components/SourceShelf.svelte";
   import { api } from "../lib/api";
   import { areas } from "../lib/areas.svelte";
   import type { Agent, Project } from "../lib/contracts.gen";
   import { productName } from "../lib/harnesses.svelte";
-  import { agentGroups, LIBRARY_WIDTH, yourAgents, type AgentFilter, type ShelfAgent } from "../lib/library";
+  import { agentGroups, LIBRARY_WIDTH, yourAgents, type AgentFilter, type ShelfAgent, type ShelfLists } from "../lib/library";
   import { agentLabel } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
 
-  let { more = false, project: into }: { more?: boolean; project?: string } = $props();
+  let { more = false, project: into, lists }: { more?: boolean; project?: string; lists?: ShelfLists } = $props();
 
   let agents = $state<ShelfAgent[] | null>(null);
   let projectList = $state<Project[]>([]);
@@ -80,6 +81,7 @@
 
 <div class="flex-1 overflow-y-auto">
   <div class="mx-auto w-full {LIBRARY_WIDTH} space-y-5 px-8 py-6" data-testid="agents-shelf">
+    <ShelfBar {lists} />
     {#if error}<p class="text-sm text-danger" data-testid="agents-error">{error}</p>{/if}
 
     {#if more}

@@ -13,6 +13,11 @@ Start a session with an agent in the current folder, and talk to it in this term
 The session is held by the daemon: closing the terminal does not stop it, and the web UI and a
 paired phone show the same session.
 
+An agent program not prepared on this computer yet (only the first one is, by `handler setup`) is
+prepared then, as the web UI's *Prepare now*: a few minutes, once, followed in the terminal; the
+session then starts with your request. With `--detach`, the build is started and the session
+starts by itself once it is done.
+
 ## Usage
 
 ```
@@ -49,10 +54,10 @@ handler run reviewer -p "review the last commit"   # the project's agent named r
 handler run claude-work                            # the project's agent on claude-work
 
 cd ~/code/scratch
-handler run claude-perso -p "what does this repository do?"
-handler run claude-perso --network open            # asks: save this to the agent?
+handler run claude -p "what does this repository do?"
+handler run claude --network open            # asks: save this to the agent?
 handler run local-llama --harness pi --model qwen3 # a provider: which harness, which model
-handler run claude-perso --name experiment --containers  # a second agent for this folder
+handler run claude --name experiment --containers  # a second agent for this folder
 ```
 
 ## Good to know

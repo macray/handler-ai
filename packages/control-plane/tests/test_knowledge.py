@@ -4,10 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from handler_contracts import HostFolder
+from handler_contracts import HostFolder, KnowledgeFolderUse
 from handler_control import knowledge
 from handler_control.knowledge import KnowledgeConflictError, KnowledgeError
 from handler_control.settings import Settings
+
+
+def read(*folders: str) -> list[KnowledgeFolderUse]:
+    """Unchecked, as `check` must take what a request could not send (`/etc`)."""
+    return [KnowledgeFolderUse.model_construct(folder=f, access="read") for f in folders]
+
+
+def write(*folders: str) -> list[KnowledgeFolderUse]:
+    return [KnowledgeFolderUse.model_construct(folder=f, access="write") for f in folders]
 
 
 @pytest.fixture
@@ -21,8 +30,8 @@ def root(tmp_path: Path) -> Path:
 
 @pytest.mark.rule("notes.follows-its-root")
 def test_check_normalizes_and_sorts(root: Path) -> None:
-    folders = ["projects/shop", "me", str(root / "me"), "./projects/blog/"]
-    assert knowledge.check(root, folders) == ["me", "projects/blog", "projects/shop"]
+    folders = read("projects/shop", "me", str(root / "me"), "./projects/blog/")
+    assert knowledge.check(root, folders) == read("me", "projects/blog", "projects/shop")
     assert knowledge.check(root, []) == []
 
 
@@ -42,7 +51,7 @@ def test_check_normalizes_and_sorts(root: Path) -> None:
 )
 def test_check_refuses(root: Path, folders: list[str], error: str) -> None:
     with pytest.raises(KnowledgeError, match=error):
-        knowledge.check(root, folders)
+        knowledge.check(root, read(*folders))
 
 
 @pytest.mark.rule("notes.only-inside-its-root")
@@ -50,16 +59,50 @@ def test_check_refuses_a_symlink_out_of_the_root(root: Path, tmp_path: Path) -> 
     (tmp_path / "secret").mkdir()
     (root / "link").symlink_to(tmp_path / "secret")
     with pytest.raises(KnowledgeError, match="outside the notes root"):
-        knowledge.check(root, ["link"])
+        knowledge.check(root, read("link"))
 
 
 @pytest.mark.rule("notes.read-only-at-its-name")
 def test_folders_are_read_only_at_knowledge_name(root: Path) -> None:
-    assert knowledge.folders(root, ["me", "projects/shop"]) == [
+    assert knowledge.folders(root, read("me", "projects/shop")) == [
         HostFolder(source=str(root / "me"), target="/notes/me", writable=False),
         HostFolder(source=str(root / "projects" / "shop"), target="/notes/shop", writable=False),
     ]
-    assert knowledge.folders(root, ["."])[0].target == "/notes/knowledge"
+    assert knowledge.folders(root, read("."))[0].target == "/notes/knowledge"
+
+
+@pytest.mark.rule("notes.read-only-at-its-name", "notes.agents-never-reach-the-history")
+def test_a_folder_given_read_write_keeps_its_git_read_only(root: Path) -> None:
+    (root / "me" / ".git").mkdir()
+    (root / "projects" / "shop" / ".git").mkdir()  # given read-only: nothing more to protect
+    assert knowledge.folders(root, [*write("me"), *read("projects/shop")]) == [
+        HostFolder(source=str(root / "me"), target="/notes/me", writable=True),
+        HostFolder(source=str(root / "me" / ".git"), target="/notes/me/.git", writable=False),
+        HostFolder(source=str(root / "projects" / "shop"), target="/notes/shop", writable=False),
+    ]
+    assert knowledge.folders(root, write("projects/blog")) == [  # no .git: nothing over it
+        HostFolder(source=str(root / "projects" / "blog"), target="/notes/blog", writable=True),
+    ]
+
+
+@pytest.mark.rule("notes.read-only-at-its-name", "notes.agents-never-reach-the-history")
+def test_check_keeps_each_access_and_refuses_what_cannot_be_kept_read_only(
+    root: Path, tmp_path: Path
+) -> None:
+    assert knowledge.check(root, [*write("me"), *read("projects/shop"), *write("me")]) == [
+        *write("me"),
+        *read("projects/shop"),
+    ]
+    with pytest.raises(KnowledgeError, match="given twice"):
+        knowledge.check(root, [*write("me"), *read("me")])
+    (root / "me" / ".git").write_text("gitdir: /elsewhere\n")  # a worktree's
+    with pytest.raises(KnowledgeError, match="not a folder"):
+        knowledge.check(root, write("me"))
+    assert knowledge.check(root, read("me")) == read("me")  # read-only: nothing to keep
+    (root / "me" / ".git").unlink()
+    (root / "me" / ".git").symlink_to(tmp_path)
+    with pytest.raises(KnowledgeError, match="not a folder"):
+        knowledge.check(root, write("me"))
 
 
 @pytest.mark.rule("notes.follows-its-root")
@@ -93,10 +136,13 @@ def settings(tmp_path: Path, forced: Path | None = None) -> Settings:
 
 
 @pytest.mark.rule("notes.follows-its-root")
-def test_root_default_config_and_env(root: Path, tmp_path: Path) -> None:
+def test_root_default_config_and_env(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     s = settings(tmp_path)
-    assert knowledge.root(s) == (tmp_path / "data" / "notes", "default")
-    assert (tmp_path / "data" / "notes").is_dir()  # made: nothing to set up
+    assert knowledge.root(s) == (tmp_path / "home" / "notes", "default")
+    assert (tmp_path / "home" / "notes").is_dir()  # made: nothing to set up, outside the data
     knowledge.set_root(s, str(root))
     assert knowledge.root(s) == (root.resolve(), "config")
     with pytest.raises(KnowledgeError, match="not a folder"):
@@ -115,6 +161,7 @@ def test_root_default_config_and_env(root: Path, tmp_path: Path) -> None:
         knowledge.set_root(forced, str(tmp_path))
 
 
+@pytest.mark.rule("notes.follows-its-root")
 def test_check_root(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     assert knowledge.check_root(str(root)).state == "folder"
@@ -158,7 +205,7 @@ def test_browse_and_read(root: Path) -> None:
         knowledge.browse(root, "../")
 
 
-@pytest.mark.rule("notes.only-inside-its-root", "notes.written-only-by-declared-appends")
+@pytest.mark.rule("notes.only-inside-its-root", "notes.handler-writes-only-what-you-asked")
 def test_check_note_for_appends(root: Path) -> None:
     """I.6: the notes an automation may append to (K2, K5)."""
     assert knowledge.check_note(root, "projects/shop/issues.md") == "projects/shop/issues.md"
@@ -179,7 +226,7 @@ def test_check_note_for_appends(root: Path) -> None:
         knowledge.check_note(root, "dir.md")
 
 
-@pytest.mark.rule("notes.written-only-by-declared-appends")
+@pytest.mark.rule("notes.handler-writes-only-what-you-asked")
 def test_append_note_creates_then_appends(root: Path) -> None:
     knowledge.append_note(root, "me/log.md", "one\n")
     knowledge.append_note(root, "me/log.md", "two\n")

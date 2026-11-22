@@ -26,6 +26,7 @@ def test_the_official_source_offers_what_handler_reviewed(daemon: Daemon) -> Non
     )
     journal = items[("app", "journal")]
     assert journal["version"] and journal["description"] and "error" not in journal
+    assert journal["title"] == "Journal"  # its manifest's (H.1)
 
 
 @pytest.mark.rule("source.never-over-an-app-from-elsewhere")
@@ -34,6 +35,7 @@ def test_an_app_is_taken_from_a_source_then_its_next_version(daemon: Daemon) -> 
         c.get("/v1/sources")
         first = c.post("/v1/sources/official/apps/journal")
         assert first.status_code == 201 and first.json()["fromSource"] == "official"
+        assert first.json()["title"] == "Journal"  # never deployed: its source's (H.1)
         [official] = c.get("/v1/sources").json()
         journal = next(i for i in official["items"] if i["name"] == "journal")
         assert journal["installed"] and not journal["update"]
@@ -78,7 +80,7 @@ def _commit(repo: Path, changes: dict[str, str]) -> None:
         porcelain.commit(r, b"next", author=b"t <t@t>", committer=b"t <t@t>")
 
 
-@pytest.mark.rule("source.only-offers")
+@pytest.mark.rule("source.offers-never-installs")
 def test_a_new_commit_is_offered_never_applied(daemon: Daemon) -> None:
     """The source's next commit changes an app taken from it and an addon installed from it:
     read again, both stay as they are, each offered as an update.
@@ -107,6 +109,43 @@ def test_a_new_commit_is_offered_never_applied(daemon: Daemon) -> None:
             assert kept.read_text() == installed
         finally:
             _commit(repo, before)
+            c.post("/v1/sources/official/refresh")
+            c.delete("/v1/apps/journal")
+
+
+@pytest.mark.rule("deploy.an-update-takes-then-deploys", "deploy.what-it-adds-is-said-first")
+def test_update_takes_the_version_its_source_offers_then_deploys_it(daemon: Daemon) -> None:
+    """H.6: the app's view says the version its source now offers, what it changes and what it
+    adds; Update takes it then deploys it. Here the deploy fails (its folder is not given): the
+    version taken stays kept, ready to deploy, and nothing else is offered.
+
+    If this fails: Update installs a version without saying first what it is, or loses it."""
+    repo = daemon.config_dir.parent / "official-source"
+    app_toml = "apps/journal/app.toml"
+    before = (repo / app_toml).read_text()
+    with daemon.http() as c:
+        c.get("/v1/sources")
+        assert c.post("/v1/sources/official/apps/journal").status_code == 201
+        version = c.get("/v1/apps/journal").json()["source"]["version"]
+        assert c.get("/v1/apps/journal").json().get("offered") is None  # the same version
+        try:
+            next_version = '"9.9.9"\nchanges = "Pages by month"'
+            _commit(repo, {app_toml: before.replace(f'"{version}"', next_version, 1)})
+            c.post("/v1/sources/official/refresh")
+            offered = c.get("/v1/apps/journal").json()["offered"]
+            assert (offered["source"], offered["version"]) == ("official", "9.9.9")
+            assert offered["changes"] == "Pages by month" and offered["addedNeeds"]
+            failed = c.post("/v1/apps/journal/update")
+            assert failed.status_code == 422  # its folder not given: not deployed
+            app = c.get("/v1/apps/journal").json()
+            assert (app["source"]["version"], app["source"]["changes"]) == (
+                "9.9.9",
+                "Pages by month",
+            )
+            assert app.get("current") is None and app.get("offered") is None
+            assert c.post("/v1/apps/journal/update").status_code == 409  # none other offered
+        finally:
+            _commit(repo, {app_toml: before})
             c.post("/v1/sources/official/refresh")
             c.delete("/v1/apps/journal")
 

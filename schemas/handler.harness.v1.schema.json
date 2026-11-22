@@ -203,16 +203,16 @@
           "default": null,
           "title": "Help"
         },
-        "plans": {
+        "subscriptions": {
           "default": [],
           "items": {
             "minLength": 1,
             "type": "string"
           },
-          "title": "Plans",
+          "title": "Subscriptions",
           "type": "array"
         },
-        "planEnv": {
+        "subscriptionEnv": {
           "anyOf": [
             {
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -223,7 +223,7 @@
             }
           ],
           "default": null,
-          "title": "Planenv"
+          "title": "Subscriptionenv"
         }
       },
       "required": [
@@ -577,6 +577,12 @@
       "default": null,
       "title": "Mcpconfigfile"
     },
+    "sessionMeta": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Sessionmeta",
+      "type": "object"
+    },
     "env": {
       "anyOf": [
         {
@@ -593,6 +599,23 @@
       ],
       "default": null,
       "title": "Env"
+    },
+    "unattendedEnv": {
+      "anyOf": [
+        {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unattendedenv"
     },
     "accountConnectors": {
       "anyOf": [

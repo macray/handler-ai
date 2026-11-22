@@ -1,13 +1,23 @@
 <script lang="ts">
-  // Settings → Your phone (D.7, remote design), one page: 1 · the gateway (its address and its
-  // light, the host token sealed, Change; not set: its two fields and Connect; How to set one up
-  // folded), then 2 · your devices (Pair a device, each one paired and last seen, Revoke), greyed
-  // until a gateway is set. Pairing opens a dialog that shows the device's key once, as a QR code
-  // whose URL carries it in the fragment (never sent to a server).
+  // Settings → Your phone (D.7, remote design), one page: 1 · the gateway, then 2 · your devices.
+  // Not set (or Change): a guided setup (E5), its ways as tabs (Container, Without a container;
+  // a community gateway, soon), steps 1–3 the commands to run on the gateway's machine (lib/gateway),
+  // step 4 its address and the host token step 3 printed, and Connect, which waits for handlerd's
+  // one try of the gateway (D.7): saved either way, what failed is said in words beside it, the
+  // form kept open to fix it (Cancel: the saved gateway, its light red). Set:
+  // its address and its light, what went wrong in words, the host token sealed, Change, and the
+  // computer's name (what the phones paired from now on call it; the hostname until renamed). Your
+  // devices (Pair a device, each one paired and last seen, Revoke) are greyed until a gateway is
+  // set (Pair a device says why, its fix step 1: E1). Pairing opens a dialog that shows the
+  // device's key once, as a QR code whose URL carries it in the fragment (never sent to a server).
+  import { ask } from "../lib/ask.svelte";
   import Lock from "@lucide/svelte/icons/lock";
   import Plus from "@lucide/svelte/icons/plus";
   import Smartphone from "@lucide/svelte/icons/smartphone";
+  import X from "@lucide/svelte/icons/x";
   import Dialog from "./Dialog.svelte";
+  import DisabledReason from "./DisabledReason.svelte";
+  import { PAIR_BLOCKED } from "../lib/blocked";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
@@ -16,11 +26,14 @@
   import { LIGHT_LABEL, lightTone, remote } from "../lib/remote.svelte";
   import { ago } from "../lib/agents";
   import QrCode from "./QrCode.svelte";
+  import CommandLine from "./CommandLine.svelte";
+  import { connectError, CONTAINER, GATEWAY_WAYS, gatewayProblem, HTTPS_COMMAND } from "../lib/gateway";
+  import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "../lib/form";
 
   let url = $state("");
   let token = $state("");
   let editing = $state(false);
-  let howOpen = $state(false);
+  let way = $state(CONTAINER); // the tab shown
   let deviceName = $state("");
   let forFamily = $state(false); // the device is a family member's: apps only
   let person = $state(""); // that family member's name
@@ -28,32 +41,60 @@
   let error = $state<string | null>(null); // the gateway's or a device's
   let pairError = $state<string | null>(null); // the dialog's
   let busy = $state(false);
+  let connecting = $state(false); // Connect waits for the try (a few seconds at most)
   let pairOpen = $state(false);
+  let naming = $state(false); // the computer's name being changed
+  let computerName = $state("");
 
   const status = $derived(remote.status);
   const connected = $derived(Boolean(status?.gatewayUrl));
+  const problem = $derived(gatewayProblem(status?.light, status?.detail));
 
   $effect(() => {
     remote.start();
   });
 
-  async function run(action: () => Promise<unknown>, onError = (m: string) => (error = m)): Promise<void> {
+  async function run(
+    action: () => Promise<unknown>,
+    onError = (m: string) => (error = m),
+    words = (e: unknown) => (e as Error).message,
+  ): Promise<void> {
     busy = true;
     error = pairError = null;
     try {
       await action();
     } catch (e) {
-      onError((e as Error).message);
+      onError(words(e));
     } finally {
       busy = false;
     }
   }
 
-  function saveGateway(): Promise<void> {
+  async function saveGateway(): Promise<void> {
+    connecting = true;
+    await run(
+      async () => {
+        await remote.setGateway(url, token);
+        // saved, and tried once: what failed stays beside Connect, the form open to fix it
+        const failed = gatewayProblem(remote.status?.light, remote.status?.detail, true);
+        if (failed) {
+          editing = true;
+          error = failed;
+          return;
+        }
+        token = "";
+        editing = false;
+      },
+      (m) => (error = m),
+      connectError,
+    );
+    connecting = false;
+  }
+
+  function saveName(): Promise<void> {
     return run(async () => {
-      await remote.setGateway(url, token);
-      token = "";
-      editing = false;
+      await remote.setComputerName(computerName);
+      naming = false;
     });
   }
 
@@ -75,8 +116,8 @@
     );
   }
 
-  function revoke(id: string, name: string): void {
-    if (confirm(`Revoke ${name}? It loses access at once; pairing it again needs a new QR code.`)) void run(() => remote.revoke(id));
+  async function revoke(id: string, name: string): Promise<void> {
+    if (await ask({ title: `Revoke ${name}?`, detail: "It loses access at once; pairing it again needs a new QR code.", yes: "Revoke", danger: true })) void run(() => remote.revoke(id));
   }
 
   const family = (person: string | undefined) => Boolean(person && person !== "owner");
@@ -92,78 +133,138 @@
   </span>
 {/snippet}
 
-{#snippet command(text: string)}
-  <code class="block w-fit max-w-full overflow-x-auto rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs">{text}</code>
+{#snippet step(n: number)}
+  <span class="flex size-5 shrink-0 items-center justify-center rounded-full border font-mono text-xs text-muted-foreground">{n}</span>
 {/snippet}
 
 <section class="space-y-10" data-testid="phone-settings">
   {#if !status}
     <Skeleton class="h-40 w-full rounded-[10px]" role="status" aria-label="Loading" data-testid="loading" />
   {:else}
-    <!-- 1 · the gateway -->
+    <!-- 1 · the gateway: the guided setup until one is set (or Change), then it and its light -->
     <div class="space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        {@render heading(1, "The gateway", "your own, on a machine both can reach")}
-        <button type="button" class="text-sm text-primary hover:underline" aria-expanded={howOpen} onclick={() => (howOpen = !howOpen)} data-testid="gateway-how">How to set one up</button>
-      </div>
-      {#if howOpen}
-        <ol class="enter list-decimal space-y-3 rounded-[10px] border bg-muted/40 py-4 pr-4 pl-9 text-sm" data-testid="remote-steps">
-          <li class="space-y-1.5">
-            <p>Run it where your phone reaches over HTTPS (your Tailscale network, say). It only relays encrypted messages: in Handler's <code>remote-gateway/</code> folder, as a container or with <code>uv tool install</code>.</p>
-            {@render command("handler-gateway")}
-          </li>
-          <li class="space-y-1.5">
-            <p>On the gateway, this prints this computer's host token, shown once: enter it here with the gateway's address.</p>
-            {@render command("handler-gateway add-host laptop")}
-          </li>
-          <li><p>Pair your phone below, then turn on its button in a session: the phone lists it.</p></li>
-        </ol>
-      {/if}
       {#if !connected || editing}
-        <form class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel" onsubmit={(e) => (e.preventDefault(), void saveGateway())} data-testid="gateway-form">
-          <div class={ROW}>
-            <Label for="gateway-url" class={LABEL}>Address</Label>
-            <Input id="gateway-url" class="max-w-md flex-1 font-mono text-xs" bind:value={url} placeholder="https://gateway.your-tailnet.ts.net" required data-testid="gateway-url" />
+        <div class="space-y-4 rounded-[10px] border bg-card p-5 text-sm shadow-panel" data-testid="gateway-setup">
+          <div class="flex flex-wrap items-center gap-3">
+            {@render heading(1, editing ? "Change your gateway" : "Set up your gateway", "")}
+            <div class="ml-auto inline-flex rounded-lg border bg-muted p-0.5" role="tablist" aria-label="how the gateway runs">
+              {#each GATEWAY_WAYS as w (w.id)}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={w.id === way.id}
+                  disabled={w.soon}
+                  title={w.soon ? "Soon: the address of a gateway someone else runs, instead of steps 1–3" : undefined}
+                  class="{SEGMENT} {w.soon ? 'cursor-default text-muted-foreground/60' : w.id === way.id ? SEGMENT_ON : SEGMENT_OFF}"
+                  onclick={() => (way = w)}
+                  data-testid="gateway-way-{w.id}">{w.label}{#if w.soon}{" "}· soon{/if}</button
+                >
+              {/each}
+            </div>
           </div>
-          <div class={ROW}>
-            <Label for="host-token" class={LABEL}>Host token</Label>
-            <Input id="host-token" class="max-w-md flex-1" type="password" bind:value={token} placeholder="h_…" required autocomplete="off" data-testid="host-token" />
-          </div>
-          <div class="{ROW} justify-end">
-            {#if error}<p class="mr-auto text-danger" data-testid="remote-error">{error}</p>{/if}
-            {#if editing}
-              <Button variant="ghost" size="sm" class="mr-auto text-destructive hover:text-destructive" disabled={busy} onclick={() => run(async () => ((editing = false), await remote.clearGateway()))}>Remove the gateway</Button>
-              <Button variant="ghost" size="sm" onclick={() => (editing = false)}>Cancel</Button>
+          <p class="text-muted-foreground">
+            On an always-on machine your phone and this computer both reach: a home server, a NAS, a small VPS. <b class="font-medium text-foreground">Not this computer</b>: Handler never
+            accepts connections from outside. About 10 minutes; every detail is in the phone guide, <code>docs/phone.md</code> in Handler's source folder.
+          </p>
+          <ol class="space-y-5" data-testid="remote-steps">
+            {#if way.run}
+              <li class="flex gap-3">
+                {@render step(1)}
+                <div class="min-w-0 flex-1 space-y-2">
+                  <p><b class="font-semibold">Run the gateway</b> <span class="text-muted-foreground">{way.run.note}</span></p>
+                  <CommandLine command={way.run.command} />
+                  {#if way.run.after}<p class="text-xs text-muted-foreground">{way.run.after}</p>{/if}
+                </div>
+              </li>
+              <li class="flex gap-3">
+                {@render step(2)}
+                <div class="min-w-0 flex-1 space-y-2">
+                  <p><b class="font-semibold">Reach it over HTTPS</b> <span class="text-muted-foreground">with Tailscale (recommended: only your own devices reach it)</span></p>
+                  <CommandLine command={HTTPS_COMMAND} />
+                  <p class="text-xs text-muted-foreground">
+                    It prints the address, like <code>https://nas.your-tailnet.ts.net</code>. Install Tailscale on your phone too. Public, behind Caddy instead: the phone guide.
+                  </p>
+                </div>
+              </li>
+              <li class="flex gap-3">
+                {@render step(3)}
+                <div class="min-w-0 flex-1 space-y-2">
+                  <p><b class="font-semibold">Give this computer its token</b> <span class="text-muted-foreground">it prints one line starting with <code>h_</code>, shown once</span></p>
+                  <CommandLine command={way.addHost ?? ""} />
+                  <p class="text-xs text-muted-foreground"><code>laptop</code> is this computer's name at the gateway: any name will do.</p>
+                </div>
+              </li>
             {/if}
-            <Button type="submit" size="sm" disabled={busy || !url.trim() || !token.trim()} data-testid="save-gateway">Connect</Button>
-          </div>
-        </form>
+            <li class="flex gap-3">
+              {@render step(4)}
+              <form class="min-w-0 flex-1 space-y-3" onsubmit={(e) => (e.preventDefault(), void saveGateway())} data-testid="gateway-form">
+                <p><b class="font-semibold">Paste them here</b></p>
+                <div class="grid max-w-xl grid-cols-[7rem_1fr] items-center gap-x-4 gap-y-2.5">
+                  <Label for="gateway-url" class="font-normal text-muted-foreground">Address</Label>
+                  <Input id="gateway-url" class="font-mono text-xs" bind:value={url} placeholder="https://nas.your-tailnet.ts.net" required data-testid="gateway-url" />
+                  <Label for="host-token" class="font-normal text-muted-foreground">Host token</Label>
+                  <Input id="host-token" class="font-mono text-xs" type="password" bind:value={token} placeholder="h_…" required autocomplete="off" data-testid="host-token" />
+                </div>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                  {#if error}<p class="mr-auto flex items-start gap-1.5 text-danger" data-testid="remote-error"><X class="mt-0.5 size-3.5 shrink-0" />{error}</p>{/if}
+                  {#if editing}
+                    <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" disabled={busy} onclick={() => run(async () => ((editing = false), await remote.clearGateway()))}
+                      >Remove the gateway</Button
+                    >
+                    <Button variant="ghost" size="sm" onclick={() => ((editing = false), (error = null))}>Cancel</Button>
+                  {/if}
+                  <Button type="submit" size="sm" disabled={busy || !url.trim() || !token.trim()} data-testid="save-gateway">{connecting ? "Connecting…" : "Connect"}</Button>
+                </div>
+              </form>
+            </li>
+          </ol>
+        </div>
       {:else}
+        {@render heading(1, "Your gateway", "")}
         <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel" data-testid="gateway">
           <li class={ROW}>
             <span class={LABEL}>Address</span>
             <span class="fact min-w-0 flex-1 break-all" title="this computer: {status.hostId}">{status.gatewayUrl}</span>
             <span class="flex items-center gap-1.5 text-xs" data-testid="remote-light"><span class="size-2 rounded-full {lightTone(status.light)}" aria-hidden="true"></span>{LIGHT_LABEL[status.light]}</span>
           </li>
-          {#if status.detail}<li class="{ROW} text-danger">{status.detail}</li>{/if}
+          {#if problem}
+            <li class="flex items-start gap-2 px-4 py-3.5 text-danger" data-testid="gateway-problem"><X class="mt-0.5 size-3.5 shrink-0" />{problem}</li>
+          {:else if status.light === "idle"}
+            <li class="{ROW} text-muted-foreground" data-testid="gateway-untried">Not tried yet: Handler reaches the gateway only while something is on your phone (a session or an app).</li>
+          {/if}
           <li class={ROW}>
             <span class={LABEL}>Host token</span>
             <span class="flex flex-1 items-center gap-1 text-xs text-ok"><Lock class="size-3" />sealed</span>
-            <Button variant="ghost" size="sm" onclick={() => ((editing = true), (url = status?.gatewayUrl ?? ""))} data-testid="gateway-change">Change</Button>
+            <Button variant="ghost" size="sm" onclick={() => ((editing = true), (error = null), (url = status?.gatewayUrl ?? ""))} data-testid="gateway-change">Change</Button>
+          </li>
+          <li class={ROW} data-testid="computer-name">
+            <span class={LABEL}>This computer's name</span>
+            {#if naming}
+              <form class="flex min-w-0 flex-1 flex-wrap items-center gap-2" onsubmit={(e) => (e.preventDefault(), void saveName())}>
+                <Input class="max-w-xs" bind:value={computerName} maxlength={60} required aria-label="This computer's name" data-testid="computer-name-input" />
+                <Button type="submit" size="sm" disabled={busy || !computerName.trim()} data-testid="computer-name-save">Save</Button>
+                <Button variant="ghost" size="sm" onclick={() => (naming = false)}>Cancel</Button>
+                <p class="basis-full text-xs text-muted-foreground">Phones paired before keep the name they were given, until paired again.</p>
+              </form>
+            {:else}
+              <span class="min-w-0 flex-1"><span data-testid="computer-name-value">{status.computerName}</span> <span class="text-xs text-muted-foreground">what your phones call it</span></span>
+              <Button variant="ghost" size="sm" onclick={() => ((naming = true), (error = null), (computerName = status?.computerName ?? ""))} data-testid="computer-name-change">Rename</Button>
+            {/if}
           </li>
         </ul>
       {/if}
     </div>
 
-    <!-- 2 · the devices: greyed until a gateway is set -->
-    <div class="space-y-3 {connected ? '' : 'pointer-events-none opacity-50'}" aria-disabled={!connected} data-testid="devices">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        {@render heading(2, "Your devices", "")}
+    <!-- 2 · the devices: greyed until a gateway is set, but for why and its fix (step 1) -->
+    <div class="space-y-3" data-testid="devices">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="mr-auto {connected ? '' : 'opacity-50'}">{@render heading(2, "Your devices", "")}</span>
+        {#if !connected}<DisabledReason blocked={PAIR_BLOCKED} testid="pair-todo" />{/if}
         <Button size="sm" disabled={!connected} onclick={openPairing} data-testid="pair-open"><Plus />Pair a device</Button>
       </div>
       {#if connected && !editing && error}<p class="text-sm text-danger" data-testid="remote-error">{error}</p>{/if}
       {#if status.devices?.length}
-        <ul class="divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
+        <ul class="{connected ? '' : 'pointer-events-none opacity-50'} divide-y overflow-hidden rounded-[10px] border bg-card text-sm shadow-panel">
           {#each status.devices as d (d.id)}
             <li class="enter {ROW}" data-testid="device-row">
               <span class="flex w-36 shrink-0 items-center gap-2 font-medium" title={d.id}><Smartphone class="size-4 text-muted-foreground" /><span class="truncate">{d.name}</span></span>
@@ -176,7 +277,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">No device yet</p>
+        <p class="rounded-[10px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground {connected ? '' : 'opacity-50'}">No device yet</p>
       {/if}
     </div>
   {/if}

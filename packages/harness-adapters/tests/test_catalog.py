@@ -7,7 +7,7 @@ import pytest
 from handler_harness import addons, catalog, toolbox
 
 
-@pytest.mark.rule("toolbox.made-of-its-three-parts")
+@pytest.mark.rule("toolbox.base-then-packages-then-your-lines")
 def test_seeding_writes_the_default_toolbox_toml_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -31,6 +31,7 @@ def test_the_default_toolbox_holds_nothing_of_handler(monkeypatch: pytest.Monkey
     assert "COPY" not in text and "ADD" not in text
 
 
+@pytest.mark.rule("tool.yours-replaces-a-built-in-of-its-name")
 def test_a_users_addon_replaces_a_builtin_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

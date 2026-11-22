@@ -96,7 +96,9 @@ def checkins(phone: Device) -> list[str]:
     return json.loads(base64.b64decode(result["body"]))
 
 
-@pytest.mark.rule("envelope.taken-once-before-it-expires", "queue.only-declared-routes")
+@pytest.mark.rule(
+    "envelope.taken-once-before-it-expires", "queued-call.only-to-a-route-declared-queued"
+)
 def test_queued_call_runs_once(phone: Device) -> None:
     assert [a["queued"] for a in phone.request(None, "_handler/remote/list_apps")["apps"]] == [
         ["POST /api/checkin"]
@@ -115,13 +117,16 @@ def test_queued_call_runs_once(phone: Device) -> None:
     assert checkins(phone) == ["owner:done:q-1"]
 
 
-@pytest.mark.rule("envelope.taken-once-before-it-expires", "queue.only-declared-routes")
+@pytest.mark.rule(
+    "envelope.taken-once-before-it-expires", "queued-call.only-to-a-route-declared-queued"
+)
 def test_old_or_unqueued_calls_are_refused(phone: Device) -> None:
+    before = checkins(phone)
     old = phone.queue([checkin("late", "q-old")], lifetime=-1)  # its 7 days are over
     phone.wait_until(lambda: any(r["id"] == old["id"] for r in phone.rejected))
     phone.queue([checkin("x", "q-2", route="/api/tell-alice")])
     assert answer(phone, "q-2")["error"]["code"] == -32022
-    assert checkins(phone) == ["owner:done:q-1"]
+    assert checkins(phone) == before  # neither ran
 
 
 @pytest.mark.rule("envelope.taken-once-before-it-expires")

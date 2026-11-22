@@ -78,11 +78,10 @@
       "type": "object"
     },
     "AgentOrigin": {
-      "description": "What an agent was set up from, kept for good: the definition of an app's need (H.2), an\nagents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it\ncame from: where the agent lives is its home (`projectId`, `app`, `chat`).",
+      "description": "What an agent was set up from, kept for good: an agents file's agent (D.23), or the\ndefinition of one of Handler's needs (D.18). Only what it came from: where the agent lives is\nits home (`projectId`, `chat`).",
       "properties": {
         "kind": {
           "enum": [
-            "app",
             "agents-file",
             "handler-need"
           ],
@@ -112,24 +111,68 @@
           "title": "Agent"
         },
         "version": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Version"
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
         }
       },
       "required": [
         "kind",
-        "name"
+        "name",
+        "version"
       ],
       "title": "AgentOrigin",
+      "type": "object"
+    },
+    "KnowledgeFolderUse": {
+      "description": "A notes folder an agent gets (D.5), at /notes/<its name>: read-only, or read-write.",
+      "properties": {
+        "folder": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]",
+          "title": "Folder",
+          "type": "string"
+        },
+        "access": {
+          "default": "read",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "title": "Access",
+          "type": "string"
+        }
+      },
+      "required": [
+        "folder"
+      ],
+      "title": "KnowledgeFolderUse",
+      "type": "object"
+    },
+    "KnowledgeUse": {
+      "description": "A schema an agent reads or writes (D.29): it gets that schema, read-only; its documents\nare in its notes folders. `write`: it may make and change documents of that schema (where:\nits read-write folders, D.5).",
+      "properties": {
+        "schemaId": {
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$",
+          "title": "Schemaid",
+          "type": "string"
+        },
+        "access": {
+          "default": "read",
+          "enum": [
+            "read",
+            "write"
+          ],
+          "title": "Access",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaId"
+      ],
+      "title": "KnowledgeUse",
       "type": "object"
     },
     "ModelAccess": {
@@ -195,7 +238,7 @@
       "type": "object"
     }
   },
-  "description": "An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a\nproject (`projectId`: it works in the project's folder), an app (`app`: one of its parts,\nH.14), Chat (`chat`: someone you talk to, with no folder), or none (outside projects, in its\nown folder or a folder per session). The home is given at creation and never changes.",
+  "description": "An agent: the body of create (POST) and of a full update (PUT). Its home is one of: a\nproject (`projectId`: it works in the project's folder), Chat (`chat`: someone you talk to,\nwith no folder), or none (outside projects, in its own folder or a folder per session). The\nhome is given at creation and never changes.",
   "properties": {
     "model": {
       "$ref": "#/$defs/ModelAccess"
@@ -266,18 +309,33 @@
     "knowledge": {
       "default": [],
       "items": {
-        "maxLength": 1024,
-        "minLength": 1,
-        "pattern": "^[^/\\x00]",
-        "type": "string"
+        "$ref": "#/$defs/KnowledgeFolderUse"
       },
       "title": "Knowledge",
+      "type": "array"
+    },
+    "schemas": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/KnowledgeUse"
+      },
+      "title": "Schemas",
       "type": "array"
     },
     "display": {
       "default": false,
       "title": "Display",
       "type": "boolean"
+    },
+    "env": {
+      "default": {},
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "type": "string"
+        }
+      },
+      "title": "Env",
+      "type": "object"
     },
     "interface": {
       "anyOf": [
@@ -306,19 +364,6 @@
       ],
       "default": null,
       "title": "Projectid"
-    },
-    "app": {
-      "anyOf": [
-        {
-          "pattern": "^[a-z][a-z0-9-]{0,29}$",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "App"
     },
     "chat": {
       "default": false,

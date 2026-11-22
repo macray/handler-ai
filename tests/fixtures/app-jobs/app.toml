@@ -1,0 +1,37 @@
+# Test app for an app's jobs (H.1, H.11): `write` writes the folder "cv" and reads "notes", the
+# app's code starting it, its `then` called when a run of it ends; `summarize` reads "notes"
+# only, done by an action.
+apiVersion = "handler.app/v1"
+name = "cv"
+version = "1.0.0"
+
+[needs.files.cv]
+description = "Your work experience"
+mode = "rw"
+
+[needs.files.notes]
+description = "Your notes"
+
+[jobs.write]
+description = "Writes your CV"
+files = { cv = "write", notes = "read" }
+worksIn = ["cv"]
+then = "POST /api/ended"
+result = { type = "object", required = ["status", "summary"], properties = { status = { enum = ["ok", "attention", "failed"] }, summary = { type = "string" } } }
+
+[jobs.write.fields]
+type = "object"
+properties = { fake = { type = "string" }, answer = { type = "object" } }
+
+[jobs.summarize]
+description = "Says what your notes hold"
+files = { notes = "read" }
+result = { type = "object", required = ["status", "summary"], properties = { status = { enum = ["ok", "attention", "failed"] }, summary = { type = "string" } } }
+
+[jobs.summarize.fields]
+type = "object"
+properties = { fake = { type = "string" }, answer = { type = "object" } }
+
+[actions.summarize]
+description = "Say what my notes hold"
+job = "summarize"

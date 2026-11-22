@@ -79,7 +79,9 @@ def run[T](coro: Any) -> T:
     return asyncio.run(coro)
 
 
-@pytest.mark.rule("alone.reads-only-its-notes-and-conversation", "alone.a-session-like-any")
+@pytest.mark.rule(
+    "model-alone.reads-only-its-notes-and-conversation", "model-alone.its-sessions-are-like-any"
+)
 def test_a_conversation_is_one_call_per_turn_with_its_history(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -103,7 +105,7 @@ def test_a_conversation_is_one_call_per_turn_with_its_history(
 
 
 @pytest.mark.parametrize("provider", ["chat", "claude"])
-@pytest.mark.rule("alone.no-tools", "llm.text-in-text-out")
+@pytest.mark.rule("model-alone.has-no-tools", "llm.text-in-text-out")
 def test_no_tools_are_ever_offered(
     settings: Settings, stub: Stub, tmp_path: Path, provider: str
 ) -> None:
@@ -141,7 +143,7 @@ def test_no_tools_are_ever_offered(
         ),
     ],
 )
-@pytest.mark.rule("alone.no-tools", "llm.text-in-text-out")
+@pytest.mark.rule("model-alone.has-no-tools", "llm.text-in-text-out")
 def test_an_answer_calling_a_tool_fails_the_turn(
     settings: Settings, stub: Stub, tmp_path: Path, provider: str, answer: Message
 ) -> None:
@@ -186,7 +188,7 @@ def test_a_script_s_call_answered_with_a_tool_call_is_refused(
     assert "structuredContent" not in got
 
 
-@pytest.mark.rule("alone.no-tools", "alone.never-asks-a-client")
+@pytest.mark.rule("model-alone.has-no-tools", "model-alone.never-asks-a-client")
 def test_mcp_servers_and_non_text_prompts_are_refused(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -208,7 +210,7 @@ def test_mcp_servers_and_non_text_prompts_are_refused(
     assert stub.requests == []
 
 
-@pytest.mark.rule("alone.never-asks-a-client")
+@pytest.mark.rule("model-alone.never-asks-a-client")
 def test_it_never_asks_the_client_anything(settings: Settings, stub: Stub, tmp_path: Path) -> None:
     stub.answers = ["Sure."]
     s = Session(settings, tmp_path)
@@ -222,7 +224,7 @@ def test_it_never_asks_the_client_anything(settings: Settings, stub: Stub, tmp_p
         assert msg.get("method") in (None, "session/update")
 
 
-@pytest.mark.rule("alone.a-session-like-any")
+@pytest.mark.rule("model-alone.its-sessions-are-like-any")
 def test_a_session_loaded_again_replays_and_goes_on(
     settings: Settings, stub: Stub, tmp_path: Path
 ) -> None:
@@ -248,7 +250,7 @@ def test_a_session_loaded_again_replays_and_goes_on(
     assert [m["content"] for m in history] == ["Count", "One.", "Go on", "Two."]
 
 
-@pytest.mark.rule("alone.a-session-like-any")
+@pytest.mark.rule("model-alone.its-sessions-are-like-any")
 def test_cancel_ends_the_turn(settings: Settings, stub: Stub, tmp_path: Path) -> None:
     stub.answers = [None]  # never in time
     s = Session(settings, tmp_path)
@@ -268,7 +270,7 @@ def test_cancel_ends_the_turn(settings: Settings, stub: Stub, tmp_path: Path) ->
     assert run(go()) == {"jsonrpc": "2.0", "id": 99, "result": {"stopReason": "cancelled"}}
 
 
-@pytest.mark.rule("alone.notes-fit-in-a-call")
+@pytest.mark.rule("model-alone.notes-fit-in-a-call")
 def test_knowledge_past_what_a_call_takes_fails_the_turn(
     settings: Settings, stub: Stub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

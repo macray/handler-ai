@@ -1,21 +1,25 @@
 <script lang="ts">
-  // The Library (#/library[/:shelf][/more], `project`: Agents' Get more for a project): its header (the shelves as tabs, each with how many
-  // you have; at their right, Yours or Get more, links so the browser's back goes between them), then the shelf, yours or what you can get more of (lib/library.ts). The old
-  // addresses (#/tools, #/skills, #/notes, #/automations) open their shelf here too.
+  // The Library (#/library[/:shelf][/more], `project`: Agents' Community for a project): its header (the shelves as tabs, each with how many
+  // you have), then the shelf, Yours or Community (lib/library.ts), each list headed by the two (ShelfBar: how many each has). Notes
+  // also open at #/notes (a folder, a note: `knowledge` routes).
   import PageHeader from "../components/PageHeader.svelte";
   import { api } from "../lib/api";
-  import { GETS_MORE, LIBRARY_WIDTH, libraryTabs, yourAgents } from "../lib/library";
-  import { href, type LibraryShelf } from "../lib/router.svelte";
+  import { communityCount, GETS_MORE, LIBRARY_WIDTH, libraryTabs, yourAgents, type ShelfLists } from "../lib/library";
+  import type { Source } from "../lib/contracts.gen";
+  import type { LibraryShelf } from "../lib/router.svelte";
   import AddonsView from "./AddonsView.svelte";
   import AgentsShelf from "./AgentsShelf.svelte";
   import AppsShelf from "./AppsShelf.svelte";
   import AutomationsView from "./AutomationsView.svelte";
   import KnowledgeView from "./KnowledgeView.svelte";
+  import SchemasView from "./SchemasView.svelte";
   import SkillsView from "./SkillsView.svelte";
 
   let { shelf, more = false, install, project, path, note }: { shelf: LibraryShelf; more?: boolean; install?: string; project?: string; path?: string; note?: string } = $props();
 
   let counts = $state<Partial<Record<LibraryShelf, number>>>({});
+  let sources = $state<Source[] | null>(null);
+  let examples = $state<number | null>(null); // Handler's automation examples
 
   $effect(() => {
     void shelf; // read again on each shelf: what was got or made there
@@ -33,39 +37,38 @@
     void count("tools", api.addons(), (a) => !a.builtin);
     void count("skills", api.skills());
     void count("automations", api.automations());
+    void count("schemas", api.schemas());
+    api.sources().then(
+      (s) => (sources = s),
+      () => undefined,
+    );
+    api.automationExamples().then(
+      (e) => (examples = e.length),
+      () => undefined,
+    );
     api.knowledge().then(
       (k) => (counts = { ...counts, notes: k.folders.length }),
       () => undefined,
     );
   });
+
+  // the shelf's two lists, at the head of its list (not on Notes and Schemas)
+  const lists = $derived<ShelfLists | undefined>(GETS_MORE[shelf] ? { shelf, more, yours: counts[shelf], community: communityCount(shelf, sources, examples) } : undefined);
 </script>
 
-<PageHeader title="Library" tabs={libraryTabs(shelf, counts)} width={LIBRARY_WIDTH}>
-  {#snippet tabsEnd()}
-    {#if GETS_MORE[shelf]}
-      <nav class="inline-flex rounded-lg bg-muted p-0.5 text-sm" aria-label="yours or get more">
-        {#each [{ more: false, label: "Yours" }, { more: true, label: "Get more" }] as o (o.label)}
-          <a
-            href={href({ view: "library", shelf, more: o.more })}
-            class="rounded-md px-3 py-1 no-underline {o.more === more ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
-            aria-current={o.more === more ? "page" : undefined}
-            data-testid={o.more ? "shelf-more" : "shelf-yours"}>{o.label}</a
-          >
-        {/each}
-      </nav>
-    {/if}
-  {/snippet}
-</PageHeader>
+<PageHeader title="Library" tabs={libraryTabs(shelf, counts)} width={LIBRARY_WIDTH} />
 {#if shelf === "agents"}
-  <AgentsShelf {more} {project} />
+  <AgentsShelf {more} {project} {lists} />
 {:else if shelf === "tools"}
-  <AddonsView {more} {install} />
+  <AddonsView {more} {install} {lists} />
 {:else if shelf === "skills"}
-  <SkillsView {more} />
+  <SkillsView {more} {lists} />
 {:else if shelf === "notes"}
   <KnowledgeView {path} {note} />
+{:else if shelf === "schemas"}
+  <SchemasView />
 {:else if shelf === "automations"}
-  <AutomationsView {more} />
+  <AutomationsView {more} {lists} />
 {:else}
-  <AppsShelf {more} />
+  <AppsShelf {more} {lists} />
 {/if}

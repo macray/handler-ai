@@ -46,11 +46,11 @@
   function who(s: LiveSession): { name: string; place: string } {
     const found = projects.of(s.agent);
     if (found) return { name: agentLabel(found.agent), place: found.project.name };
-    return { name: projects.label(s.agent), place: s.agent.chat ? "Chat" : (s.agent.app ?? "") };
+    return { name: projects.label(s.agent), place: s.agent.chat ? "Chat" : (s.info.app ?? "") };
   }
 
   function where(m: InboxMessage): string {
-    return [m.source === "session" ? null : m.source, m.name].filter(Boolean).join(" · ");
+    return [m.source === "session" || m.source === "ask" ? null : m.source, m.name].filter(Boolean).join(" · ");
   }
 </script>
 

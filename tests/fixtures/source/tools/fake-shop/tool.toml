@@ -5,6 +5,7 @@ name = "fake-shop"
 description = "A shop's command line, for the tests"
 image = "localhost/handler-ai-tool-fake-shop"
 commands = ["fake-shop"]
+connectionCheck = ["fake-shop", "ping"]  # fails: its folder is empty
 egress = ["*.shop.example.com:443"]
 
 [settings.store]

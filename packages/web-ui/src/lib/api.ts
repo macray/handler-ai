@@ -1,101 +1,5 @@
 // Control API client (contract D). Types come from the generated contracts (schemas/).
-import type {
-  SpeechRequest,
-  DraftPreview,
-  Transcription,
-  Voice,
-  VoiceSettings,
-  AccountInfo,
-  AgentChecks,
-  Check,
-  CheckRun,
-  Improvement,
-  UseRef,
-  Uses,
-  NetworkFilterInfo,
-  SecretInfo,
-  AreaInfo,
-  AreaRequest,
-  SessionChanges,
-  SessionFile,
-  SessionFolder,
-  SessionFound,
-  SessionMounts,
-  AccountLoginRequest,
-  AccountRequest,
-  AddonInfo,
-  AddonInstalled,
-  AddonPreview,
-  AgentRequest,
-  App,
-  ActionRun,
-  AskTurn,
-  AssistantAnswer,
-  Automation,
-  AutomationCheck,
-  AutomationExample,
-  AutomationRun,
-  AutomationView,
-  AppLink,
-  AppLog,
-  InboxAnswerRequest,
-  InboxMessage,
-  Pins,
-  PlanDraft,
-  PlanRead,
-  PlanView,
-  BindingInfo,
-  BindingRequest,
-  CreateSkillRequest,
-  SkillFile,
-  SkillFileRequest,
-  SkillInfo,
-  SkillRequest,
-  KnowledgeFolderView,
-  KnowledgeListing,
-  KnowledgeNote,
-  KnowledgeRootCheck,
-  LoginWindow,
-  Build,
-  BuildLog,
-  CreateDirectoryRequest,
-  CreateProjectRequest,
-  Agent,
-  HandlerNeed,
-  AgentsFile,
-  ExportAgentsRequest,
-  AgentsExport,
-  SessionInput,
-  DirectoryListing,
-  EgressEvent,
-  HarnessInfo,
-  Health,
-  Problem,
-  ProviderInfo,
-  ProviderRequest,
-  ProviderReach,
-  ProviderTemplate,
-  ProviderTestRequest,
-  Project,
-  ProjectSettingsRequest,
-  RemotePairing,
-  RemoteStatus,
-  Session,
-  ImageUpdates,
-  RuntimeCheck,
-  SandboxRuntime,
-  SystemPackageInfo,
-  ToolboxContainerfile,
-  ToolboxLines,
-  ToolboxInfo,
-  WorkFoldersInfo,
-  CacheDeclaration,
-  CachesInfo,
-  CacheSizes,
-  ModelAccess,
-  Source,
-  SourceItemDetail,
-} from "./contracts.gen";
+import type { AccountInfo, AccountLoginRequest, AccountRequest, ActionRun, AddonInfo, AddonInstalled, AddonPreview, Agent, AgentChecks, AgentRequest, AgentsExport, AgentsFile, App, AppLink, AppLog, AppRun, AreaInfo, AreaRequest, AskHistory, AskTurn, AssistantAnswer, Automation, AutomationCheck, AutomationExample, AutomationRun, AutomationView, BindingCheck, BindingInfo, BindingRequest, Build, BuildLog, CacheDeclaration, CachesInfo, CacheSizes, Check, CheckRun, CreateDirectoryRequest, CreateProjectRequest, CreateSkillRequest, DirectoryListing, DraftPreview, EgressEvent, ExportAgentsRequest, HandlerNeed, HarnessImage, HarnessInfo, Health, ImageUpdates, Improvement, InboxAnswerRequest, InboxMessage, KnowledgeFolderView, KnowledgeListing, KnowledgeNote, KnowledgeRootCheck, LoginWindow, ModelAccess, NetworkFilterInfo, NotesCommitDiff, NotesHistory, NotesUndo, NudgeFill, NudgeSettingRequest, NudgeWhenRequest, Pins, PlanDraft, PlanRead, PlanView, Problem, Project, ProjectSettingsRequest, ProviderInfo, ProviderReach, ProviderRequest, ProviderTemplate, ProviderTestRequest, RemotePairing, RemoteStatus, RuntimeCheck, SandboxRuntime, SchemaInfo, SecretInfo, Session, SessionChanges, SessionFile, SessionFolder, SessionFound, SessionInput, SessionMounts, SkillFile, SkillFileRequest, SkillInfo, SkillRequest, Source, SourceItemDetail, SpeechRequest, SystemPackageInfo, ToolboxContainerfile, ToolboxInfo, ToolboxLines, Transcription, UseRef, Uses, Voice, VoiceSettings, WhoWorks, WorkFoldersInfo } from "./contracts.gen";
 
 export class ApiError extends Error {
   constructor(
@@ -141,11 +45,11 @@ async function send(method: string, path: string, body?: BodyInit, headers?: Rec
   return response;
 }
 
-/** API path of a file of a skill (each part encoded). */
 function automationPath(name: string): string {
   return `/v1/automations/${encodeURIComponent(name)}`;
 }
 
+/** API path of a file of a skill (each part encoded). */
 function skillFilePath(name: string, path: string): string {
   return `/v1/skills/${encodeURIComponent(name)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
@@ -160,7 +64,8 @@ export function imagePath(target: string): string {
 
 export const api = {
   health: () => call<Health>("GET", "/v1/health"),
-  harnesses: () => call<HarnessInfo[]>("GET", "/v1/harnesses"),
+  harnesses: () => call<HarnessInfo[]>("GET", "/v1/harnesses"), // their descriptors: no runtime call
+  harnessImages: () => call<HarnessImage[]>("GET", "/v1/harness-images"), // each one's image (D.4): slow
   toolbox: () => call<ToolboxInfo>("GET", "/v1/toolbox"),
   networkFilter: () => call<NetworkFilterInfo>("GET", "/v1/network-filter"), // the egress proxy's image (D.4)
   runtime: () => call<RuntimeCheck>("GET", "/v1/runtime"), // can this host run sandboxes (A.8)
@@ -190,7 +95,13 @@ export const api = {
   createBinding: (body: BindingRequest) => call<BindingInfo>("POST", "/v1/bindings", body),
   updateBinding: (name: string, body: BindingRequest) => call<BindingInfo>("PUT", `/v1/bindings/${encodeURIComponent(name)}`, body),
   deleteBinding: (name: string) => call<void>("DELETE", `/v1/bindings/${encodeURIComponent(name)}`),
+  // its tool's connection check, as an agent of it gets the tool (G.2): a failure is an answer
+  checkBinding: (name: string) => call<BindingCheck>("POST", `/v1/bindings/${encodeURIComponent(name)}/check`),
   // skills (D.17): the library, offered to every agent; projects give some to all their agents
+  schemas: () => call<SchemaInfo[]>("GET", "/v1/schemas"),
+  schema: (id: string) => call<SchemaInfo>("GET", `/v1/schemas/${encodeURIComponent(id)}`),
+  addSchema: (content: string, replace = false) => call<SchemaInfo>("POST", "/v1/schemas", { content, replace }),
+  deleteSchema: (id: string) => call<void>("DELETE", `/v1/schemas/${encodeURIComponent(id)}`),
   skills: () => call<SkillInfo[]>("GET", "/v1/skills"),
   skill: (name: string) => call<SkillInfo>("GET", `/v1/skills/${encodeURIComponent(name)}`),
   createSkill: (body: CreateSkillRequest) => call<SkillInfo>("POST", "/v1/skills", body),
@@ -258,6 +169,9 @@ export const api = {
   browseKnowledge: (path: string) =>
     call<KnowledgeFolderView>("GET", `/v1/knowledge/browse?path=${encodeURIComponent(path)}`),
   knowledgeNote: (path: string) => call<KnowledgeNote>("GET", `/v1/knowledge/note?path=${encodeURIComponent(path)}`),
+  notesHistory: (folder: string) => call<NotesHistory>("GET", `/v1/knowledge/history?folder=${encodeURIComponent(folder)}`),
+  notesChange: (folder: string, id: string) => call<NotesCommitDiff>("GET", `/v1/knowledge/history/${encodeURIComponent(id)}?folder=${encodeURIComponent(folder)}`),
+  undoNotesChange: (folder: string, commit: string) => call<NotesUndo>("POST", "/v1/knowledge/history/undo", { folder, commit }),
   // image rebuilds (D.4, G.4): the daemon builds from the files on disk; clients only name the target
   // the toolbox's: `update` pulls and builds it all again (system updates), else a change is applied
   rebuild: (target: string, update = false) =>
@@ -267,9 +181,13 @@ export const api = {
   buildLog: (id: string, offset: number) => call<BuildLog>("GET", `/v1/builds/${id}/log?offset=${offset}`),
   cancelBuild: (id: string) => call<Build>("POST", `/v1/builds/${id}/cancel`),
   // the folder picker, inside the work folders (D.13)
-  directories: (path?: string) => call<DirectoryListing>("GET", `/v1/directories${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  // forApp: an app's folder (H.9), the notes root offered too
+  directories: (path?: string, forApp = false) => {
+    const q = new URLSearchParams({ ...(path ? { path } : {}), ...(forApp ? { for: "app" } : {}) }).toString();
+    return call<DirectoryListing>("GET", `/v1/directories${q ? `?${q}` : ""}`);
+  },
   recentDirectories: () => call<DirectoryListing>("GET", "/v1/directories/recent"),
-  createDirectory: (body: CreateDirectoryRequest) => call<DirectoryListing>("POST", "/v1/directories", body),
+  createDirectory: (body: CreateDirectoryRequest, forApp = false) => call<DirectoryListing>("POST", `/v1/directories${forApp ? "?for=app" : ""}`, body),
   // accounts (D.9): a harness and a description; handler keeps the login
   accounts: () => call<AccountInfo[]>("GET", "/v1/accounts"),
   createAccount: (body: AccountRequest) => call<AccountInfo>("POST", "/v1/accounts", body),
@@ -340,11 +258,18 @@ export const api = {
   agentsFromSource: (source: string, name: string) =>
     call<AgentsFile>("POST", `/v1/sources/${encodeURIComponent(source)}/agents/${encodeURIComponent(name)}`),
   // an app's action, what you ask it (H.12): done now, or its agent's run read again until it ends
-  act: (name: string, action: string, fields: Record<string, unknown>) =>
-    call<ActionRun>("POST", `/v1/apps/${encodeURIComponent(name)}/actions/${encodeURIComponent(action)}`, { fields }),
-  setAppAskable: (name: string, askable: boolean) => call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/askable`, { askable }),
+  // (`nudge`: sent from that nudge's form, which its success marks done, H.17)
+  act: (name: string, action: string, fields: Record<string, unknown>, nudge?: string) =>
+    call<ActionRun>("POST", `/v1/apps/${encodeURIComponent(name)}/actions/${encodeURIComponent(action)}`, { fields, ...(nudge ? { nudge } : {}) }),
+  // the actions you take out of Ask (D.24); the others are offered to it
+  setAppAsk: (name: string, notInAsk: string[]) => call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/ask`, { notInAsk }),
   // Ask (D.24): the exchange so far, the person's words last
-  ask: (turns: AskTurn[], timezone: string) => call<AssistantAnswer>("POST", "/v1/ask", { turns, timezone }),
+  ask: (turns: AskTurn[], timezone: string, spoken: boolean) => call<AssistantAnswer>("POST", "/v1/ask", { turns, timezone, via: "web", spoken }),
+  // Ask's history (D.24): each ask Handler received, from anywhere, as it ended; off: emptied
+  askHistory: () => call<AskHistory>("GET", "/v1/ask/history"),
+  setAskHistory: (keep: boolean) => call<AskHistory>("PUT", "/v1/ask/history", { keep }),
+  deleteAsk: (id: string) => call<void>("DELETE", `/v1/ask/history/${encodeURIComponent(id)}`),
+  clearAskHistory: () => call<void>("DELETE", "/v1/ask/history"),
   // Voice (D.25): what writes down what you say, and a recording written down (never kept)
   voice: () => call<Voice>("GET", "/v1/voice"),
   setVoice: (settings: VoiceSettings) => call<Voice>("PUT", "/v1/voice", settings),
@@ -352,6 +277,7 @@ export const api = {
   actionRun: (name: string, action: string, runId: string) =>
     call<ActionRun>("GET", `/v1/apps/${encodeURIComponent(name)}/actions/${encodeURIComponent(action)}/runs/${encodeURIComponent(runId)}`),
   deployApp: (name: string) => call<App>("POST", `/v1/apps/${encodeURIComponent(name)}/deploy`),
+  updateApp: (name: string) => call<App>("POST", `/v1/apps/${encodeURIComponent(name)}/update`), // the version its source offers, taken then deployed (H.6)
   rollbackApp: (name: string) => call<App>("POST", `/v1/apps/${encodeURIComponent(name)}/rollback`),
   stopApp: (name: string) => call<App>("POST", `/v1/apps/${encodeURIComponent(name)}/stop`),
   uninstallApp: (name: string) => call<void>("DELETE", `/v1/apps/${encodeURIComponent(name)}`),
@@ -359,11 +285,15 @@ export const api = {
     call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`, { value }),
   unsetAppSecret: (name: string, secret: string) =>
     call<App>("DELETE", `/v1/apps/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`),
-  // what the person gives an app's needs (H.2): a folder, an agent that fits
-  setAppFile: (name: string, need: string, path: string) =>
-    call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/files/${encodeURIComponent(need)}`, { path }),
-  setAppAgent: (name: string, need: string, agentId: string) =>
-    call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/agents/${encodeURIComponent(need)}`, { agentId }),
+  // what the person gives an app's needs (H.2): a folder; who works on its jobs
+  setAppFile: (name: string, need: string, path: string, create = false) =>
+    call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/files/${encodeURIComponent(need)}`, create ? { path, create } : { path }),
+  setAppWhoWorks: (name: string, who: WhoWorks) => call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/who-works`, who),
+  setJobWhoWorks: (name: string, job: string, who: WhoWorks) =>
+    call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/jobs/${encodeURIComponent(job)}/who-works`, who),
+  unsetJobWhoWorks: (name: string, job: string) =>
+    call<App>("DELETE", `/v1/apps/${encodeURIComponent(name)}/jobs/${encodeURIComponent(job)}/who-works`),
+  appRuns: (name: string) => call<AppRun[]>("GET", `/v1/apps/${encodeURIComponent(name)}/runs`),
   setAppPersons: (name: string, persons: string[]) =>
     call<App>("PUT", `/v1/apps/${encodeURIComponent(name)}/persons`, { persons }),
   // the menu's Pinned (D.28): the whole list, in order
@@ -374,7 +304,21 @@ export const api = {
   /** A message's hosts refused allowed or kept blocked for its agent (F.9); `again`: its plan
    *  from its step, or its automation, run again. */
   answerInbox: (id: string, body: InboxAnswerRequest) => call<InboxMessage>("POST", `/v1/inbox/${encodeURIComponent(id)}/answer`, body),
-  openApp: (name: string) => call<AppLink>("POST", `/v1/apps/${encodeURIComponent(name)}/open`),
+  // a nudge (H.17): dismissed; its page opened (a one-time link); its form filled from what was
+  // said (never sent); how often that nudge of the app alerts you
+  dismissNudge: (id: string) => call<InboxMessage>("POST", `/v1/inbox/${encodeURIComponent(id)}/dismiss`),
+  openNudge: (id: string) => call<AppLink>("POST", `/v1/inbox/${encodeURIComponent(id)}/open`),
+  fillNudge: (id: string, said: string, timezone: string) => call<NudgeFill>("POST", `/v1/inbox/${encodeURIComponent(id)}/fill`, { said, timezone }),
+  setNudgeSetting: (app: string, nudge: string, setting: NudgeSettingRequest["setting"]) =>
+    call<App>("PUT", `/v1/apps/${encodeURIComponent(app)}/nudges/${encodeURIComponent(nudge)}`, { setting }),
+  // that nudge turned off (none comes, its open ones remind no more), or on again
+  setNudgeOff: (app: string, nudge: string, off: boolean) =>
+    call<App>("PUT", `/v1/apps/${encodeURIComponent(app)}/nudges/${encodeURIComponent(nudge)}/off`, { off }),
+  // when Handler sends that nudge: yours, or null for the app's again
+  setNudgeWhen: (app: string, nudge: string, when: NudgeWhenRequest["when"]) =>
+    call<App>("PUT", `/v1/apps/${encodeURIComponent(app)}/nudges/${encodeURIComponent(nudge)}/when`, { when }),
+  // a one-time link opening the app (H.4), at `path`: a page of its own, what an action did (H.12)
+  openApp: (name: string, path = "/") => call<AppLink>("POST", `/v1/apps/${encodeURIComponent(name)}/open`, { path }),
   appLog: (name: string) => call<AppLog>("GET", `/v1/apps/${encodeURIComponent(name)}/log`),
 
   automations: () => call<AutomationView[]>("GET", "/v1/automations"),
@@ -438,7 +382,7 @@ export const api = {
   updateProject: (id: string, body: ProjectSettingsRequest) => call<Project>("PUT", `/v1/projects/${id}`, body),
   deleteProject: (id: string) => call<void>("DELETE", `/v1/projects/${id}`),
 
-  // every agent, whatever its home (D.1): a project, an app or Chat, none (Other folders)
+  // every agent, whatever its home (D.1): a project, an app or Chat, none (Agents outside projects)
   agents: () => call<Agent[]>("GET", "/v1/agents"),
   agent: (id: string) => call<Agent>("GET", `/v1/agents/${id}`),
   createAgent: (body: AgentRequest) => call<Agent>("POST", "/v1/agents", body),
@@ -482,6 +426,7 @@ export const api = {
   setGateway: (gatewayUrl: string, hostToken: string) =>
     call<RemoteStatus>("PUT", "/v1/remote/gateway", { gatewayUrl, hostToken }),
   clearGateway: () => call<RemoteStatus>("DELETE", "/v1/remote/gateway"),
+  setComputerName: (computerName: string) => call<RemoteStatus>("PUT", "/v1/remote/computer-name", { computerName }),
   // person "owner" (you) reaches sessions and apps; anyone else's device, apps only
   pairDevice: (name: string, person = "owner") =>
     call<RemotePairing>("POST", "/v1/remote/devices", { name, person, scope: person === "owner" ? "all" : "apps" }),

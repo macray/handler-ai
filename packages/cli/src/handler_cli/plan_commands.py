@@ -23,9 +23,8 @@ from typing import Any
 
 from handler_contracts import is_within
 
-from .automation_commands import when_at
 from .client import ClientError, Daemon
-from .output import one_line, refused_hosts, table
+from .output import one_line, refused_hosts, table, when_at
 
 
 def add_parser(sub: Any) -> None:

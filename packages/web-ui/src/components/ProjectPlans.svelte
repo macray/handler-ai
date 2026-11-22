@@ -9,6 +9,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import { Button } from "$lib/components/ui/button";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { PlanDraft, PlanStepView, PlanView, Project } from "../lib/contracts.gen";
   import { limit, restartable } from "../lib/plans";
@@ -39,8 +40,7 @@
 
   $effect(() => {
     void load();
-    const timer = setInterval(load, 5000); // their steps go on
-    return () => clearInterval(timer);
+    return onChange(["plans", "plan-drafts", "sessions"], () => void load());
   });
 
   const current = $derived((plans ?? []).filter((p) => p.state !== "done"));
@@ -111,7 +111,7 @@
                 hosts={at.refused}
                 said={at.said}
                 {busy}
-                again={again ? `Allow it and run again from step ${at.n}` : null}
+                again={again ? { agent: p.agent, step: at.n } : null}
                 onallow={(hosts) => act(() => (again ? api.runPlan(p.id, at.n, hosts) : decideHosts(p.agentId, hosts, "allow")))}
                 onkeep={(hosts) => act(() => decideHosts(p.agentId, hosts, "blocked"))}
               />

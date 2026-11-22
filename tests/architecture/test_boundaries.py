@@ -20,8 +20,11 @@ ALLOWED: dict[str, set[str]] = {
     "handler_sandbox_apple": {"handler_contracts", "handler_sandbox_kit"},
     "handler_sandbox_docker": {"handler_contracts", "handler_sandbox_kit"},
     "handler_harness": {"handler_contracts"},
-    "handler_control": {"handler_contracts", "handler_harness"},
+    # and the knowledge format, to read schemas and check documents (D.29)
+    "handler_control": {"handler_contracts", "handler_harness", "handler_smd"},
     "handler_cli": {"handler_contracts"},  # a client: talks to handlerd over HTTP/WebSocket only
+    # structured markdown, the knowledge ability's format: stands alone, not even the contracts
+    "handler_smd": set(),
 }
 
 
@@ -44,10 +47,12 @@ def handler_imports(path: Path) -> set[str]:
     return {n for n in names if n.startswith("handler_")}
 
 
+@pytest.mark.rule("blocks.share-only-the-contracts")
 def test_every_package_has_a_rule() -> None:
     assert set(package_sources()) == set(ALLOWED), "add the new package to ALLOWED (and code-map)"
 
 
+@pytest.mark.rule("blocks.share-only-the-contracts")
 @pytest.mark.parametrize("package", sorted(ALLOWED))
 def test_imports_respect_boundaries(package: str) -> None:
     violations = []
@@ -57,6 +62,15 @@ def test_imports_respect_boundaries(package: str) -> None:
     assert violations == []
 
 
+@pytest.mark.rule("smd.imports-nothing-of-handler")
+def test_the_format_imports_nothing_of_handler() -> None:
+    assert ALLOWED["handler_smd"] == set()
+    sources = package_sources()["handler_smd"]
+    assert sources
+    assert {imported for path in sources for imported in handler_imports(path)} <= {"handler_smd"}
+
+
+@pytest.mark.rule("blocks.share-only-the-contracts")
 def test_every_package_has_a_readme() -> None:
     missing = [p.name for p in REPO.glob("packages/*") if not (p / "README.md").is_file()]
     assert missing == []
@@ -85,6 +99,7 @@ def _names_the_default_runtime(tree: ast.AST) -> set[int]:
     return allowed
 
 
+@pytest.mark.rule("blocks.only-the-runtime-runs-its-engine")
 @pytest.mark.parametrize(
     ("engine", "runtime"),
     [("podman", "handler_sandbox_podman"), ("docker", "handler_sandbox_docker")],
@@ -109,7 +124,7 @@ def test_only_the_sandbox_runs_its_engine(engine: str, runtime: str) -> None:
     assert violations == []
 
 
-@pytest.mark.rule("gateway.independent")
+@pytest.mark.rule("gateway.imports-nothing-of-handler")
 def test_gateway_is_independent() -> None:
     """remote-gateway/ is its own project: it may run on another machine, and must not need handler
     (remote design §1). It only shares the envelope format, as data."""
@@ -142,7 +157,7 @@ CONTROL_LAYERS: list[tuple[str, set[str]]] = [
             "interfaces",
             *("skill_scan", "definitions", "agents_files", "handler_needs"),
             *("sources", "addon_install", "addon_folders"),
-            *("knowledge", "config_files"),
+            *("knowledge", "knowledge_schemas", "config_files"),
             *("automation_config", "transcript", "services"),
             *("session_files", "git_read"),
             *("agents", "projects", "pins", "agent_state", "caches", "toolbox"),
@@ -168,14 +183,16 @@ CONTROL_LAYERS: list[tuple[str, set[str]]] = [
             *("sessions", "relay", "policy", "terminals"),
             "agent_service",
             "save_rules",
-            *("builds", "image_check", "image_updates"),
-            *("apps", "app_http", "app_api", "app_runs", "schedules", "inbox"),
-            *("agent_checks", "improvements", "uses"),
+            *("builds", "image_check", "connection_check", "image_updates", "knowledge_tool"),
+            *("apps", "app_http", "app_api", "app_smd", "app_runs", "app_jobs"),
+            *("schedules", "inbox", "nudges"),
+            *("agent_checks", "improvements", "uses", "notes_history"),
             "refusals",
             "plans",
             "plan_drafts",
             "automations",
             "assistant",
+            "ask_history",
             "voice",
         },
     ),
@@ -213,10 +230,12 @@ def control_imports(path: Path, modules: set[str]) -> set[str]:
     return names & modules
 
 
+@pytest.mark.rule("blocks.a-control-module-imports-only-its-layer-or-below")
 def test_every_control_module_has_a_layer() -> None:
     assert set(control_modules()) - set(LAYER) == set(), "add it to CONTROL_LAYERS (and README)"
 
 
+@pytest.mark.rule("blocks.a-control-module-imports-only-its-layer-or-below")
 def test_control_modules_import_only_their_layer_or_below() -> None:
     modules = control_modules()
     violations = [
@@ -230,7 +249,7 @@ def test_control_modules_import_only_their_layer_or_below() -> None:
     assert violations == []
 
 
-@pytest.mark.rule("alone.no-tools", "alone.reads-only-its-notes-and-conversation")
+@pytest.mark.rule("model-alone.has-no-tools", "model-alone.reads-only-its-notes-and-conversation")
 def test_the_model_alone_reaches_no_sandbox_and_no_tool() -> None:
     """An agent on the model alone is text in, text out (D.18): its agent may only call the model
     (llm), read its knowledge and settings. Anything else (the service router, a launcher, an

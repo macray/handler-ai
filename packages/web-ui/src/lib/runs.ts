@@ -5,13 +5,19 @@
 // a definition's defaults, the form it is set up with.
 import type { AgentDefinition, AgentInterface, Session } from "./contracts.gen";
 import { emptyAgent, type AgentSpec } from "./projects.svelte";
+import { envRows } from "./env";
 
 export type Schema = Record<string, unknown>;
 
 /** What a run was given, in one line: the skill it works on, else its fields' values. */
 export function inputSummary(run: Session): string | null {
   if (run.subject) return `the skill ${run.subject.skill}`;
-  const values = Object.values(run.input?.fields ?? {})
+  return fieldsSummary(run.input?.fields);
+}
+
+/** A run's form values on one line (its plain values, cut at 120 characters), or null. */
+export function fieldsSummary(fields: Record<string, unknown> | null | undefined): string | null {
+  const values = Object.values(fields ?? {})
     .filter((v) => ["string", "number", "boolean"].includes(typeof v) && String(v).trim())
     .map((v) => String(v).trim().replace(/\s+/g, " "));
   if (!values.length) return null;
@@ -143,10 +149,11 @@ export function codeRef(value: unknown): { path: string; from: number; to: numbe
   return { path, from: from!, to: to! };
 }
 
-/** Who started a run, in words: "you", "an automation", "the app planner". */
-export function startedBy(s: Session): string {
+/** Who started a run, in words: "you", "an automation", "the app Planner" (`appTitle`: what an
+ *  app of that name is called, H.1). */
+export function startedBy(s: Session, appTitle: (name: string) => string = (n) => n): string {
   if (s.origin === "automation") return "by an automation";
-  if (s.origin === "app") return `by the app ${s.app ?? ""}`.trimEnd();
+  if (s.origin === "app") return `by the app ${s.app ? appTitle(s.app) : ""}`.trimEnd();
   if (s.origin === "check") return "by its checks";
   if (s.origin === "plan") return `by a plan, step ${s.plan?.step ?? ""}`.trimEnd();
   return "by you";
@@ -159,7 +166,7 @@ export function runState(s: Session): "running" | "done" | "invalid" | "no resul
   return "no result";
 }
 
-/** A definition's defaults (D.18: an agents file's agent, D.23, a need's of Handler, or an app's, H.2), the form it
+/** A definition's defaults (D.18: an agents file's agent, D.23, or a need's of Handler), the form it
  *  is set up with: its models are chosen there; from then on its settings are the user's. */
 export function definitionSpec(t: AgentDefinition): AgentSpec {
   return {
@@ -173,8 +180,10 @@ export function definitionSpec(t: AgentDefinition): AgentSpec {
     permissions: t.permissions ?? "bypass",
     allow: [...(t.allow ?? [])],
     skills: [...(t.skills ?? [])],
-    knowledge: [...(t.knowledge ?? [])],
+    knowledge: (t.knowledge ?? []).map((folder) => ({ folder, access: "read" })), // yours to give it write
+    schemas: (t.schemas ?? []).map((u) => ({ ...u })),
     display: t.display ?? false,
+    env: envRows(t.env),
     interface: t.interface ? JSON.stringify(t.interface, null, 2) : "",
     modelAlone: t.modelAlone ?? false,
   };

@@ -150,6 +150,22 @@
           ],
           "default": null,
           "title": "Hint"
+        },
+        "redirects": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "enum": [
+              "anthropic",
+              "openai-chat",
+              "responses",
+              "transcriptions"
+            ]
+          },
+          "title": "Redirects",
+          "type": "object"
         }
       },
       "required": [

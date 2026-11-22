@@ -52,8 +52,8 @@
   const MARK: Record<Outcome, { class: string; glyph: string; title: string }> = {
     reached: { class: "text-ok", glyph: "✓", title: "allowed, and the host answered" },
     "could not connect": { class: "text-danger", glyph: "✗", title: "allowed, but the host did not answer" },
-    blocked: { class: "text-danger", glyph: "⛔", title: "blocked by the network filter" },
-    "kept blocked": { class: "text-danger", glyph: "⛔", title: "blocked: you keep it blocked" },
+    blocked: { class: "text-danger", glyph: "⊘", title: "blocked by the network filter" },
+    "kept blocked": { class: "text-danger", glyph: "⊘", title: "blocked: you keep it blocked" },
     allowed: { class: "text-muted-foreground", glyph: "·", title: "allowed, connecting" },
     "would be blocked": { class: "text-warn", glyph: "!", title: "let through by log only: would be blocked" },
     held: { class: "text-warn", glyph: "…", title: "held a few seconds for your answer" },

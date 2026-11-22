@@ -2,6 +2,66 @@
   "$id": "urn:handler.remote/v1/session-list",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "SessionAsk": {
+      "description": "The first permission request a shared session waits on you for (D.7).",
+      "properties": {
+        "toolCallId": {
+          "title": "Toolcallid",
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "read",
+                "edit",
+                "delete",
+                "move",
+                "search",
+                "execute",
+                "think",
+                "fetch",
+                "switch_mode",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "risk": {
+          "enum": [
+            "safe",
+            "risky"
+          ],
+          "title": "Risk",
+          "type": "string"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "risk"
+      ],
+      "title": "SessionAsk",
+      "type": "object"
+    },
     "SharedSession": {
       "description": "A running session shared with devices (F, D.7).",
       "properties": {
@@ -84,7 +144,7 @@
           "title": "Origin",
           "type": "string"
         },
-        "harness": {
+        "program": {
           "anyOf": [
             {
               "type": "string"
@@ -93,7 +153,7 @@
               "type": "null"
             }
           ],
-          "title": "Harness"
+          "title": "Program"
         },
         "scope": {
           "title": "Scope",
@@ -118,15 +178,45 @@
         "pendingPermissions": {
           "title": "Pendingpermissions",
           "type": "integer"
+        },
+        "since": {
+          "format": "date-time",
+          "title": "Since",
+          "type": "string"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last"
+        },
+        "ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionAsk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
         "id",
         "origin",
-        "harness",
+        "program",
         "scope",
         "busy",
-        "pendingPermissions"
+        "pendingPermissions",
+        "since"
       ],
       "title": "SharedSession",
       "type": "object"

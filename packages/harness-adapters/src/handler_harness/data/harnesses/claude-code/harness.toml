@@ -25,6 +25,16 @@ skillsDir = "~/.claude/skills"
 mcpTransports = ["stdio", "http", "sse"]
 mcpEnv = "sandbox"
 
+# Added to its system prompt (claude-agent-acp reads `_meta.systemPrompt` of session/new|load|
+# resume: an object's `append` goes after the SDK's own prompt). Through the adapter it runs as an
+# Agent SDK agent, whose prompt lets it change files with shell commands: nothing of such a
+# change is shown in the session, where its file tools' changes are diffs (measured 2026-11-13
+# on a workspace's sessions: ten times more files written by shell commands than by Edit and
+# Write).
+[sessionMeta.systemPrompt]
+append = """
+To create or change a file, use your file tools (Write, Edit), not shell commands (sed, a heredoc, a script that writes it): the person following this session sees a file tool's change as a diff, and nothing of what a shell command changed. Shell commands are for running things; a change only a command can make (a generated file, a formatter, a rename across many files) stays a command."""
+
 [env]
 NODE_USE_ENV_PROXY = "1"     # Node's fetch only honours HTTPS_PROXY with this
 DISABLE_AUTOUPDATER = "1"    # the image is the unit of upgrade, not the container
@@ -32,6 +42,17 @@ DISABLE_AUTOUPDATER = "1"    # the image is the unit of upgrade, not the contain
 # Sentry error reports, GrowthBook feature flags, /feedback or update checks; only the API.
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY = "1"   # gated on its own, not by the line above
+
+# A run's only (a job's run, a plan's step), whose result is read when its turn ends. Claude Code
+# moves a command running longer than BASH_DEFAULT_TIMEOUT_MS to the background, or runs one there
+# when asked, ends its turn and starts another when it finishes: the run would end with its check
+# still running. Without background commands (verified, 2.1.323: Bash loses `run_in_background`,
+# and its prompt says to wait in the foreground), a command runs until its timeout: the default 10
+# min, at most 24 h, a step's longest limit (the run's own limit stops it before).
+[unattendedEnv]
+CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1"
+BASH_DEFAULT_TIMEOUT_MS = "600000"
+BASH_MAX_TIMEOUT_MS = "86400000"
 
 # Settings and history: the agent's own (handler keeps them).
 # The login is not here: an account's token (below) reaches it as an env var.
@@ -72,10 +93,10 @@ tokenPrefix = "sk-ant-oat01-"
 tokenLifetimeDays = 365
 hosts = ["api.anthropic.com:443", "platform.claude.com:443"]
 help = "It is Claude Code's own sign-in, with your Claude subscription, for your own use (Anthropic's terms). Run it in a terminal where Claude Code is installed and sign in on the page it opens (a code that page shows goes back into that terminal), then give handler the token it prints at the end (sk-ant-oat01-…)."
-# The token says nothing of the subscription: Claude Code reads its plan from the env (verified,
+# The token says nothing of the subscription: Claude Code reads which one from the env (verified,
 # 2.1.286: without it, "Claude API" and an API user's default model).
-plans = ["pro", "max", "team", "enterprise"]
-planEnv = "CLAUDE_CODE_SUBSCRIPTION_TYPE"
+subscriptions = ["pro", "max", "team", "enterprise"]
+subscriptionEnv = "CLAUDE_CODE_SUBSCRIPTION_TYPE"
 
 # Neutral permission mode → ACP session mode (decision 4).
 [permissions]

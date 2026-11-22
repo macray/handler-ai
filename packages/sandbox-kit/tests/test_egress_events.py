@@ -60,7 +60,7 @@ def test_an_empty_allow_list_allows_nothing() -> None:
 # --- Decisions: enforce, log-only (A.3, A.4 "Toggling network filtering") -------------------------
 
 
-@pytest.mark.rule("network.enforcement-decides")
+@pytest.mark.rule("network.log-only-lets-through-what-enforce-denies")
 @pytest.mark.parametrize(
     ("target", "enforcement", "decision"),
     [
@@ -74,7 +74,22 @@ def test_decision_for_each_enforcement_mode(target: str, enforcement: str, decis
     """`enforce` denies what is not listed; `log-only` lets it through, reported `unlisted` (how
     one discovers the hosts a harness needs).
     If this fails: enforce lets unlisted hosts out, or log-only hides what enforce would deny."""
-    assert addon.decide(target, ["api.anthropic.com:443"], enforcement) == decision
+    assert addon.decide(target, ["api.anthropic.com:443"], [], enforcement) == decision
+
+
+@pytest.mark.rule("network.a-host-kept-blocked-is-not-asked-for")
+@pytest.mark.parametrize(
+    ("enforcement", "decision"), [("enforce", "denied"), ("log-only", "unlisted")]
+)
+def test_a_host_kept_blocked_is_refused_though_an_entry_covers_it(
+    enforcement: str, decision: str
+) -> None:
+    """Kept blocked wins over an allowed wildcard; log-only still lets it through, as unlisted.
+    If this fails: a host you kept blocked goes out because a wider entry allows it, while your
+    agent's settings still say it is blocked."""
+    allow, blocked = ["*.pypi.org:443"], ["files.pypi.org:443"]
+    assert addon.decide("files.pypi.org:443", allow, blocked, enforcement) == decision
+    assert addon.decide("upload.pypi.org:443", allow, blocked, enforcement) == "allowed"
 
 
 # --- Live settings: set-egress, set-allow (A.4 "Toggling network filtering") ----------------------
@@ -265,7 +280,7 @@ def test_every_judgement_is_recorded_as_an_event(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.rule("secrets.an-open-sandbox-gets-a-filter-for-them")
+@pytest.mark.rule("injection.an-open-sandbox-gets-a-filter-for-them")
 def test_an_open_sandbox_s_proxy_lets_everything_through_and_records_nothing(
     tmp_path: Path,
 ) -> None:

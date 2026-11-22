@@ -10,7 +10,7 @@
    (`--runtime`, else asked; kept with --yes). Linux: only with `--runtime`
 3. what the container runtime finds missing on this machine (GET /v1/runtime, A.8)
 4. the network filter (D.4), when it is not built: handlerd builds it as it starts, this follows
-   that build (or starts it)
+   that build (or starts it); with --no-build, only says it is missing
 5. the images, when the toolbox or no agent program is built yet: first the engine agents
    that run containers use (podman by default, or docker: `--engine`, else asked), the agent
    program to build first (`--program`, else asked; the first one listed with --yes), then the toolbox and
@@ -21,6 +21,7 @@
 """
 
 import argparse
+import io
 import os
 import subprocess
 import sys
@@ -39,7 +40,11 @@ START_TIMEOUT = 60.0
 
 def add_parser(sub: Any) -> None:
     s = sub.add_parser("setup", help="install and start handlerd, check this machine, build images")
-    s.add_argument("--no-build", action="store_true", help="do not build the images now")
+    s.add_argument(
+        "--no-build",
+        action="store_true",
+        help="build no image now, nor wait for the network filter handlerd builds by itself",
+    )
     s.add_argument("--yes", action="store_true", help="build the images without asking")
     s.add_argument(
         "--program",
@@ -149,9 +154,16 @@ def _runtime(d: Daemon) -> bool:
     return bool(check["ok"])
 
 
-def _network_filter(d: Daemon, verbose: bool) -> int:
-    """Follow handlerd's build of the network filter, or start it; 0 once it is built."""
+def _network_filter(d: Daemon, verbose: bool, no_build: bool) -> int:
+    """Follow handlerd's build of the network filter, or start it; 0 once it is built. With
+    --no-build, only said: handlerd builds it by itself, in the background."""
     if d.call("GET", "/v1/network-filter")["imagePresent"]:
+        return 0
+    if no_build:
+        print(
+            "\nThe network filter is not built yet (--no-build): handlerd builds it by itself, "
+            "in the background (Settings → Sandboxes, `handler image list`)."
+        )
         return 0
     print(
         "\nBuilding the network filter: it checks where agents connect and adds your secrets to "
@@ -278,6 +290,10 @@ def _program_not_built(program: dict[str, Any], no_build: bool) -> None:
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    # each line out at once, also into a pipe or a file: systemctl and launchctl write to the
+    # same terminal, and their lines would otherwise come before those of setup they follow
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
     manager = "launchd" if daemon_commands.macos() else "systemd"
     print(f"Installing handlerd as a user service ({manager})…")
     try:
@@ -288,6 +304,9 @@ def dispatch(args: argparse.Namespace) -> int:
     if not code:
         d = _daemon()
         print(f"handlerd {d.call('GET', '/v1/health')['version']} is running at {base_url()}")
+        if not daemon_commands.macos():  # launchd keeps it while the Mac runs
+            for line in daemon_commands.keeps_running():
+                print(f"  warn {line}")
         return _setup(d, args)
     print(f"{manager} failed: it only keeps handlerd running as a user service.")
     if daemon_commands.wsl():
@@ -344,14 +363,15 @@ def _setup(d: Daemon, args: argparse.Namespace) -> int:
     _choose_runtime(d, args)
     if not _runtime(d):
         return 1
-    if code := _network_filter(d, args.verbose):
+    if code := _network_filter(d, args.verbose, args.no_build):
         print(
             "The network filter could not be built: "
             "`handler image rebuild network-filter` tries again."
         )
         return code
     toolbox = d.call("GET", "/v1/toolbox")
-    harnesses = d.call("GET", "/v1/harnesses")
+    present = {i["name"]: i["imagePresent"] for i in d.call("GET", "/v1/harness-images")}
+    harnesses = [h | {"imagePresent": present[h["name"]]} for h in d.call("GET", "/v1/harnesses")]
     built = [h["product"] for h in harnesses if h["imagePresent"]]
     on = [p["name"] for p in toolbox["systemPackages"]]
     if not toolbox["imagePresent"] and (not args.no_build or args.engine):
@@ -366,8 +386,14 @@ def _setup(d: Daemon, args: argparse.Namespace) -> int:
     if args.program and not builds:
         _program_not_built(_program(args, harnesses), args.no_build)
     if builds:
-        if not args.yes and not sys.stdin.isatty():
-            print("Images not built: run `handler setup --yes [--program NAME]`.")
+        if not args.yes and not sys.stdin.isatty():  # nobody to ask: not done, said so
+            names = ", ".join(h["name"] for h in harnesses)
+            print(
+                "\nSetup is not finished: the images are not built (no terminal to ask on). "
+                "Run `handler setup --yes`, which builds the toolbox and "
+                f"{harnesses[0]['product']}, or `--yes --program NAME` for another ({names})."
+            )
+            return 1
         else:
             program = _program(args, harnesses)
             if _wants_build(args, not toolbox["imagePresent"], program["product"]):

@@ -11,7 +11,7 @@ from typing import Any
 from handler_contracts import Ability, RuntimeCheck, RuntimeCheckItem, RuntimeSupports
 from handler_sandbox_kit import display
 
-from .podman import NESTED_DEVICES, PodmanError, podman
+from .podman import ADD_IDS, NESTED_DEVICES, PodmanError, podman
 
 LIMITS = ("memory", "cpu")  # the cgroup controllers a spec's `resources` need
 
@@ -59,8 +59,11 @@ def _limits_item(info: dict[str, Any]) -> RuntimeCheckItem:
         )
     else:
         detail = (
-            f"{' and '.join(missing)} not applied on this computer, apps run without them: the "
-            "controller is not given to your user (systemd: Delegate= in user@.service)"
+            f"{' and '.join(missing)} not applied on this computer, apps run without them (agents "
+            "do not need them): systemd does not give that controller to your user. To give it: "
+            "sudo mkdir -p /etc/systemd/system/user@.service.d && printf "
+            "'[Service]\\nDelegate=cpu cpuset io memory pids\\n' | sudo tee "
+            "/etc/systemd/system/user@.service.d/delegate.conf, then log in again"
         )
     return RuntimeCheckItem(name="memory and CPU limits", ok=not missing, required=False,
                             detail=detail)  # fmt: skip
@@ -74,11 +77,17 @@ def _display_item() -> RuntimeCheckItem:
     return RuntimeCheckItem(name="display", ok=display.found(), required=False, detail=detail)
 
 
+# with the user's own id, 65535 map every id a container uses (0 to 65535): what a `nested`
+# sandbox gives inner podman, whose own id is not in its range (podman.subid_file)
+NESTED_IDS = 65535
+
+
 def abilities() -> frozenset[Ability]:
     """What sandboxes get here (A.8), read from the host at once: `check` prints it, and a
-    launch refuses a spec needing more (A1)."""
+    launch refuses a spec needing more (A1). `nested` needs its devices and, rootless, enough
+    subordinate ids: with fewer, inner podman fails on an image using high ids."""
     given: set[Ability] = {"privileged"}
-    if all(Path(dev).exists() for dev in NESTED_DEVICES):
+    if all(Path(dev).exists() for dev in NESTED_DEVICES) and enough_ids():
         given.add("nested")
     if display.found():  # a Wayland session, where the launcher runs (A.6)
         given.add("display")
@@ -90,6 +99,19 @@ def podman_info() -> dict[str, Any] | None:
         return json.loads(podman("info", "--format", "json", timeout=60))
     except (PodmanError, OSError, ValueError):
         return None
+
+
+def enough_ids() -> bool:
+    """Whether the user has the subordinate ids a `nested` sandbox maps; root, or development
+    mode (podman.userns_args), maps its own."""
+    if os.getuid() == 0 or os.environ.get("HANDLER_SANDBOX_DEV_NO_KEEPID"):
+        return True
+    return subordinate_ids() >= NESTED_IDS
+
+
+def subordinate_ids() -> int:
+    """How many subordinate ids the user has in both /etc/subuid and /etc/subgid."""
+    return min(_id_range("uid"), _id_range("gid"))
 
 
 def _id_range(kind: str) -> int:
@@ -125,9 +147,7 @@ def items(info: dict[str, Any]) -> list[RuntimeCheckItem]:
     host = info.get("host", {})
     dev = bool(os.environ.get("HANDLER_SANDBOX_DEV_NO_KEEPID"))  # podman.userns_args
     rootless = bool(host.get("security", {}).get("rootless"))
-    # with the user's own id, 65535 map every id a container uses (0 to 65535): what a `nested`
-    # sandbox gives inner podman, whose own id is not in its range (podman.subid_file)
-    ids = min(_id_range("uid"), _id_range("gid"))
+    ids = subordinate_ids()
     backend = host.get("networkBackend", "")
     pasta = (host.get("pasta") or {}).get("executable", "")
     wsl = (
@@ -156,13 +176,12 @@ def items(info: dict[str, Any]) -> list[RuntimeCheckItem]:
         ),
         RuntimeCheckItem(
             name="subordinate ids",
-            ok=ids >= 65535 or dev or not rootless,
+            ok=ids >= NESTED_IDS or dev or not rootless,
             required=False,  # plain sessions run with fewer
             detail=f"{ids} in /etc/subuid and /etc/subgid"
-            if ids >= 65535
-            else f"{ids or 'none'} for your user in /etc/subuid and /etc/subgid, 65535 needed "
-            "only for agents that run containers and for apps: sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER, then "
-            "podman system migrate",
+            if ids >= NESTED_IDS
+            else f"{ids or 'none'} for your user in /etc/subuid and /etc/subgid, {NESTED_IDS} "
+            f"needed for agents that run containers and for apps: {ADD_IDS}",
         ),
         RuntimeCheckItem(
             name="network",

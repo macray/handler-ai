@@ -1,0 +1,35 @@
+{
+  "$id": "urn:handler.remote/v1/nudge-fill-params",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`_handler/remote/nudge_fill` \u2192 RemoteNudgeFill: what the owner said fills the form of the\nnudge `id` (H.17), never sent.",
+  "properties": {
+    "said": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Said",
+      "type": "string"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timezone"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "said",
+    "id"
+  ],
+  "title": "NudgeFillParams",
+  "type": "object"
+}

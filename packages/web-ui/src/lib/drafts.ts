@@ -1,3 +1,4 @@
+import { ask } from "./ask.svelte";
 // Drafts of an app's code (H.15): a session of the App creator (one of Handler's helpers, an
 // agent with no folder) works on a copy of an app's code kept by Handler, or on an empty folder
 // for a new app. One draft per app at a time. Used, its code becomes the app's next version
@@ -27,6 +28,7 @@ export function draftsOf(list: Session[], app: string | null): Session[] {
 
 /** Open a draft's session again. */
 export async function continueDraft(s: Session): Promise<void> {
+  if (!s.agentId) throw new Error("this session is no agent's");
   navigate({ view: "session", key: sessions.open(s, await api.agent(s.agentId)).key });
 }
 
@@ -71,7 +73,8 @@ export function copyLabel(c: DraftCopy): string {
 
 /** Throw it away, once confirmed: the session and its folder go. */
 export async function throwAway(s: Session): Promise<boolean> {
-  if (!confirm(`Throw away this draft${s.appDraft?.app ? ` of ${s.appDraft.app}` : ""}? Its conversation and its code go; the app stays as it is.`)) return false;
+  const title = `Throw away this draft${s.appDraft?.app ? ` of ${s.appDraft.app}` : ""}?`;
+  if (!(await ask({ title, detail: "Its conversation and its code go; the app stays as it is.", yes: "Throw away", danger: true }))) return false;
   const live = sessions.get(s.id);
   if (live) await sessions.close(live); // off the menu first
   await api.deleteSession(s.id);

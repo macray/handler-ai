@@ -28,7 +28,7 @@
       "type": "object"
     }
   },
-  "description": "`POST /v1/ask`: the exchange so far, the person's words last. Stateless: the client\nsends it whole each time (a reply to a question is one more turn).",
+  "description": "`POST /v1/ask`: the exchange so far, the person's words last. The client sends it whole\neach time (a reply to a question is one more turn); Handler keeps each ask in Ask's history.",
   "properties": {
     "turns": {
       "items": {
@@ -50,6 +50,22 @@
       ],
       "default": null,
       "title": "Timezone"
+    },
+    "via": {
+      "default": "web",
+      "enum": [
+        "web",
+        "phone",
+        "cli",
+        "key"
+      ],
+      "title": "Via",
+      "type": "string"
+    },
+    "spoken": {
+      "default": false,
+      "title": "Spoken",
+      "type": "boolean"
     }
   },
   "required": [

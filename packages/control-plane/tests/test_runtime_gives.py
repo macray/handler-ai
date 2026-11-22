@@ -61,6 +61,7 @@ def test_a_save_uses_a_check_at_most_five_minutes_old(monkeypatch: pytest.Monkey
     assert len(checks) == 2
 
 
+@pytest.mark.rule("runtime.a-stopped-engine-is-said-not-an-image-missing")
 @pytest.mark.parametrize(
     ("ok", "detail", "said"),
     [

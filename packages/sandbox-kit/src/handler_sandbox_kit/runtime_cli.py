@@ -18,7 +18,7 @@ from pydantic import TypeAdapter, ValidationError
 from handler_contracts import EgressEntry, SandboxExit, SandboxSpec
 
 from . import egress
-from .launch import Runtime, attach, launch, running_filter, sweep
+from .launch import Runtime, attach, launch, running_filter, start_engine, sweep
 
 SPEC_FD = 3
 APPLY_TIMEOUT = 10  # seconds its filter is given to apply new settings (set-*)
@@ -38,6 +38,7 @@ VERBS = """verbs:
   set-watched NAME [TURN]   someone watches the session, in turn TURN (a word that changes each
                             turn): the first request to an undecided host waits a while for
                             their answer, once per host and turn; without TURN, nobody does
+  start-engine              make the engine ready to run sandboxes (handlerd's start)
   sweep                     remove leftovers of dead launchers
   check                     can this host run sandboxes (RuntimeCheck JSON)
   image build CONTEXT --id-file FILE [--build-arg K=V ...] [--pull] [--no-cache]
@@ -107,6 +108,7 @@ def parser(prog: str, about: str) -> argparse.ArgumentParser:
     sw = sub.add_parser("set-watched")
     sw.add_argument("name")
     sw.add_argument("turn", nargs="?")
+    sub.add_parser("start-engine")
     sub.add_parser("sweep")
     sub.add_parser("check")
     image = sub.add_parser("image").add_subparsers(dest="verb", required=True)
@@ -243,6 +245,8 @@ def main(  # noqa: PLR0911 — one branch per verb
         return set_egress(runtime.prog, args.name, blocked=args.blocked)
     if args.cmd == "set-watched":
         return set_egress(runtime.prog, args.name, watched=args.turn)
+    if args.cmd == "start-engine":
+        return start_engine(runtime)
     if args.cmd == "sweep":
         return sweep(runtime)
     if args.cmd == "check":

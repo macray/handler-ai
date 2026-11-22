@@ -78,6 +78,14 @@ class NamedAgentError(LookupError):
         self.field = field
 
 
+def form_of(agent: AgentRecord) -> dict[str, Any] | None:
+    """The form a device fills to start the agent (D.18, D.7): its interface's fields, an
+    object with no properties when it asks nothing; None for an agent started with a request."""
+    if agent.interface is None:
+        return None
+    return agent.interface.fields or {"type": "object", "properties": {}}
+
+
 def folder_name(folder: str) -> str:
     return folder.rstrip("/").rsplit("/", 1)[-1] or folder
 
@@ -103,10 +111,12 @@ class ProjectRegistry:
     def __init__(self, state_dir: Path, registry: AgentRegistry) -> None:
         self.file = state_dir / "projects.json"
         self.registry = registry
+        # replaced, never changed in place: sync routes iterate it in a worker thread while the
+        # event loop adds or removes one
         self.projects: dict[str, ProjectRecord] = {}
         if self.file.exists():
-            for r in json.loads(self.file.read_text()):
-                self.projects[r["id"]] = ProjectRecord.from_json(r)
+            records = (ProjectRecord.from_json(r) for r in json.loads(self.file.read_text()))
+            self.projects = {r.id: r for r in records}
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +153,8 @@ class ProjectRegistry:
                     name=a.name or describe(a.model),
                     description=a.description,
                     default=a.id == project.default_agent,
+                    form=form_of(a),
+                    job=a.interface is not None and a.interface.result is not None,
                 )
                 for a in self.agents(project)
                 if a.remote_start
@@ -196,7 +208,7 @@ class ProjectRegistry:
         agent.project_addons = list(project.addons)
 
     def add(self, project: ProjectRecord) -> ProjectRecord:
-        self.projects[project.id] = project
+        self.projects = {**self.projects, project.id: project}
         self.save()
         return project
 
@@ -222,7 +234,7 @@ class ProjectRegistry:
 
     def delete(self, project: ProjectRecord) -> None:
         """Remove it (its agents are deleted first, agent_service.py), and its pin."""
-        self.projects.pop(project.id, None)
+        self.projects = {k: p for k, p in self.projects.items() if k != project.id}
         self.save()
         pins.forget(self.file.parent, "project", project.id)
 

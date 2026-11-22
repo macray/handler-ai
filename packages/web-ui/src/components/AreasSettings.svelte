@@ -5,6 +5,7 @@
   // colour, shown on its projects and tags; kept while a project, an account or a provider names
   // it. None yet: what they are for, how they work, and Work and Personal in one click. Then a
   // list, each area made and changed in a dialog (its name stays: the files name it).
+  import { ask } from "../lib/ask.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import Tags from "@lucide/svelte/icons/tags";
   import { Button } from "$lib/components/ui/button";
@@ -65,7 +66,7 @@
   }
 
   async function remove(a: AreaInfo): Promise<void> {
-    if (confirm(`Delete the area ${a.name}?`) && (await run(() => api.deleteArea(a.name)))) panel = null;
+    if ((await ask({ title: `Delete the area ${a.name}?`, yes: "Delete", danger: true })) && (await run(() => api.deleteArea(a.name)))) panel = null;
   }
 
   const users = (a: AreaInfo) => [...(a.projects ?? []), ...(a.accounts ?? []), ...(a.providers ?? [])];
@@ -215,6 +216,7 @@
             size="sm"
             class="text-destructive hover:text-destructive"
             disabled={busy || users(a).length > 0}
+            title={users(a).length ? `Still used by ${users(a).join(", ")}` : undefined}
             onclick={() => void remove(a)}
             data-testid="area-delete">Delete</Button
           >

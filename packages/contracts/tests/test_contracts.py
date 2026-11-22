@@ -9,6 +9,8 @@ from handler_contracts import (
     AbsolutePath,
     Account,
     AddonManifest,
+    AgentDefinition,
+    AgentSettings,
     AgentSpec,
     Automation,
     Binding,
@@ -21,6 +23,7 @@ from handler_contracts import (
     PersonName,
     Provider,
     SandboxSpec,
+    Schedule,
     SystemPackageManifest,
     ToolboxManifest,
     cache_name,
@@ -125,7 +128,7 @@ ACCOUNT = {"apiVersion": "handler.account/v1", "harness": "claude-code"}
 
 @pytest.mark.rule("access.one-account-or-one-provider", "access.keys-are-references")
 def test_an_account_is_its_harness_and_a_description() -> None:
-    account = Account.model_validate(ACCOUNT | {"plan": "max"})
+    account = Account.model_validate(ACCOUNT | {"subscription": "max"})
     assert account.connectors is False  # decision 1: off unless the account says so
     with pytest.raises(ValidationError, match="login"):  # the login is handler's, never in the file
         Account.model_validate({"apiVersion": "handler.account/v1", "harness": "x", "login": {}})
@@ -135,7 +138,7 @@ def test_an_account_is_its_harness_and_a_description() -> None:
     with pytest.raises(ValidationError):
         Account.model_validate(ACCOUNT | {"token": "sk-ant-oat01-x"})
     spec = AgentSpec.resolve("claude-code", "opus", account=("perso", account))
-    assert (spec.account, spec.account_plan, spec.config.model) == ("perso", "max", "opus")
+    assert (spec.account, spec.account_subscription, spec.config.model) == ("perso", "max", "opus")
     assert spec.account_login is None and spec.config.account_connectors is False
     linked = AgentSpec.resolve(
         "claude-code", account=("w", Account.model_validate(ACCOUNT | {"connectors": True}))
@@ -181,7 +184,7 @@ def test_e2_literal_secret_rejected() -> None:
         Account.model_validate(ACCOUNT | {"secrets": {"api_key": {"env": "X"}}})
 
 
-@pytest.mark.rule("access.keys-are-references", "secrets.set-by-their-owner")
+@pytest.mark.rule("access.keys-are-references", "secrets.named-and-set-by-their-owner")
 def test_e2_secret_references_accepted() -> None:
     for ref in (
         {"env": "X"},
@@ -195,6 +198,7 @@ def test_e2_secret_references_accepted() -> None:
             Provider.model_validate(PROVIDER | {"apiKey": {"secret": path}})
 
 
+@pytest.mark.rule("access.a-hand-written-file-with-an-unknown-key-is-invalid")
 def test_unknown_keys_are_errors() -> None:
     with pytest.raises(ValidationError):
         Account.model_validate(ACCOUNT | {"permisions": {"mode": "ask"}})
@@ -212,6 +216,7 @@ PROVIDER: dict[str, Any] = {
 }
 
 
+@pytest.mark.rule("provider-config.through-a-protocol-both-speak")
 def test_provider_picks_the_first_protocol_it_has_an_endpoint_for() -> None:
     p = Provider.model_validate(PROVIDER)
     assert p.endpoint_for(["anthropic", "responses"]) == ("responses", "http://127.0.0.1:3000/v1")
@@ -254,6 +259,7 @@ def test_a_speech_model_needs_a_transcriptions_endpoint() -> None:
     )  # with one, valid
 
 
+@pytest.mark.rule("access.keys-are-references")
 def test_a_provider_key_is_a_reference() -> None:
     p = Provider.model_validate(PROVIDER | {"apiKey": {"env": "KEY"}})
     assert p.api_key is not None
@@ -298,6 +304,7 @@ def test_reference_claude_code_descriptor() -> None:
     assert d.account_connectors.off_env == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 @pytest.mark.parametrize(
     "image", ["localhost:5000/handler-x", "docker.io/library/alpine", "handler-x"]
 )
@@ -305,6 +312,7 @@ def test_b6_descriptor_image_untagged_accepted(image: str) -> None:
     assert HarnessDescriptor.model_validate(CLAUDE_CODE | {"image": image}).image == image
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 @pytest.mark.parametrize(
     "image", ["localhost/handler-ai-x:0.81.1", "handler-x:latest", "handler-x@sha256:ab"]
 )
@@ -316,6 +324,7 @@ def test_b6_descriptor_image_tag_rejected(image: str) -> None:
 # ── B.6, B.7: the toolbox ───────────────────────────────────────────────
 
 
+@pytest.mark.rule("cache.declared-ones-never-share-a-folder")
 @pytest.mark.parametrize(
     ("target", "name"),
     [
@@ -330,6 +339,7 @@ def test_a_cache_folder_is_named_from_its_target(target: str, name: str) -> None
     assert cache_name(target) == name
 
 
+@pytest.mark.rule("cache.declared-ones-never-share-a-folder")
 def test_caches_declared_together_never_share_a_folder() -> None:
     def toolbox(*targets: str) -> ToolboxManifest:
         caches = [{"target": t, "about": "x"} for t in targets]
@@ -348,6 +358,7 @@ def test_caches_declared_together_never_share_a_folder() -> None:
         ToolboxManifest.model_validate({"distro": "fedora", "caches": [{"target": "~/.m2"}]})
 
 
+@pytest.mark.rule("cache.declared-ones-never-share-a-folder")
 def test_a_cache_may_put_a_folder_of_its_own_on_path() -> None:
     def cache(bin_: str) -> CacheDeclaration:
         return CacheDeclaration.model_validate({"target": "~/.cargo", "about": "x", "bin": bin_})
@@ -359,12 +370,14 @@ def test_a_cache_may_put_a_folder_of_its_own_on_path() -> None:
             cache(outside)
 
 
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
 def test_a_cache_folder_s_commands_are_in_it() -> None:
     CacheFolder(source="/h/bun", target="/home/agent/.bun", path="/home/agent/.bun/bin")
     with pytest.raises(ValidationError, match="its commands' folder is in it"):
         CacheFolder(source="/h/bun", target="/home/agent/.bun", path="/usr/bin")
 
 
+@pytest.mark.rule("toolbox.a-system-package-holds-together")
 def test_a_system_package_says_what_it_provides() -> None:
     package = {
         "apiVersion": "handler.system-package/v1",
@@ -380,6 +393,7 @@ def test_a_system_package_says_what_it_provides() -> None:
             SystemPackageManifest.model_validate(package | wrong)
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 def test_the_harnesses_say_what_they_need_from_the_toolbox() -> None:
     d = HarnessDescriptor.model_validate(CLAUDE_CODE | {"needs": ["node", "g++", "wl-paste"]})
     assert d.needs == ["node", "g++", "wl-paste"]
@@ -387,6 +401,7 @@ def test_the_harnesses_say_what_they_need_from_the_toolbox() -> None:
         HarnessDescriptor.model_validate(CLAUDE_CODE | {"needs": ["rm -rf"]})
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 def test_a_credential_slot_is_a_file() -> None:
     slots = CLAUDE_CODE["stateSlots"]
     login = {"target": "~/.a", "kind": "file", "required": False, "credential": True}
@@ -398,6 +413,7 @@ def test_a_credential_slot_is_a_file() -> None:
             )
 
 
+@pytest.mark.rule("account.the-sign-in-is-yours", "harness.its-descriptor-holds-together")
 def test_a_login_leaves_a_token_or_a_credential_file() -> None:
     d = HarnessDescriptor.model_validate(CLAUDE_CODE)
     assert d.login is not None and d.login.kind == "token"
@@ -436,16 +452,21 @@ def test_a_login_leaves_a_token_or_a_credential_file() -> None:
         )
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 def test_a_login_s_plans_and_their_env_go_together() -> None:
     login = CLAUDE_CODE["login"]
-    plans = {"plans": ["pro", "max"], "planEnv": "CLAUDE_CODE_SUBSCRIPTION_TYPE"}
-    d = HarnessDescriptor.model_validate(CLAUDE_CODE | {"login": login | plans})
-    assert d.login is not None and d.login.plans == ["pro", "max"]
-    for half in ({"plans": ["pro"]}, {"planEnv": "X"}):
+    subscriptions = {
+        "subscriptions": ["pro", "max"],
+        "subscriptionEnv": "CLAUDE_CODE_SUBSCRIPTION_TYPE",
+    }
+    d = HarnessDescriptor.model_validate(CLAUDE_CODE | {"login": login | subscriptions})
+    assert d.login is not None and d.login.subscriptions == ["pro", "max"]
+    for half in ({"subscriptions": ["pro"]}, {"subscriptionEnv": "X"}):
         with pytest.raises(ValidationError, match="go together"):
             HarnessDescriptor.model_validate(CLAUDE_CODE | {"login": login | half})
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 def test_permission_modes_may_be_left_out_but_not_all() -> None:
     partial = {k: v for k, v in CLAUDE_CODE["permissions"].items() if k == "bypass"}
     d = HarnessDescriptor.model_validate(CLAUDE_CODE | {"permissions": partial})
@@ -454,6 +475,7 @@ def test_permission_modes_may_be_left_out_but_not_all() -> None:
         HarnessDescriptor.model_validate(CLAUDE_CODE | {"permissions": {}})
 
 
+@pytest.mark.rule("harness.its-descriptor-holds-together")
 def test_initial_content_is_for_a_file_of_the_agent_s_state() -> None:
     slots = CLAUDE_CODE["stateSlots"]
     onboarded = slots["config_json"] | {"initial": "{}"}
@@ -468,6 +490,9 @@ def test_initial_content_is_for_a_file_of_the_agent_s_state() -> None:
             )
 
 
+@pytest.mark.rule(
+    "terminal.runs-with-the-agent-s-settings", "harness.its-descriptor-holds-together"
+)
 def test_terminal_maps_the_same_permission_modes() -> None:
     """D.16: the terminal program honours exactly the modes the ACP adapter does."""
     flags = {"ask": [], "accept-edits": ["--edits"], "bypass": ["--yolo"]}
@@ -544,6 +569,7 @@ def test_duplicate_targets_rejected() -> None:
         SandboxSpec.model_validate(SPEC | {"folders": [dup]})
 
 
+@pytest.mark.rule("sandbox.an-invalid-spec-is-refused")
 def test_an_addon_s_commands_are_in_its_files() -> None:
     addon = {"source": "/data/addons/x/abc", "target": "/opt/tools/x"}
     spec = SandboxSpec.model_validate(SPEC | {"addons": [addon | {"path": "/opt/tools/x/bin"}]})
@@ -574,7 +600,8 @@ def test_path_is_the_runtime_s() -> None:
 
 
 @pytest.mark.rule(
-    "secrets.an-open-sandbox-gets-a-filter-for-them", "secrets.a-phantom-is-as-long-as-its-value"
+    "injection.an-open-sandbox-gets-a-filter-for-them",
+    "injection.a-phantom-is-as-long-as-its-value",
 )
 def test_injections_are_the_network_s() -> None:
     """A.3: secrets in an open or filtered network; none can be given without one."""
@@ -655,6 +682,19 @@ def test_addon_mcp_server_starts_from_its_own_commands() -> None:
 
 
 @pytest.mark.rule("tool.its-manifest-holds-together")
+def test_a_connection_check_starts_from_its_own_commands_in_a_tool_with_slots() -> None:
+    addon = AddonManifest.model_validate(ADDON | {"connectionCheck": ["shopify", "theme", "list"]})
+    assert addon.connection_check == ["shopify", "theme", "list"]
+    with pytest.raises(ValidationError, match="must start with one of the tool's 'commands'"):
+        AddonManifest.model_validate(ADDON | {"connectionCheck": ["curl", "-f", "x"]})
+    without_slots = ADDON | {"settings": {}, "secretSlots": {}}
+    with pytest.raises(ValidationError, match="a tool with settings or secrets"):
+        AddonManifest.model_validate(without_slots | {"connectionCheck": ["shopify", "version"]})
+    with pytest.raises(ValidationError):
+        AddonManifest.model_validate(ADDON | {"connectionCheck": []})
+
+
+@pytest.mark.rule("tool.its-manifest-holds-together")
 def test_addon_image_needs_commands_and_no_tag() -> None:
     with pytest.raises(ValidationError, match="commands"):
         AddonManifest.model_validate(ADDON | {"commands": []})
@@ -667,6 +707,9 @@ def test_addon_image_needs_commands_and_no_tag() -> None:
     "change",
     [
         {"env": {"PATH": "/x"}},  # owned by the platform
+        {"env": {"http_proxy": "http://elsewhere:1"}},  # in any case: programs read either
+        {"env": {"Path": "/x"}},
+        {"settings": {"store": {"env": "no_proxy"}}},  # a slot's variable too
         {"env": {"SHOPIFY_FLAG_STORE": "x"}},  # already a setting's env var
         {"secretSlots": {"store": {"env": "OTHER"}}},  # slot name used twice
     ],
@@ -728,6 +771,7 @@ to = "handler/env-issues.md"
 """
 
 
+@pytest.mark.rule("automation.its-file-is-strict")
 def test_i1_the_example_automation_validates() -> None:
     automation = Automation.from_toml(AUTOMATION_TOML)
     assert automation.only is not None and automation.only.project == ["my-app"]
@@ -739,6 +783,7 @@ def test_i1_the_example_automation_validates() -> None:
     ]
 
 
+@pytest.mark.rule("automation.its-file-is-strict")
 @pytest.mark.parametrize(
     "change",
     [
@@ -758,6 +803,7 @@ def test_i1_automation_rejects(change: dict[str, Any]) -> None:
 SCHEDULED = {"apiVersion": "handler.automation/v1", "when": {"every": "1h"}}
 
 
+@pytest.mark.rule("automation.its-file-is-strict")
 def test_i1_a_scheduled_agent_run_and_app_call() -> None:
     agent = Automation.model_validate(
         SCHEDULED
@@ -774,10 +820,20 @@ def test_i1_a_scheduled_agent_run_and_app_call() -> None:
     assert app.app_call is not None and app.app_call.app == "coach"
 
 
+@pytest.mark.rule("automation.its-file-is-strict")
+@pytest.mark.parametrize(("every", "minutes"), [("5m", 5), ("2h", 120), ("1d", 1440)])
+def test_i1_every_takes_minutes_hours_or_days(every: str, minutes: int) -> None:
+    schedule = Schedule.model_validate({"every": every})
+    assert schedule.every_minutes == minutes and schedule.label == f"every {every}"
+
+
+@pytest.mark.rule("automation.its-file-is-strict")
 @pytest.mark.parametrize(
     "change",
     [
         {"when": {"every": "4m"}},  # at least 5m
+        {"when": {"every": "1w"}},  # minutes, hours or days
+        {"when": {"every": "0d"}},
         {"when": {"every": "1h", "at": "08:00"}},  # one rule
         {"when": {"every": "1h", "days": ["mon"]}},  # days go with at
         {"when": {"at": "08:00", "days": []}},
@@ -792,3 +848,18 @@ def test_i1_a_scheduled_agent_run_and_app_call() -> None:
 def test_i1_schedule_and_runs_reject(change: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         Automation.model_validate(SCHEDULED | {"run": "true"} | change)
+
+
+@pytest.mark.rule("agent.its-env-never-sets-what-others-own")
+@pytest.mark.parametrize(
+    "name", ["PATH", "path", "HTTPS_PROXY", "https_proxy", "Https_Proxy", "NODE_EXTRA_CA_CERTS"]
+)
+def test_an_agent_never_sets_what_handler_sets(name: str) -> None:
+    """D.8: an agent's variables, and a definition's, never set what Handler sets itself (the
+    proxy, the CA variables, a display's, a terminal's), whatever the case of its name."""
+    model = {"model": {"account": "a"}}
+    assert AgentSettings.model_validate(model | {"env": {"MY_FLAG": "1"}}).env == {"MY_FLAG": "1"}
+    with pytest.raises(ValidationError, match="set by Handler"):
+        AgentSettings.model_validate(model | {"env": {name: "x"}})
+    with pytest.raises(ValidationError, match="set by Handler"):
+        AgentDefinition.model_validate({"agentName": "dev", "env": {name: "x"}})

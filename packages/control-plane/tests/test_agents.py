@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from handler_contracts import AddonUse
+from handler_contracts import AddonUse, KnowledgeFolderUse
 from handler_control import agents
 from handler_control.agents import (
     AgentRecord,
@@ -32,12 +32,12 @@ def add(registry: AgentRegistry, settings: CheckedSettings, **fields: Any) -> Ag
 
 @pytest.mark.rule("agent.outside-projects-it-is-its-folder-and-name")
 def test_an_agent_outside_projects_is_its_folder_and_its_name(tmp_path: Path) -> None:
-    """Whatever its settings (D.1); names without case, no name being one too; an app's agent
-    is no agent outside projects."""
+    """Whatever its settings (D.1); names without case, no name being one too; an agent of
+    Chat is no agent outside projects."""
     registry = AgentRegistry(tmp_path)
     plain = add(registry, claude())
     named = add(registry, claude(network="open"), name="Review")
-    add(registry, claude(), name="Planner", app="planner")
+    add(registry, claude(), name="Planner", chat=True)
     assert registry.outside("/code/x", None) is plain
     assert registry.outside("/code/x", "review ") is named
     assert registry.outside("/code/x", "planner") is None
@@ -45,13 +45,18 @@ def test_an_agent_outside_projects_is_its_folder_and_its_name(tmp_path: Path) ->
     assert AgentRegistry(tmp_path).get(plain.id) is not None  # persisted
 
 
+@pytest.mark.rule("tool.its-use-is-checked-when-saved", "notes.read-only-at-its-name")
 def test_lists_are_normalized(tmp_path: Path) -> None:
     registry = AgentRegistry(tmp_path)
     uses = [AddonUse(addon="shopify", binding="shop"), AddonUse(addon="logs")]
-    shop = add(registry, claude(addons=uses, knowledge=["me", "me"]))
+    me = KnowledgeFolderUse(folder="me")
+    shop = add(registry, claude(addons=uses, knowledge=[KnowledgeFolderUse(folder="z"), me, me]))
     assert [u.addon for u in shop.addons] == ["logs", "shopify"]
     loaded = AgentRegistry(tmp_path).agents
-    assert (loaded[shop.id].addons, loaded[shop.id].knowledge) == (shop.addons, ["me"])
+    assert loaded[shop.id].addons == shop.addons
+    assert [u.folder for u in loaded[shop.id].knowledge] == ["me", "z"]
+    with pytest.raises(ValueError, match="given read-only and read-write"):
+        claude(knowledge=[me, KnowledgeFolderUse(folder="me", access="write")])
     with pytest.raises(ValueError, match="'logs' is used twice"):
         claude(addons=[AddonUse(addon="logs"), AddonUse(addon="logs")])
 
@@ -92,6 +97,7 @@ def test_a_session_runs_with_its_model_unless_given_another() -> None:
         raise AssertionError("not the agent's model")
 
 
+@pytest.mark.rule("session.runs-with-the-model-asked-for")
 def test_a_session_resumes_with_its_model_or_one_on_the_same_access() -> None:
     sonnet = RunsAs(harness="claude", account="pro", model="sonnet")
     agent = claude(model=sonnet)
@@ -110,6 +116,7 @@ class Launcher:
     returncode: int | None = None  # running, as an asyncio process
 
 
+@pytest.mark.rule("agent.a-live-change-reaches-a-sandbox-still-starting")
 def test_a_live_change_waits_for_a_launcher_still_starting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

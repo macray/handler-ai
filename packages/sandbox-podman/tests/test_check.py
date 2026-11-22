@@ -13,6 +13,7 @@ import pytest
 from handler_contracts import Resources, RuntimeCheck, SandboxSpec
 from handler_sandbox_kit.launch import UnenforceableError, check_enforceable
 from handler_sandbox_podman import check, launch
+from handler_sandbox_podman import podman as podman_module
 from handler_sandbox_podman.check import limit_controllers, wsl_version
 
 
@@ -121,7 +122,21 @@ def test_too_few_subordinate_ids_is_a_warning(monkeypatch: pytest.MonkeyPatch) -
     assert all(i.ok for i in found if i.required)
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("runtime.declares-only-what-it-gives")
+@pytest.mark.parametrize(("ids", "nested"), [(65535, True), (55000, False)])
+def test_running_containers_needs_enough_subordinate_ids(
+    monkeypatch: pytest.MonkeyPatch, ids: int, nested: bool
+) -> None:
+    """With fewer, inner podman fails on an image using high ids (an app's deploy): an agent
+    running containers is not offered here rather than failing inside its sandbox."""
+    monkeypatch.delenv("HANDLER_SANDBOX_DEV_NO_KEEPID", raising=False)
+    monkeypatch.setattr(check.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(check.Path, "exists", lambda self: True)  # its devices are there
+    monkeypatch.setattr(check, "_id_range", lambda kind: ids)
+    assert ("nested" in check.abilities()) is nested
+
+
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 @pytest.mark.parametrize("confinement", ["strict", "nested", "privileged"])
 def test_a_sandbox_running_containers_gets_its_own_process_limit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, confinement: str
@@ -141,3 +156,17 @@ def test_a_sandbox_running_containers_gets_its_own_process_limit(
     shutil.rmtree(tmp_path / "nested", ignore_errors=True)
     args = launch.Podman().isolation(SimpleNamespace(spec=spec, dir=tmp_path))  # ty: ignore[invalid-argument-type]
     assert "--pids-limit" not in args
+
+
+@pytest.mark.rule("runtime.check-starts-nothing-and-says-why")
+def test_too_few_ids_for_an_image_says_how_to_add_them() -> None:
+    """An app's image using high ids, pulled or run by a user with too few subordinate ids:
+    podman's error names the files; Handler's adds the command only root can run."""
+    error = (
+        "Error: copying system image: potentially insufficient UIDs or GIDs available in user "
+        "namespace (requested 65532:65532 for /home/nonroot): Check /etc/subuid and /etc/subgid"
+    )
+    proc = subprocess.CompletedProcess(["podman", "pull"], 125, "", error)
+    assert "usermod --add-subuids" in podman_module.said(proc)
+    plain = subprocess.CompletedProcess(["podman", "pull"], 125, "", "Error: no such image\n")
+    assert podman_module.said(plain) == "Error: no such image"

@@ -8,11 +8,12 @@
   import HelperCard from "./HelperCard.svelte";
   import RunForm from "./RunForm.svelte";
   import RunList from "./RunList.svelte";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import type { Agent, Session, SkillInfo } from "../lib/contracts.gen";
   import { agentLabel } from "../lib/projects.svelte";
   import { href, navigate } from "../lib/router.svelte";
-  import { runState, skillField } from "../lib/runs";
+  import { skillField } from "../lib/runs";
   import { sessions } from "../lib/sessions.svelte";
 
   let { skill }: { skill: SkillInfo } = $props();
@@ -31,7 +32,6 @@
   );
   const creator = $derived(agents.find((a) => a.id === given["skill-creator"]));
   const chosen = $derived(reviewers.find((a) => a.id === reviewer));
-  const running = $derived(runs.some((r) => runState(r) === "running"));
   const scan = $derived(skill.scan);
   const nothing = $derived(
     scan && !scan.executables?.length && !scan.binaries?.length && !scan.hosts?.length && !scan.hiddenText?.length && !scan.blobs?.length,
@@ -50,13 +50,9 @@
   }
 
   $effect(() => {
+    const stop = onChange(["sessions", "agents", "handler-needs"], () => void refresh());
     void refresh();
-  });
-
-  $effect(() => {
-    if (!running) return;
-    const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
+    return stop;
   });
 
   async function edit(): Promise<void> {

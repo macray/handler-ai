@@ -1,4 +1,5 @@
-"""Unit tests: content-free Web Push with VAPID (apps design §7), encrypted (RFC 8291)."""
+"""Unit tests: content-free Web Push with VAPID (apps design §7), encrypted (RFC 8291): its kind
+alone, padded to the same size every time."""
 
 import asyncio
 import base64
@@ -14,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from handler_contracts import PushKeys, WebPush
+from handler_contracts import PushKeys, PushKind, WebPush
 from handler_control import webpush
 
 
@@ -79,11 +80,12 @@ def decrypt(body: bytes, key: ec.EllipticCurvePrivateKey, auth: str) -> bytes:
     ikm = hkdf(unb64(auth), shared, b"WebPush: info\x00" + ua_public + sender, 32)
     cek = hkdf(salt, ikm, b"Content-Encoding: aes128gcm\x00", 16)
     nonce = hkdf(salt, ikm, b"Content-Encoding: nonce\x00", 12)
-    padded = AESGCM(cek).decrypt(nonce, record, None)
+    padded = AESGCM(cek).decrypt(nonce, record, None).rstrip(b"\x00")  # RFC 8188's padding
     assert padded.endswith(b"\x02")  # the last (and only) record
     return padded[:-1]
 
 
+@pytest.mark.rule("push.content-free")
 def test_encryption_matches_the_rfc_test_vector() -> None:
     """RFC 8291 Appendix A: the same keys and salt give the same bytes as the RFC."""
     sender = ec.derive_private_key(
@@ -104,9 +106,10 @@ def test_encryption_matches_the_rfc_test_vector() -> None:
 
 
 @pytest.mark.rule("push.content-free")
-def test_push_sends_nothing_but_the_signal(tmp_path: Path) -> None:
-    """If this fails: a push service reads what a push says, or Firefox for Android drops it
-    (it needs a body to decrypt)."""
+@pytest.mark.parametrize(("kind", "byte"), [("needs-you", b"n"), ("app-news", b"a")])
+def test_push_sends_nothing_but_its_kind(tmp_path: Path, kind: PushKind, byte: bytes) -> None:
+    """If this fails: a push service reads what a push says, tells one kind from the other by
+    its size, or Firefox for Android drops it (it needs a body to decrypt)."""
     v = webpush.Vapid(tmp_path / "vapid.json")
     key, keys = a_browser()
     seen: list[httpx.Request] = []
@@ -118,17 +121,19 @@ def test_push_sends_nothing_but_the_signal(tmp_path: Path) -> None:
     async def run() -> int:
         to = WebPush(endpoint="https://push.example.org/p/abc", keys=keys)
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-            return await webpush.push(http, v, to, "mailto:x@y.z")
+            return await webpush.push(http, v, to, "mailto:x@y.z", kind)
 
     assert asyncio.run(run()) == 201
     (request,) = seen
     assert request.headers["Content-Encoding"] == "aes128gcm"
     assert request.headers["TTL"] == str(webpush.TTL)
+    assert request.headers["Urgency"] == "normal"  # the same for every kind
     assert request.headers["Authorization"].startswith("vapid t=")
-    assert decrypt(request.content, key, keys.auth) == b""  # the browser reads nothing
-    assert len(request.content) == 16 + 4 + 1 + 65 + 1 + 16  # always the same size
+    assert decrypt(request.content, key, keys.auth) == byte  # the browser reads its kind alone
+    assert len(request.content) == 16 + 4 + 1 + 65 + webpush.RECORD + 16  # always the same size
 
 
+@pytest.mark.rule("push.only-to-a-browser-push-service")
 def test_keys() -> None:
     _, keys = a_browser()
     assert webpush.valid_keys(keys.p256dh, keys.auth)

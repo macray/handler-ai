@@ -18,7 +18,7 @@
   <a href="LICENSE">Apache 2.0</a>
 </p>
 
-> **Status: alpha · v0.3.0** · Linux supported; macOS and Windows (WSL 2) experimental. Expect breaking changes between releases.
+> **Status: alpha** · Linux supported; macOS and Windows (WSL 2) experimental. Expect breaking changes between releases.
 
 <p align="center"><img src="docs/screenshots/demo.gif" alt="A session started from a project's page: the agent reaches pypi.org, blocked; Allow for this agent on the card; Handler tells the agent to go on and the tests pass" width="720"></p>
 
@@ -69,7 +69,7 @@ Connect via API keys (Anthropic, OpenAI, Mistral, OpenRouter, or any OpenAI-comp
 ### 5. Tools, Skills, and Notes
 * **Tools:** Give agents access to specific system toolchains or CLI utilities safely.
 * **Skills:** Drop-in `SKILL.md` folders to expand agent capabilities.
-* **Notes:** Context folders provided read-only to guide the agent.
+* **Notes:** Context folders provided read-only to guide the agent, or read-write for one that keeps documents there.
 * Official packages are available via [handler-ai-registry](https://github.com/macray/handler-ai-registry), or you can add custom git sources.
 
 ### 6. Plans and Automations
@@ -79,7 +79,10 @@ Connect via API keys (Anthropic, OpenAI, Mistral, OpenRouter, or any OpenAI-comp
 ### 7. Mobile Access
 Monitor, prompt, or launch sessions from your phone using an end-to-end encrypted self-hosted gateway (`handler-gateway` behind HTTPS via Tailscale or a reverse proxy). No exposed ports required.
 
-<p align="center"><a href="docs/screenshots/phone-home.jpg"><img src="docs/screenshots/phone-home.jpg" alt="Mobile home page" width="260"></a></p>
+<p align="center">
+  <a href="docs/screenshots/phone-home.jpg"><img src="docs/screenshots/phone-home.jpg" alt="Mobile home page: the sessions shared with the phone" width="260"></a>
+  <a href="docs/screenshots/phone-session.jpg"><img src="docs/screenshots/phone-session.jpg" alt="A session on the phone: a blocked host allowed, the agent goes on and the tests pass" width="260"></a>
+</p>
 
 ---
 
@@ -102,35 +105,34 @@ Monitor, prompt, or launch sessions from your phone using an end-to-end encrypte
 
 ## Installation
 
-**Prerequisites:** Python 3.12+ (auto-installed via `install.sh` using [uv](https://docs.astral.sh/uv/)) and a container runtime.
+**Prerequisites:** a container runtime (below). Python 3.12+ and [uv](https://docs.astral.sh/uv/) are installed by `install.sh` when missing.
 
 ### Linux / WSL 2
-```bash
-curl -fsSL [https://github.com/macray/handler-ai/releases/latest/download/install.sh](https://github.com/macray/handler-ai/releases/latest/download/install.sh) | sh
-```
 
-Alternatively, if you already use uv: 
-```bash
-uv tool install handler-ai # (or pipx install handler-ai).
-```
-
-Then run:
+Install rootless Podman (with `passt`) or Docker, then:
 
 ```bash
-handler setup    # Configures daemon service and builds default images
+curl -fsSL https://github.com/macray/handler-ai/releases/latest/download/install.sh | sh
+handler setup    # Configures the daemon service and builds the default images
 handler ui       # Launches the web interface
 ```
 
-macOS (Experimental)
+Alternatively, if you already use uv: `uv tool install handler-ai` (or `pipx install handler-ai`).
 
-Install Apple's container (or Docker Desktop/OrbStack), then:
+### macOS (experimental)
+
+On Apple silicon and macOS 26: install [Apple's container](https://github.com/apple/container/releases)
+(or Docker Desktop or OrbStack) and Rosetta, which Apple's image builder needs, then:
 
 ```bash
-uv tool install handler-ai
-container system start
+softwareupdate --install-rosetta --agree-to-license
+container system start     # the first time; Handler starts it afterwards, at login
+curl -fsSL https://github.com/macray/handler-ai/releases/latest/download/install.sh | sh
 handler setup
 handler ui
 ```
+
+A Mac that is itself a virtual machine cannot run agents: they each run in a virtual machine.
 
 ## Quick Start (Terminal)
 
@@ -146,7 +148,7 @@ handler session list && handler attach s_…          # Resume a running or stop
 To alias your standard workflow in ~/.bashrc or ~/.zshrc:
 
 ```bash
-claude-sandbox() { handler terminal claude-perso -- "\$@"; }
+claude-sandbox() { handler terminal claude -- "$@"; }
 ```
 
 

@@ -121,7 +121,7 @@ def test_p9_instructions_go_with_the_first_prompt(daemon: Daemon, scope: Path) -
     assert second["prompt"] == ["report"]
 
 
-@pytest.mark.rule("connection.runs-with-the-model-named")
+@pytest.mark.rule("link.runs-with-the-model-named")
 def test_a_connection_names_the_model_it_runs_with(
     daemon: Daemon, ad_hoc: dict[str, Any], scope: Path
 ) -> None:
@@ -233,7 +233,7 @@ def _conversation(daemon: Daemon, agent: dict[str, Any], scope: Path) -> tuple[s
     return json.dumps(got + client.updates).replace(session, "S"), connection["sandbox"]
 
 
-@pytest.mark.rule("acp.the-sandbox-is-not-in-acp")
+@pytest.mark.rule("acp.no-sandbox-detail-reaches-a-client")
 def test_a_conversation_is_the_same_whatever_the_agent_s_network(daemon: Daemon) -> None:
     """The same conversation with agents that differ only by their network (none, filtered,
     open) gives their clients the same messages, naming no sandbox, image or proxy.
@@ -322,7 +322,7 @@ def test_binary_frame_closes_1003(daemon: Daemon, ad_hoc: dict[str, Any]) -> Non
         assert _close_of(ws)[0] == 1003
 
 
-@pytest.mark.rule("connection.one-sandbox-per-connection")
+@pytest.mark.rule("link.one-sandbox-per-link")
 def test_agent_exit_closes_1011(daemon: Daemon, ad_hoc: dict[str, Any], scope: Path) -> None:
     protocols = [ACP_SUBPROTOCOL, BEARER_SUBPROTOCOL_PREFIX + daemon.token]
     with connect(ad_hoc["acpUrl"], subprotocols=protocols) as ws:  # ty: ignore[invalid-argument-type]
@@ -343,7 +343,7 @@ def _connections(daemon: Daemon, agent_id: str) -> list[Any]:
         return c.get(f"/v1/agents/{agent_id}").json()["connections"]
 
 
-@pytest.mark.rule("connection.one-sandbox-per-connection")
+@pytest.mark.rule("link.one-sandbox-per-link")
 def test_connection_tracked_and_released(daemon: Daemon, ad_hoc: dict[str, Any]) -> None:
     client = daemon.connect(ad_hoc["acpUrl"])
     client.initialize()

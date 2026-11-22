@@ -1,42 +1,49 @@
-"""Unit tests: the agents an app needs, given by the person (H.2), and the runs it starts of
-them on handler.sock (H.11), without sandboxes: the sessions they start are recorded, not run."""
+"""Unit tests: what an app's backend asks of its runs on handler.sock (H.11), and the folders the
+person gives its needs (H.2), without sandboxes: the sessions its jobs' runs start are recorded,
+not run. A job's run itself (who runs it, its folders, its turns, its `then`): test_app_jobs.py."""
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from handler_contracts import AgentInterface, AgentOrigin, AppManifest, SessionOutput
-from handler_control import app_runs, interfaces, save_rules
-from handler_control.agents import AgentRecord, AgentRegistry, CheckedSettings, RunsAs
+from handler_contracts import WhoWorks
+from handler_control import app_jobs, app_runs
+from handler_control import apps as apps_module
+from handler_control.agents import AgentRegistry, RunsAs
 from handler_control.app_runs import AppRuns
-from handler_control.apps import AppError, AppRecord, AppStore, DeployError, Deployment
+from handler_control.apps import AppError, AppRecord, AppStore, Deployment
 from handler_control.inbox import Inbox
-from handler_control.projects import ProjectRegistry
-from handler_control.sessions import SessionRecord, SessionStore
+from handler_control.sessions import SessionStore
 from handler_control.settings import Settings
 
-RESULT: dict[str, Any] = {
-    "type": "object",
-    "required": ["status", "summary"],
-    "properties": {
-        "status": {"enum": ["ok", "attention", "failed"]},
-        "summary": {"type": "string"},
-    },
-}
-FIELDS = {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]}
-OPTIONAL = {**FIELDS, "required": []}  # the request may be left out
-MANIFEST = """apiVersion = "handler.app/v1"
+RESULT_TOML = (
+    '{ type = "object", required = ["status", "summary"], properties = { status = { enum = '
+    '["ok", "attention", "failed"] }, summary = { type = "string" } } }'
+)
+HEAD = """apiVersion = "handler.app/v1"
 name = "planner"
 version = "1.0.0"
-[needs.agents.planner]
-description = "Tells you what to do next"
-from = "agent"
 """
-DEFINITION = '[agent]\nname = "Planner"\n'
+MANIFEST = (
+    HEAD
+    + f"""[jobs.plan]
+description = "Tells you what to do next"
+result = {RESULT_TOML}
+[jobs.plan.fields]
+type = "object"
+required = ["request"]
+properties = {{ request = {{ type = "string" }} }}
+[jobs.today]
+description = "Says what today holds"
+result = {RESULT_TOML}
+[actions.today]
+description = "What about today?"
+job = "today"
+"""
+)
 
 
 class Fixture:
@@ -56,64 +63,27 @@ class Fixture:
         self.registry = AgentRegistry(self.settings.state_dir)
         self.sessions = SessionStore(self.settings, self.registry)
         self.inbox = Inbox(self.settings)
-        projects = ProjectRegistry(self.settings.state_dir, self.registry)
-        self.runs = AppRuns(self.settings, self.sessions, projects, self.inbox)
+        self.runs = AppRuns(self.settings, self.sessions, self.inbox)
         self.store = AppStore(self.settings, "t0ken", self.inbox, self.runs)
-        self.created: list[dict[str, Any]] = []
-        runs_as = RunsAs(harness="fake", account="fake")
-        monkeypatch.setattr(save_rules, "session_model", lambda *_: runs_as)
-        monkeypatch.setattr(self.sessions, "create", self.create)
+        monkeypatch.setattr(
+            app_jobs,
+            "runs_as",
+            lambda _s, who: RunsAs(**who.model_access.model_dump() | {"harness": who.program}),
+        )
+        monkeypatch.setattr(self.sessions, "spawn", lambda coro: coro.close())  # nothing starts
         monkeypatch.setattr(app_runs, "WATCH_POLL", 0.01)
 
-    def create(self, agent: AgentRecord, runs: RunsAs, **kw: Any) -> SessionRecord:
-        """What SessionStore.create would record, without starting it."""
-        now = datetime.now(UTC)
-        rec = SessionRecord(
-            id=f"s_{len(self.created)}",
-            agent_id=agent.id,
-            harness=runs.harness,
-            scope="/code/planner",
-            created_at=now,
-            last_activity_at=now,
-            agents_model=True,
-            origin=kw["origin"],
-            app=kw["app"],
-            input=kw["run"].model_dump(),
-        )
-        self.sessions.records[rec.id] = rec
-        self.created.append(kw)
-        return rec
-
-    def agent(
-        self, name: str = "Planner", scope: str = "/code/planner", **interface: Any
-    ) -> AgentRecord:
-        settings = CheckedSettings(
-            scope=scope,
-            model=RunsAs(harness="fake", account="fake"),
-            interface=AgentInterface.model_validate(interface or {"result": RESULT}),
-        )
-        return self.registry.add(AgentRecord(**settings.model_dump(), name=name))
-
-    def deployed(
-        self,
-        manifest: str = MANIFEST,
-        interface: dict[str, Any] | None = None,
-        given: AgentRecord | None = None,
-    ) -> Path:
-        """The app installed (version 1), its definition's interface `interface` (default: a form
-        with an optional request, the result RESULT), `given` given for its need."""
+    def deployed(self, manifest: str = MANIFEST) -> Path:
+        """The app installed (version 1), its jobs' instructions there, run by a fake program."""
         version = self.store.version_dir("planner", 1)
-        version.mkdir(parents=True)
+        (version / "jobs").mkdir(parents=True)
         (version / "app.toml").write_text(manifest)
-        definition = version / "agent"
-        definition.mkdir()
-        (definition / "agent.toml").write_text(DEFINITION)
-        wanted = interface or {"fields": OPTIONAL, "result": RESULT}
-        (definition / "interface.json").write_text(json.dumps(wanted))
+        for job in ("plan", "today"):
+            (version / "jobs" / f"{job}.md").write_text("Do it.\n")
         self.store.records["planner"] = AppRecord(
             name="planner",
             deployments=[Deployment(1, "1.0.0", datetime.now(UTC))],
-            agents={"planner": given.id} if given else {},
+            who_works=WhoWorks(program="fake", account="fake"),
         )
         return version
 
@@ -126,13 +96,17 @@ def f(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fixture:
     return Fixture(tmp_path, monkeypatch)
 
 
-@pytest.mark.rule("origin.handlerd-says-who-asks", "run.only-while-it-answers-the-owner")
+@pytest.mark.rule(
+    "app-origin.handlerd-says-who-asks",
+    "app-job.its-code-starts-one-only-while-answering-the-owner",
+)
 def test_a_run_starts_only_while_answering_the_owner(f: Fixture) -> None:
-    strict: dict[str, Any] = {"fields": FIELDS, "result": RESULT}  # the app always sends a request
-    f.deployed(interface=strict, given=f.agent(fields=FIELDS, result=RESULT))
+    """Only the owner's request in progress carries a start token: never another person's,
+    another app's, or one answered already."""
+    f.deployed()
 
     async def go() -> None:
-        body = {"agent": "planner", "fields": {"request": "what now?"}}
+        body = {"job": "plan", "fields": {"request": "what now?"}}
         status, answer = await f.call("POST", "/runs", body | {"start": "made-up"})
         assert status == 403 and "request of the owner's" in answer["error"]
         assert f.store.issue_start("planner", "alice") is None  # a family member's: none
@@ -143,8 +117,7 @@ def test_a_run_starts_only_while_answering_the_owner(f: Fixture) -> None:
         assert token is not None
         status, run = await f.call("POST", "/runs", body | {"start": token})
         assert status == 202, run
-        assert (run["agent"], run["state"]) == ("planner", "running")
-        assert f.created[0]["origin"] == "app" and f.created[0]["app"] == "planner"
+        assert (run["job"], run["state"]) == ("plan", "running")
         f.store.end_start(token)
         status, answer = await f.call("POST", "/runs", body | {"start": token})
         assert status == 403  # answered: spent
@@ -153,93 +126,95 @@ def test_a_run_starts_only_while_answering_the_owner(f: Fixture) -> None:
     asyncio.run(go())
 
 
-@pytest.mark.rule("run.of-a-need-it-declares")
-def test_a_run_is_of_a_need_with_a_valid_input(f: Fixture) -> None:
-    strict: dict[str, Any] = {"fields": FIELDS, "result": RESULT}  # the app always sends a request
-    f.deployed(interface=strict, given=f.agent(fields=FIELDS, result=RESULT))
+@pytest.mark.rule("app-sock.answers-only-what-the-app-declares")
+def test_a_run_is_of_a_job_with_a_valid_input(f: Fixture) -> None:
+    f.deployed()
 
     async def go() -> None:
         token = f.store.issue_start("planner", "owner")
-        status, answer = await f.call("POST", "/runs", {"agent": "other", "start": token})
-        assert status == 403 and "not in its needs.agents" in answer["error"]
-        status, answer = await f.call("POST", "/runs", {"agent": "planner", "start": token})
+        status, answer = await f.call("POST", "/runs", {"job": "plan", "start": token})
         assert status == 400 and answer["error"].startswith("input invalid")
-        status, answer = await f.call("POST", "/runs", {"agent": "planner"})
+        status, answer = await f.call("POST", "/runs", {"job": "plan"})
         assert status == 400 and "start" in answer["error"]
+        status, answer = await f.call("POST", "/runs", {"agent": "plan", "start": token})
+        assert status == 400  # an app has no agents: a run is of one of its jobs
         status, answer = await f.call("GET", "/runs/r_nope")
         assert status == 404
-        assert f.created == []
+        assert f.runs.recent("planner") == []
 
     asyncio.run(go())
 
 
-@pytest.mark.rule("need.an-agent-that-fits")
-def test_a_run_needs_an_agent_given_that_still_fits(f: Fixture) -> None:
+@pytest.mark.rule("app-sock.answers-only-what-the-app-declares")
+def test_the_app_lists_its_runs_newest_first_with_what_started_and_asked_each(
+    f: Fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     f.deployed()
-    planner = f.agent(result=RESULT)
+    monkeypatch.setattr(apps_module, "ACTION_WAIT", 0)  # answered as running at once
+    monkeypatch.setattr(f.store, "nudge_of", lambda *_: None)  # an open nudge of this action
+    monkeypatch.setattr(f.store.nudges, "running", lambda *_: None)
 
     async def go() -> None:
+        assert await f.call("GET", "/runs") == (200, {"runs": []})
         token = f.store.issue_start("planner", "owner")
-        status, answer = await f.call("POST", "/runs", {"agent": "planner", "start": token})
-        assert status == 409 and "not given" in answer["error"]
-        f.store.records["planner"].agents["planner"] = planner.id
-        f.registry.delete(planner.id)
-        status, answer = await f.call("POST", "/runs", {"agent": "planner", "start": token})
-        assert status == 409 and "deleted" in answer["error"]
-
-    asyncio.run(go())
-
-
-@pytest.mark.rule("run.of-a-need-it-declares")
-def test_runs_need_agents_in_the_manifest(f: Fixture) -> None:
-    f.deployed(MANIFEST.split("[needs.agents.planner]", maxsplit=1)[0] + "[needs]\nnotify = true\n")
-
-    async def go() -> None:
-        status, answer = await f.call("POST", "/runs", {"agent": "planner", "start": "x"})
-        assert status == 403 and "[needs.agents" in answer["error"]
-        assert (await f.call("GET", "/elsewhere"))[0] == 404
-
-    asyncio.run(go())
-
-
-@pytest.mark.rule("run.its-end-reaches-the-inbox")
-def test_its_end_goes_to_the_inbox_opening_the_app(f: Fixture) -> None:
-    f.deployed(given=f.agent("My planner", fields=OPTIONAL, result=RESULT))
-
-    async def go() -> None:
-        token = f.store.issue_start("planner", "owner")
-        status, run = await f.call("POST", "/runs", {"agent": "planner", "start": token})
-        assert status == 202
-        rec = f.sessions.records[run["sessionId"]]
-        result = {"status": "attention", "summary": "Call the bank before 10."}
-        rec.state = "stopped"
-        rec.output = SessionOutput(valid=True, value=result).model_dump()
-        for _ in range(100):
-            if f.inbox.messages:
-                break
-            await asyncio.sleep(0.02)
-        (message,) = f.inbox.messages
-        assert (message.source, message.name, message.app) == ("app", "planner", "planner")
-        assert (message.title, message.status, message.summary) == (
-            "My planner",  # the agent given, by its name
-            "attention",
-            "Call the bank before 10.",
-        )
-        status, done = await f.call("GET", f"/runs/{run['id']}")
-        assert (status, done["state"], done["result"]) == (200, "succeeded", result)
-        assert (await f.call("POST", f"/runs/{run['id']}/cancel"))[0] == 409
+        body = {"job": "plan", "fields": {"request": "now"}, "start": token}
+        status, run = await f.call("POST", "/runs", body)
+        assert status == 202 and run["startedBy"] == {"by": "code"}
+        await f.store.act("planner", "today", {})
+        await f.store.act("planner", "today", {}, asked=True)
+        await f.store.act("planner", "today", {}, "m_1")
+        status, listed = await f.call("GET", "/runs")
+        assert status == 200
+        assert [r["startedBy"] for r in listed["runs"]] == [
+            {"by": "action", "action": "today", "via": via} for via in ("nudge", "ask", "try")
+        ] + [{"by": "code"}]
+        assert [r["job"] for r in listed["runs"]] == ["today", "today", "today", "plan"]
+        assert listed["runs"][-1] == run  # as `POST /runs` answered it
+        # what each was asked: its fields, as its run got them (so the app keeps no list of its
+        # own requests), also from `GET /runs/{id}`
+        assert run["fields"] == {"request": "now"}
+        assert [r["fields"] for r in listed["runs"][:3]] == [{}, {}, {}]
+        assert await f.call("GET", f"/runs/{run['id']}") == (200, run)
         await f.runs.close()
 
     asyncio.run(go())
 
 
-@pytest.mark.rule("run.its-end-reaches-the-inbox")
-def test_a_cancelled_run_tells_nothing(f: Fixture) -> None:
-    f.deployed(given=f.agent(fields=OPTIONAL, result=RESULT))
+@pytest.mark.rule("app-sock.answers-only-what-the-app-declares")
+def test_the_app_lists_only_the_last_runs_kept(f: Fixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    f.deployed()
+    monkeypatch.setattr(app_runs, "KEEP", 3)
 
     async def go() -> None:
         token = f.store.issue_start("planner", "owner")
-        _, run = await f.call("POST", "/runs", {"agent": "planner", "start": token})
+        body = {"job": "today", "start": token}
+        started = [(await f.call("POST", "/runs", body))[1]["id"] for _ in range(4)]
+        _, listed = await f.call("GET", "/runs")
+        assert [r["id"] for r in listed["runs"]] == started[:0:-1]  # the first one is gone
+        await f.runs.close()
+
+    asyncio.run(go())
+
+
+@pytest.mark.rule("app-sock.answers-only-what-the-app-declares")
+def test_runs_need_jobs_in_the_manifest(f: Fixture) -> None:
+    f.deployed(HEAD + "[needs]\nnotify = true\n")
+
+    async def go() -> None:
+        status, answer = await f.call("POST", "/runs", {"job": "plan", "start": "x"})
+        assert status == 403 and "[jobs.<name>]" in answer["error"]
+        assert (await f.call("GET", "/elsewhere"))[0] == 404
+
+    asyncio.run(go())
+
+
+@pytest.mark.rule("app-run.its-end-reaches-the-inbox")
+def test_a_cancelled_run_tells_nothing(f: Fixture) -> None:
+    f.deployed()
+
+    async def go() -> None:
+        token = f.store.issue_start("planner", "owner")
+        _, run = await f.call("POST", "/runs", {"job": "today", "start": token})
         assert (await f.call("POST", f"/runs/{run['id']}/cancel"))[0] == 200
         f.sessions.records[run["sessionId"]].state = "stopped"
         for _ in range(20):
@@ -251,65 +226,15 @@ def test_a_cancelled_run_tells_nothing(f: Fixture) -> None:
     asyncio.run(go())
 
 
-@pytest.mark.rule("deploy.only-with-all-it-needs", "need.an-agent-that-fits")
-def test_deploy_checks_the_agent_given(f: Fixture) -> None:
-    version = f.deployed()
-    manifest = AppManifest.from_toml(MANIFEST)
-    with pytest.raises(DeployError, match="agent planner not given"):
-        f.store.check_agents("planner", manifest, version)
-    brief = f.agent("Brief", fields=FIELDS)
-    f.store.records["planner"].agents["planner"] = brief.id
-    with pytest.raises(DeployError, match="it is not a job"):
-        f.store.check_agents("planner", manifest, version)
-    strict = f.agent("Strict", fields=FIELDS, result=RESULT)  # requires a request
-    f.store.records["planner"].agents["planner"] = strict.id
-    with pytest.raises(DeployError, match="requires request, which the app may leave out"):
-        f.store.check_agents("planner", manifest, version)
-    fits = f.agent(fields=OPTIONAL, result=RESULT)
-    f.store.records["planner"].agents["planner"] = fits.id
-    f.store.check_agents("planner", manifest, version)
-
-
-@pytest.mark.rule("need.an-agent-that-fits")
-def test_deploy_checks_the_definition_is_a_job(f: Fixture) -> None:
-    version = f.deployed(interface={"fields": FIELDS})
-    manifest = AppManifest.from_toml(MANIFEST)
-    with pytest.raises(AppError, match="a job's, with a result"):
-        f.store.check_agents("planner", manifest, version)
-    (version / "agent" / "agent.toml").write_text('description = "x"\n' + DEFINITION)
-    with pytest.raises(AppError, match="only \\[agent\\]"):
-        f.store.check_agents("planner", manifest, version)
-
-
-@pytest.mark.rule("need.an-agent-that-fits")
-def test_the_agents_that_fit_are_offered(f: Fixture) -> None:
-    f.deployed(MANIFEST + 'worksIn = "tasks"\n[needs.files.tasks]\nmode = "rw"\n')
-    here = f.agent(fields=OPTIONAL, result=RESULT)
-    elsewhere = f.agent("Elsewhere", scope="/code/other", fields=OPTIONAL, result=RESULT)
-    f.agent("Brief", fields=FIELDS)
-    (need,) = f.store.view("planner").agents
-    assert (need.name, need.works_in) == ("planner", "tasks")
-    assert need.origin == AgentOrigin(kind="app", name="planner", agent="planner")
-    assert need.definition is not None and need.definition.agent_name == "Planner"
-    assert set(need.fits) == {here.id, elsewhere.id}  # no folder given yet: any folder
-    f.store.records["planner"].files["tasks"] = "/code/planner"
-    (need,) = f.store.view("planner").agents
-    assert need.fits == [here.id]
-    with pytest.raises(AppError, match="it works in /code/other, not in /code/planner"):
-        f.store.set_agent("planner", "planner", elsewhere.id)
-    assert f.store.set_agent("planner", "planner", here.id).agents[0].agent_id == here.id
-    with pytest.raises(AppError, match="needs no agent other"):
-        f.store.set_agent("planner", "other", here.id)
-
-
-@pytest.mark.rule("need.a-folder-in-your-home-never-handler-s", "need.a-file-given-is-that-file")
+@pytest.mark.rule(
+    "app-need.a-folder-in-your-home-never-handler-s", "app-need.a-file-given-is-that-file"
+)
 def test_a_folder_given_is_checked_made_and_set_up(f: Fixture) -> None:
     source = f.store.source("planner")
-    (source / "agent").mkdir(parents=True)
-    (source / "agent" / "README.md").write_text("The folder's format.\n")
+    (source / "format").mkdir(parents=True)
+    (source / "format" / "README.md").write_text("The folder's format.\n")
     (source / "app.toml").write_text(
-        MANIFEST.split("[needs.agents.planner]", maxsplit=1)[0]
-        + '[needs.files.tasks]\nmode = "rw"\ninit = ["agent/README.md"]\n'
+        HEAD + '[needs.files.tasks]\nmode = "rw"\ninit = ["format/README.md"]\n'
     )
     f.store.records["planner"] = AppRecord(name="planner")
 
@@ -339,100 +264,36 @@ def test_a_folder_given_is_checked_made_and_set_up(f: Fixture) -> None:
     asyncio.run(go())
 
 
-@pytest.mark.rule("part.its-app-s-only")
-def test_an_agent_is_set_up_from_the_source_definition(f: Fixture) -> None:
-    source = f.store.source("planner")
-    (source / "agent").mkdir(parents=True)
-    (source / "app.toml").write_text(MANIFEST)
-    (source / "agent" / "agent.toml").write_text(DEFINITION)
-    (source / "agent" / "interface.json").write_text(json.dumps({"result": RESULT}))
-    f.store.records["planner"] = AppRecord(name="planner")
-    assert (
-        f.store.definition_dir(
-            AgentOrigin.model_validate({"kind": "app", "name": "planner", "agent": "planner"})
-        )
-        == source / "agent"
-    )
-    with pytest.raises(AppError, match="no app planner needing an agent other"):
-        f.store.definition_dir(
-            AgentOrigin.model_validate({"kind": "app", "name": "planner", "agent": "other"})
-        )
-
-
-@pytest.mark.rule("deploy.what-it-adds-is-said-first")
-def test_added_agents_are_shown() -> None:
-    manifest = AppManifest.from_toml(MANIFEST)
-    assert manifest.added_needs(None) == ["agent planner"]
-    assert manifest.added_needs(manifest.needs) == []
-
-
-@pytest.mark.rule("app.its-manifest-is-strict")
-def test_a_need_names_one_need() -> None:
-    with pytest.raises(ValueError, match="names one need: planner"):
-        AppManifest.from_toml(MANIFEST + "[needs.files.planner]\n")
-    with pytest.raises(ValueError, match="no files need tasks"):
-        AppManifest.from_toml(MANIFEST + 'worksIn = "tasks"\n')
-
-
-@pytest.mark.rule("need.an-agent-that-fits")
-def test_misfit_compares_properties_types_and_required() -> None:
-    wanted = AgentInterface.model_validate({"fields": OPTIONAL, "result": RESULT})
-
-    def why(**interface: Any) -> str | None:
-        return interfaces.misfit(wanted, AgentInterface.model_validate(interface))
-
-    assert why(fields=OPTIONAL, result=RESULT) is None
-    extra = {"type": "object", "properties": {**RESULT["properties"], "more": {"type": "string"}}}
-    assert why(fields=OPTIONAL, result={**RESULT, **extra}) is None
-    assert why(result=RESULT) == "its form has no field request"
-    number = {"type": "object", "properties": {"request": {"type": "number"}}}
-    assert why(fields=number, result=RESULT) == "its form's request is not a string"
-    loose = {**RESULT, "required": ["status"]}
-    assert why(fields=OPTIONAL, result=loose) == ("its result does not always give summary")
-    assert interfaces.misfit(wanted, None) == "it is not a job"
-
-
 @pytest.mark.rule("app.nothing-is-read-through-a-link-out")
 def test_links_out_of_the_app_are_never_read(f: Fixture) -> None:
     """An agent writes the app's folder: a link there to a file of the person's must not make
-    handler read it for the agent (into a definition, into the folder given)."""
+    handler read it for the agent (into the folder given)."""
     secret = f.home / ".ssh" / "id_ed25519"
     secret.parent.mkdir(parents=True)
     secret.write_text("PRIVATE KEY\n")
     source = f.store.source("planner")
-    (source / "agent").mkdir(parents=True)
-    (source / "agent" / "agent.toml").write_text(DEFINITION)
-    (source / "agent" / "interface.json").write_text(json.dumps({"result": RESULT}))
-    (source / "agent" / "instructions.md").symlink_to(secret)
-    (source / "agent" / "README.md").symlink_to(secret)
+    (source / "format").mkdir(parents=True)
+    (source / "format" / "README.md").symlink_to(secret)
     (source / "app.toml").write_text(
-        MANIFEST + '[needs.files.tasks]\nmode = "rw"\ninit = ["agent/README.md"]\n'
+        HEAD + '[needs.files.tasks]\nmode = "rw"\ninit = ["format/README.md"]\n'
     )
     f.store.records["planner"] = AppRecord(name="planner")
-    (need,) = f.store.view("planner").agents
-    assert need.definition is None
-    assert need.problem is not None and need.problem.endswith("is a link to outside the app")
-    with pytest.raises(AppError, match="a link to outside the app"):
-        f.store.definition_dir(
-            AgentOrigin.model_validate({"kind": "app", "name": "planner", "agent": "planner"})
-        )
 
     async def go() -> None:
-        with pytest.raises(AppError, match=r"agent/README\.md is a link to outside the app"):
+        with pytest.raises(AppError, match=r"format/README\.md is a link to outside the app"):
             await f.store.set_file("planner", "tasks", str(f.home / "planner"), create=True)
         assert not (f.home / "planner" / "README.md").exists()
 
     asyncio.run(go())
 
 
-@pytest.mark.rule("need.yours-kept-by-handler")
+@pytest.mark.rule("app-need.yours-kept-by-handler")
 def test_only_the_next_version_s_needs_are_asked_for(f: Fixture) -> None:
     """A need the installed version has and the source dropped (a migrated `file-1`) is not
     asked for: the next deploy drops it."""
-    head = MANIFEST.partition("[needs.agents.planner]")[0]
-    f.deployed(head + "[needs.files.file-1]\n")
+    f.deployed(HEAD + "[needs.files.file-1]\n")
     assert [n.name for n in f.store.view("planner").files] == ["file-1"]  # no source: installed
     source = f.store.source("planner")
     source.mkdir(parents=True)
-    (source / "app.toml").write_text(head + '[needs.files.tasks]\nmode = "rw"\n')
+    (source / "app.toml").write_text(HEAD + '[needs.files.tasks]\nmode = "rw"\n')
     assert [n.name for n in f.store.view("planner").files] == ["tasks"]

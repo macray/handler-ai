@@ -118,3 +118,19 @@ def test_a_terminal_whose_start_failed_says_why_on_it_at_once(
     assert time.monotonic() - began < launch.START_REASON_TIMEOUT
     # said twice: by the launcher (handlerd's log) and by attach (the person's terminal)
     assert capsys.readouterr().err.count(f"handler-sandbox-test: {said}") == 2
+
+
+@pytest.mark.rule("terminal.attached-within-60-s")
+def test_a_terminal_nobody_attaches_to_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If this fails: a `handler terminal` killed before it attached leaves its sandbox
+    waiting for ever."""
+    assert launch.ATTACH_TIMEOUT == 60
+    monkeypatch.setattr(launch, "ATTACH_TIMEOUT", 0.3)
+    monkeypatch.setattr(launch, "_instances_dir", lambda: tmp_path / "instances")
+    monkeypatch.setattr(launch.signal, "signal", lambda *_: None)
+    sandbox = instance(tmp_path, tty=True)
+    sandbox.dir.mkdir(parents=True)
+    assert launch.run(Refused(0, None), sandbox) == SandboxExit.SETUP_FAILED  # ty: ignore[invalid-argument-type]
+    assert "handler-sandbox-test: nobody attached, stopping" in capsys.readouterr().err

@@ -1,5 +1,5 @@
 """Handler's needs (D.18): its own features that need an agent (the skill review needs a
-reviewer), each given one by the person as an app's needs are (H.2). Handler ships the definition
+reviewer), each given one by the person. Handler ships the definition
 an agent is set up from for each; the UI calls the agent given a helper.
 
     data/handler-needs/<name>/   need.toml (what the agent does for Handler, the definition's
@@ -81,7 +81,7 @@ def misfit(
     scope: str | None,
 ) -> str | None:
     """Why an agent (its origin, its interface, its folder) cannot be given for a need, None when
-    it fits: a job's form and result fit (interfaces.misfit, as an app's need, H.2); a chat says
+    it fits: a job's form and result fit (interfaces.misfit); a chat says
     nothing of what it does, so only one set up for that need fits, with no folder (each session
     works on a copy: a skill, an app's draft)."""
     wanted = need.definition.interface

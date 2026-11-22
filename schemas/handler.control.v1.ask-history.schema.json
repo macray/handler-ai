@@ -1,0 +1,391 @@
+{
+  "$id": "urn:handler.control/v1/ask-history",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ActionOption": {
+      "description": "One action Ask can pick: which app's, and what it does.",
+      "properties": {
+        "app": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "App",
+          "type": "string"
+        },
+        "action": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Action",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "action",
+        "description"
+      ],
+      "title": "ActionOption",
+      "type": "object"
+    },
+    "ActionResult": {
+      "additionalProperties": false,
+      "description": "What an action gives (H.12): how it went, one or two sentences readable aloud, and what else\nthe app wants to show. A route answers it; a job's run gives it from its result (its\n`status` and `summary`, I.3's rule).",
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "attention",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "data": {
+          "default": null,
+          "title": "Data"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9/_.~%-]*(\\?[A-Za-z0-9=&_.~%-]*)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open"
+        }
+      },
+      "required": [
+        "status",
+        "summary"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    },
+    "ActionRun": {
+      "description": "An action, done or under way (H.12).",
+      "properties": {
+        "app": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "App",
+          "type": "string"
+        },
+        "action": {
+          "pattern": "^[a-z][a-z0-9-]{0,29}$",
+          "title": "Action",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runid"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        }
+      },
+      "required": [
+        "app",
+        "action",
+        "state"
+      ],
+      "title": "ActionRun",
+      "type": "object"
+    },
+    "AskRecord": {
+      "description": "One ask Handler received, kept in Ask's history (D.24): what was said, where it went,\nhow it ended.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "via": {
+          "enum": [
+            "web",
+            "phone",
+            "cli",
+            "key"
+          ],
+          "title": "Via",
+          "type": "string"
+        },
+        "spoken": {
+          "title": "Spoken",
+          "type": "boolean"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/AskTurn"
+          },
+          "title": "Turns",
+          "type": "array"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "attention",
+            "failed",
+            "running",
+            "question",
+            "none"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssistantAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "at",
+        "via",
+        "spoken",
+        "turns",
+        "outcome",
+        "summary"
+      ],
+      "title": "AskRecord",
+      "type": "object"
+    },
+    "AskTurn": {
+      "description": "One turn of an exchange with Ask: the person's words, or what Handler answered.",
+      "properties": {
+        "who": {
+          "enum": [
+            "you",
+            "handler"
+          ],
+          "title": "Who",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "text"
+      ],
+      "title": "AskTurn",
+      "type": "object"
+    },
+    "AssistantAnswer": {
+      "description": "What Ask did with what was said (D.24).",
+      "properties": {
+        "kind": {
+          "enum": [
+            "pick",
+            "needs",
+            "none"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9-]{0,29}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionRun"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
+        },
+        "actions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ActionOption"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "routerRun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Routerrun"
+        }
+      },
+      "required": [
+        "kind",
+        "summary"
+      ],
+      "title": "AssistantAnswer",
+      "type": "object"
+    }
+  },
+  "description": "`GET /v1/ask/history`: the asks kept, newest first (the last 200, 30 days at most).",
+  "properties": {
+    "keep": {
+      "title": "Keep",
+      "type": "boolean"
+    },
+    "asks": {
+      "items": {
+        "$ref": "#/$defs/AskRecord"
+      },
+      "title": "Asks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "keep",
+    "asks"
+  ],
+  "title": "AskHistory",
+  "type": "object"
+}

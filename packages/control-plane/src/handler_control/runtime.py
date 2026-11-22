@@ -96,6 +96,7 @@ def choose(settings: Settings, name: str) -> None:
     tmp.replace(path)
     sandbox_process.use(name)
     _last_check.clear()
+    _found.clear()  # the previous runtime's images
 
 
 CHECK_TTL = 300.0  # seconds a check answers supports(): a check runs `podman info`
@@ -182,10 +183,36 @@ def pull_argv(ref: str) -> list[str]:
     return [sandbox_process.binary(), "image", "pull", ref]
 
 
+# An image found is remembered for IMAGE_TTL seconds. Why: the pages listing images (Settings →
+# Sandboxes, the harnesses, a project's agents) ask for the same few within seconds, each answer a
+# process and a podman call, and podman answers slowly while it creates or removes containers
+# (its storage lock): 2 to 3 s each then, the page waiting for all. It speeds up handlerd's own
+# test suite as much (measured: 73 % of its lookups answered here), which is not why it is here.
+# What it costs: an image removed or replaced outside Handler (`podman rmi` by hand) may be shown
+# as it was for IMAGE_TTL seconds. Never longer for Handler's own changes: tag, remove and choose
+# forget them all. Only images found are remembered: one just built or pulled is seen at once.
+# A sandbox's launch asks podman itself (inspect_now): it never starts on an image gone.
+IMAGE_TTL = 10.0
+_found: dict[str, tuple[float, ImageInfo]] = {}  # reference → when found, what
+
+
 def inspect(ref: str) -> ImageInfo | None:
-    """The image's id and build time, or None if there is no such image."""
+    """The image's id and build time, or None if there is no such image; found at most
+    IMAGE_TTL seconds ago (see above)."""
+    if (known := _found.get(ref)) and time.monotonic() - known[0] < IMAGE_TTL:
+        return known[1]
+    return inspect_now(ref)
+
+
+def inspect_now(ref: str) -> ImageInfo | None:
+    """As `inspect`, asking the runtime now."""
     result = _image("inspect", ref)
-    return ImageInfo.model_validate_json(result.stdout) if result.returncode == 0 else None
+    if result.returncode != 0:
+        _found.pop(ref, None)
+        return None
+    info = ImageInfo.model_validate_json(result.stdout)
+    _found[ref] = (time.monotonic(), info)
+    return info
 
 
 def exists(ref: str) -> bool:
@@ -195,19 +222,17 @@ def exists(ref: str) -> bool:
 _versions: dict[str, str] = {}  # image id → recorded version (an id's content never changes)
 
 
-def version(ref: str, path: str) -> str | None:
-    """The first line of the version file `path` the image recorded (B.6, G.1), or None if it
-    has none or there is no such image."""
-    info = inspect(ref)
-    if info is None:
-        return None
-    if info.id not in _versions:
-        result = _image("read", info.id, path)
+def version(image_id: str, path: str) -> str | None:
+    """The first line of the version file `path` the image `image_id` recorded (B.6, G.1), or
+    None if it has none or there is no such image. Read once per id: no inspect to find it
+    (`/v1/harness-images` asks it for every harness image, on every page that shows them)."""
+    if image_id not in _versions:
+        result = _image("read", image_id, path)
         text = result.stdout.strip()
         if result.returncode != 0 or not text:
             return None  # not kept: a read that failed is tried again next time
-        _versions[info.id] = text.splitlines()[0]
-    return _versions[info.id]
+        _versions[image_id] = text.splitlines()[0]
+    return _versions[image_id]
 
 
 def extract(ref: str, path: str, folder: Path) -> str | None:
@@ -222,6 +247,7 @@ def extract(ref: str, path: str, folder: Path) -> str | None:
 
 def tag(source: str, target: str) -> None:
     """Point `target` at `source` (a reference or an image id)."""
+    _found.clear()
     result = _image("tag", source, target)
     if result.returncode != 0:
         raise RuntimeError(f"cannot tag {target}: {_reason(result)}")
@@ -230,6 +256,7 @@ def tag(source: str, target: str) -> None:
 def remove(image_id: str) -> str | None:
     """Remove the image if no container runs from it or mounts it; an image built on it outlives
     it (the engine may keep it meanwhile). None when removed, else why not."""
+    _found.clear()
     result = _image("remove", image_id)
     return None if result.returncode == 0 else _reason(result)
 

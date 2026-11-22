@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ...support.runtimes import Runtime
-from ..conftest import CURL_IMAGE, run, spec
+from ..conftest import CURL_IMAGE, own_image, run, spec
 
 ADDON_TARGET = "/opt/tools/handler-test"
 
@@ -24,8 +24,11 @@ def build_addon(runtime: Runtime, directory: Path) -> str:
     (directory / "bin" / "ls").write_text("#!/bin/sh\necho addon-ls\n")
     for f in (directory / "bin").iterdir():
         f.chmod(0o755)
-    (directory / "version").write_text(f"1 {uuid.uuid4()}\n")  # an image of its own per test
-    (directory / "Containerfile").write_text("FROM scratch\nCOPY bin /bin\nCOPY version /version\n")
+    # every layer of its own per test, the unique one first: a build reusing another test's
+    # cached `COPY bin` layer failed ("image not known") when that test's `image remove` took it
+    # with its image, as a dangling parent (tests on other workers, or the other Python's run)
+    (directory / "version").write_text(f"1 {uuid.uuid4()}\n")
+    (directory / "Containerfile").write_text("FROM scratch\nCOPY version /version\nCOPY bin /bin\n")
     id_file = directory / "iid"
     image = [runtime.binary, "image"]
     subprocess.run([*image, "build", str(directory), "--id-file", str(id_file)], check=True)
@@ -76,7 +79,7 @@ def test_an_extracted_folder_has_none_of_what_later_layers_removed(
         f"FROM {CURL_IMAGE}\nUSER root\n"
         "RUN mkdir -p /opt/t/sub /opt/u && touch /opt/t/old /opt/t/sub/old /opt/u/a /opt/u/b\n"
         "RUN rm -rf /opt/t /opt/u/a\n"  # its own layer: the folder's whiteout, not its files'
-        "RUN mkdir -p /opt/t && touch /opt/t/new\n"
+        "RUN mkdir -p /opt/t && touch /opt/t/new\n" + own_image()
     )
     id_file = tmp_path / "iid"
     image = [runtime.binary, "image"]

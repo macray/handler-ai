@@ -169,7 +169,8 @@ class WorkFolder(Document):
 
 
 class HostFolder(Document):
-    """A host folder at `target`; what the sandbox writes there (`writable`) is on the host."""
+    """A host folder, or a file, at `target`; what the sandbox writes there (`writable`) is on the
+    host."""
 
     source: AbsolutePath
     target: AbsolutePath
@@ -204,11 +205,14 @@ class SocketFolder(Document):
 class CacheFolder(Document):
     """A host folder kept between sandboxes, read-write, created if missing; its size and its
     clearing through the `cache` verbs (A.9). `path`, its folder of commands, on PATH after the
-    image's (B.6: `~/.cargo/bin`)."""
+    image's (B.6: `~/.cargo/bin`). Its kind (B.6): a container engine's images may be given as a
+    store of the sandbox's own with their downloads shared (Apple container, A.9); elsewhere it
+    is a folder like the others."""
 
     source: AbsolutePath
     target: AbsolutePath
     path: AbsolutePath | None = None
+    kind: Literal["folder", "images"] = "folder"
 
     @model_validator(mode="after")
     def _path_is_its_own(self) -> Self:

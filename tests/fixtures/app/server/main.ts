@@ -1,5 +1,5 @@
-// Backend of the test app: migrations on start, then /api/health, /api/count, /api/whoami, and
-// the action /api/actions/count (H.12: it answers how it went in a sentence).
+// Backend of the test app: migrations on start, then /api/health, /api/count, /api/whoami,
+// /api/path/… (the path and query it got, as sent), and the action /api/actions/count (H.12: it answers how it went in a sentence).
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 
@@ -19,8 +19,10 @@ export function handler(db: Database): (req: Request) => Response {
     const url = new URL(req.url);
     if (url.pathname === "/api/health") return Response.json({ ok: true });
     if (url.pathname === "/api/whoami") {
-      return Response.json({ person: req.headers.get("x-handler-person"), cookie: req.headers.get("cookie") });
+      const handler = [...req.headers.keys()].filter((k) => k.startsWith("x-handler-") && k !== "x-handler-start");
+      return Response.json({ person: req.headers.get("x-handler-person"), cookie: req.headers.get("cookie"), handler: handler.sort() });
     }
+    if (url.pathname.startsWith("/api/path/")) return Response.json({ path: url.pathname, query: url.search });
     if (url.pathname === "/api/count") {
       if (req.method === "POST") db.prepare("UPDATE counter SET n = n + 1").run();
       return Response.json(db.prepare("SELECT n FROM counter").get());

@@ -23,7 +23,7 @@
     "by": {
       "enum": [
         "code",
-        "agent"
+        "job"
       ],
       "title": "By",
       "type": "string"
@@ -40,6 +40,11 @@
       ],
       "default": null,
       "title": "Fields"
+    },
+    "inAsk": {
+      "default": true,
+      "title": "Inask",
+      "type": "boolean"
     }
   },
   "required": [

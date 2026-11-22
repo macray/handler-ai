@@ -205,7 +205,7 @@ def test_router_without_models_lists_no_tools(settings: Settings, tmp_path: Path
     assert listed["result"]["tools"] == [] and called["error"]["code"] == -32602
 
 
-@pytest.mark.rule("voice.handlerd-calls-it-alone")
+@pytest.mark.rule("voice.only-handlerd-calls-speech-to-text")
 def test_router_never_offers_speech_to_text(settings: Settings, tmp_path: Path) -> None:
     grant = service_router.Grant(llm=frozenset({"chat/m"}), log=tmp_path / "services.ndjson")
     params = {"name": "transcribe_audio", "arguments": {"model": "chat/m", "audio": "AA=="}}

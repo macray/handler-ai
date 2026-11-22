@@ -87,7 +87,13 @@
     }
   }
 
-  const handWritten = $derived(editing?.key && editing.key !== "secret");
+  /** The endpoints its server redirects to, in place of those typed; then tested again. */
+  async function useRedirects(): Promise<void> {
+    endpoints = { ...endpoints, ...(reach?.redirects ?? {}) };
+    await test();
+  }
+
+  const handWritten =$derived(editing?.key && editing.key !== "secret");
   const asksForKey = $derived(editing ? editing.key === "secret" || !editing.key : Boolean((start as ProviderTemplate).needsKey));
 
   async function submit(): Promise<void> {
@@ -160,6 +166,15 @@
         {/if}
       </p>
     </div>
+    {#if reachState === "not reached" && reach && Object.keys(reach.redirects ?? {}).length}
+      <!-- its server redirects (http:// to https://): agents are not, so the endpoint to use -->
+      <div class="flex flex-wrap items-center gap-3" data-testid="provider-redirect">
+        <p class="min-w-0 flex-1 text-xs whitespace-normal text-warn">{reach.hint}</p>
+        <Button type="button" variant="outline" size="sm" onclick={() => void useRedirects()} data-testid="provider-use-redirect">
+          Use {[...new Set(Object.values(reach.redirects ?? {}))].join(" and ")}
+        </Button>
+      </div>
+    {/if}
     {#if testError}<p class="text-xs text-danger" data-testid="provider-test-error">{testError}</p>{/if}
   </fieldset>
 

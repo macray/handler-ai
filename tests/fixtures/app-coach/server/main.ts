@@ -1,8 +1,8 @@
 // Test app for A5 (a coach, in miniature): an automation's call reads today's line from a host
 // file and notifies; /api/checkin is a queued route (run later when the phone sends it while handler is off);
-// /api/ask runs the agent given for its need "coach" (H.11), /api/cron/ask tries to from an automation's call.
+// /api/ask runs its job "coach" (H.11), /api/cron/ask tries to from an automation's call.
 import { readFile } from "node:fs/promises";
-import { files, getRun, notify, runAgent } from "./handler.ts";
+import { files, getRun, notify, runJob } from "./handler.ts";
 
 const checkins: string[] = [];
 
@@ -27,7 +27,7 @@ export async function handle(req: Request): Promise<Response> {
     case "POST /api/cron/ask":
       try {
         const { request } = await req.json().catch(() => ({ request: "what now?" }));
-        return Response.json({ ok: true, run: await runAgent(req, "coach", { fake: "valid", answer: { status: "attention", summary: request } }) });
+        return Response.json({ ok: true, run: await runJob(req, "coach", { fake: "valid", answer: { status: "attention", summary: request } }) });
       } catch (e) {
         return Response.json({ ok: false, error: String(e) });
       }

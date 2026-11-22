@@ -3,18 +3,22 @@
 this computer is asked at the address sandboxes reach it by, this computer's address on its
 network, never its loopback: a server listening on 127.0.0.1 only answers handlerd but no sandbox.
 The answer gives the model ids, and the context when the server reports it (vLLM's
-`max_model_len`, OpenRouter's `context_length`, llama-server's `/props`).
+`max_model_len`, OpenRouter's `context_length`, llama-server's `/props`). A redirect (a server
+sending `http://` to `https://`) is not followed: agents are not redirected either, an agent on
+Only these sites reaching its endpoint's host and port alone; the test says where it leads, and
+gives the endpoint to use instead.
 
 The last answer for each set of endpoints is kept while handlerd runs (`Reaches`): a provider's
 `reached` (D.12), so one saved after a test in its form shows that test.
 """
 
 import socket
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -28,6 +32,10 @@ ERROR_CHARS = 200
 HINT = (
     "A model server on this computer must listen where sandboxes reach it, not only on "
     "127.0.0.1: start llama-server with --host 0.0.0.0 --jinja, Ollama with OLLAMA_HOST=0.0.0.0."
+)
+REDIRECT_HINT = (
+    "agents are not redirected (on Only these sites, an agent reaches its provider's own "
+    "address and port, nothing else)."
 )
 CONTEXT_FIELDS = ("max_model_len", "context_length", "context_window")
 
@@ -94,16 +102,54 @@ async def test(endpoints: Mapping[Protocol, str], key: str | None) -> ProviderRe
     served: dict[str, ProviderModel] = {}
     for url in asked:
         failed = await _ask(url, headers[url], served)
+        if isinstance(failed, Redirect):
+            moved = {
+                p: _moved(p, e, failed) for p, e in endpoints.items() if models_url(p, e) == url
+            }
+            redirects = {p: m for p, m in moved.items() if m is not None}
+            use = " and ".join(dict.fromkeys(redirects.values()))
+            use = use or "the address it redirects to"
+            hint = f"Use {use} as its endpoint: {REDIRECT_HINT}"
+            return ProviderReach(
+                ok=False, at=_now(), urls=asked, error=failed.error, hint=hint, redirects=redirects
+            )
         if failed is not None:
             error, hint = failed
             return ProviderReach(ok=False, at=_now(), urls=asked, error=error, hint=hint)
     return ProviderReach(ok=True, at=_now(), urls=asked, models=list(served.values()))
 
 
+@dataclass(frozen=True)
+class Redirect:
+    """The server answered a redirect: to `location` (absolute), from `target` (as asked)."""
+
+    error: str
+    target: str
+    location: str
+
+
+def _moved(protocol: Protocol, endpoint: str, redirect: Redirect) -> str | None:
+    """The endpoint where its models' redirect leads, as the person typed its host when the
+    redirect keeps it (`http://h/v1` → `https://h/v1`); None when it leads elsewhere than to a
+    model list."""
+    suffix = "/v1/models" if protocol == "anthropic" else "/models"
+    to = urlparse(redirect.location)
+    if not to.path.endswith(suffix) or to.query:
+        return None
+    host = to.hostname or ""
+    if host == urlparse(redirect.target).hostname:  # the same server: the host typed
+        host = urlparse(endpoint).hostname or host
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{to.port}" if to.port else host
+    return f"{to.scheme}://{netloc}{to.path.removesuffix(suffix)}"
+
+
 async def _ask(
     url: str, headers: dict[str, str], served: dict[str, ProviderModel]
-) -> tuple[str, str | None] | None:
-    """Add what `url` serves to `served`; or (the error, the hint) when it does not answer."""
+) -> tuple[str, str | None] | Redirect | None:
+    """Add what `url` serves to `served`; or (the error, the hint) when it does not answer; or
+    the redirect it answered, never followed (a key goes only to the endpoint's host)."""
     where = urlparse(url).netloc
     try:
         target, local = asked_at(url)
@@ -113,10 +159,16 @@ async def _ask(
     async with httpx.AsyncClient(timeout=TIMEOUT, trust_env=not local) as client:
         try:
             r = await client.get(target, headers=headers)
-        except httpx.TimeoutException:
-            return f"{where} did not answer in {TIMEOUT:g} s", HINT if local else None
         except httpx.HTTPError as e:
-            return f"nothing answered at {where} ({e})", HINT if local else None
+            silent = isinstance(e, httpx.TimeoutException)
+            why = f"{where} did not answer in {TIMEOUT:g} s" if silent else None
+            if _not_tls(target, e):  # something answered, in plain HTTP most often
+                http = "http://" + url.removeprefix("https://")
+                why = f"{where} answered, but not over HTTPS ({e}): is it {http}?"
+            return why or f"nothing answered at {where} ({e})", HINT if local else None
+        if r.is_redirect:
+            location = urljoin(target, r.headers["location"])
+            return Redirect(f"{where} redirects to {location}", target, location)
         if r.status_code >= 400:
             return f"{where} answered {r.status_code}: {r.text[:ERROR_CHARS]}", None
         try:
@@ -129,6 +181,17 @@ async def _ask(
     for m in found:
         served.setdefault(m.id, m)
     return None
+
+
+def _not_tls(url: str, error: httpx.HTTPError) -> bool:
+    """An https:// address whose server answered something other than TLS (a plain-HTTP port:
+    `[SSL: RECORD_LAYER_FAILURE]`, `WRONG_VERSION_NUMBER`…), not one that did not answer."""
+    if not url.startswith("https://") or not isinstance(error, httpx.ConnectError):
+        return False
+    cause: BaseException | None = error
+    while cause is not None and not isinstance(cause, ssl.SSLError):
+        cause = cause.__cause__ or cause.__context__
+    return cause is not None and not isinstance(cause, ssl.SSLCertVerificationError)
 
 
 def _model(entry: dict[str, Any]) -> ProviderModel:

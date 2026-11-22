@@ -83,7 +83,9 @@ export function chosenSpec(d: AgentDefinition, c: Choice): AgentSpec {
     ...definitionSpec(d),
     model: { ...c.model },
     addons: addonUses(d.addons ?? [], c.bindings),
-    knowledge: Object.values(c.knowledge).filter(Boolean),
+    knowledge: Object.values(c.knowledge)
+      .filter(Boolean)
+      .map((folder) => ({ folder, access: "read" })),
   };
 }
 

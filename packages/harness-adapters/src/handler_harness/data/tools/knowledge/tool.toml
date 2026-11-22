@@ -1,0 +1,11 @@
+# Structured knowledge tool (contract G.1, handler.tool/v1; the ability: D.29): the format's
+# command, `handler-smd` (and `smd`, its short name in a sandbox), and the skill that teaches it.
+# Its own image, not the toolbox's: built from a copy of Handler's own `handler_smd`, which
+# handlerd puts in its build context, so a checkout's version is the one agents get. An agent
+# with a knowledge use gets it without picking it; any agent may pick it. No connection.
+apiVersion = "handler.tool/v1"
+name = "knowledge"
+description = "Read and write structured notes: documents of a schema, with handler-smd"
+image = "localhost/handler-ai-tool-knowledge"  # no tag: agents mount :latest (G.4)
+commands = ["handler-smd", "smd"]
+check = ["handler-smd", "--help"]

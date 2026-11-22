@@ -3,10 +3,10 @@ started on demand and stopped when idle. Serving them over HTTP is app_http.py.
 
     <state>/apps.json                  registry: each app's deployments, the source its code came
                                        from (D.26), and what the person gave its needs
-                                       (bindings: a folder's path, an agent's id, by the need's
-                                       name, H.2)
-    <data>/apps/<name>/versions/<n>/   the code of deploy n (app.toml, backend dir, built UI, the
-                                       definitions of the agents it needs)
+                                       (bindings: a folder's path by the need's name, H.2) and
+                                       who works on its jobs (its own, a job's)
+    <data>/apps/<name>/versions/<n>/   the code of deploy n (app.toml, backend dir, built UI, its
+                                       jobs' instructions, its schemas)
     <data>/apps/<name>/data/           the app's data (its scope): survives deploys
     <data>/apps/<name>/backups/<n>/    the data as it was just before deploy n (rollback)
     <data>/apps/<name>/app.log         the last deploys and the backend's output
@@ -32,50 +32,81 @@ import secrets
 import shutil
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from handler_contracts import (
     ACTION_HEADER,
     HEALTH_PATH,
+    JOB_INSTRUCTIONS_DIR,
     MANIFEST_FILE,
+    NUDGE_HEADER,
     PERSON_HEADER,
     RUNTIME_IMAGE,
     START_HEADER,
+    VIA_HEADER,
     ActionResult,
     ActionRun,
-    AgentDefinition,
     AgentInterface,
-    AgentOrigin,
     App,
     AppAction,
-    AppAgentNeed,
     AppDeployment,
     AppFileNeed,
+    AppJob,
+    AppJobCanDo,
     AppManifest,
-    AppManifestAgentNeed,
+    AppManifestJob,
+    AppManifestNudge,
+    AppNudge,
+    AppOffered,
+    AppRun,
     AppRunRequest,
+    AppRunStartedBy,
     AppSecret,
     AppSource,
     AppState,
     DraftCopy,
     DraftPreview,
+    InboxMessage,
+    NotesCommitDiff,
+    NotesHistory,
+    NudgeSetting,
+    PreparedNudge,
+    Schedule,
     SharedApp,
+    StartedByAction,
+    StartedByCode,
+    WhoWorks,
     is_within,
 )
 
-from . import compose, definitions, files, interfaces, pins, runtime, sandbox_process
-from .agents import AgentRecord
+from . import (
+    app_jobs,
+    app_smd,
+    compose,
+    definitions,
+    files,
+    interfaces,
+    knowledge_schemas,
+    pins,
+    runtime,
+    sandbox_process,
+    sources,
+)
+from .agents import RunsAs
 from .app_api import AppApi
+from .app_api import Handler as AppApiHandler
 from .app_runs import AppRunError, AppRuns
 from .inbox import Inbox, told_result
 from .launcher import NETWORK_FILTER, missing
+from .nudges import NudgeError, Nudges, slot_key
 from .secrets import SecretStore
 from .settings import Settings
 
@@ -92,9 +123,13 @@ LOG_TAIL_BYTES = 64 * 1024
 LINK_TTL = 120.0
 LINE_LIMIT = 1024 * 1024
 NOTIFY_PER_HOUR = 30
-CALL_TIMEOUT = 300.0  # an automation's call (I.3)
+CALL_TIMEOUT = 300.0  # an automation's call (I.3), a nudge's `prepare` (H.17)
+MAX_PREPARED = 10  # nudges a `prepare` answers at one slot (H.17)
+PREPARED: TypeAdapter[PreparedNudge | list[PreparedNudge]] = TypeAdapter(
+    PreparedNudge | list[PreparedNudge]
+)
 ACTION_TIMEOUT = 30.0  # an action done by the app's code answers at once (H.12)
-ACTION_WAIT = 20.0  # an action done by its agent: answered with its result if it ends by then
+ACTION_WAIT = 20.0  # an action done by its job: answered with its result if it ends by then
 ACTION_POLL = 0.5
 # never given to an app, whatever it asks (H.9): keys and password stores (and handler's own dirs)
 PRIVATE_HOME = (".ssh", ".gnupg", ".password-store", ".local/share/keyrings", ".pki", ".aws")
@@ -138,8 +173,9 @@ class AppRecord:
     last_used_at: datetime | None = None
     persons: list[str] = field(default_factory=list)  # who may use it remotely (H.8)
     files: dict[str, str] = field(default_factory=dict)  # need → the folder given (H.2)
-    agents: dict[str, str] = field(default_factory=dict)  # need → the agent given, its id
-    askable: bool = True  # its actions are offered to Ask (D.24)
+    not_in_ask: list[str] = field(default_factory=list)  # its actions you took out of Ask (D.24)
+    who_works: WhoWorks | None = None  # who runs its jobs (H.2)
+    jobs_who_works: dict[str, WhoWorks] = field(default_factory=dict)  # a job's own, by name
 
     @property
     def current(self) -> Deployment | None:
@@ -148,6 +184,18 @@ class AppRecord:
     @property
     def previous(self) -> Deployment | None:
         return self.deployments[-2] if len(self.deployments) > 1 else None
+
+
+@dataclass(frozen=True)
+class WrittenFolder:
+    """A folder given to a files need in `rw` of an installed app (H.2), written by the app (D.5,
+    the notes history)."""
+
+    app: str
+    title: str  # the app's display name, its name without one
+    path: str  # real, a folder
+    running: bool  # its backend, now
+    last_used_at: datetime | None
 
 
 @dataclass
@@ -176,28 +224,45 @@ def read_manifest(folder: Path) -> AppManifest:
     except OSError as e:
         raise AppError(f"cannot read {folder / MANIFEST_FILE}: {e.strerror}") from None
     try:
-        return AppManifest.from_toml(text)
+        manifest = AppManifest.from_toml(text)
     except ValidationError as e:
         raise AppError(f"{MANIFEST_FILE} is invalid: {files.describe(e)}") from None
     except ValueError as e:  # TOML syntax
         raise AppError(f"{MANIFEST_FILE} is invalid: {e}") from None
+    return manifest
+
+
+def jobs_problem(folder: Path, jobs: list[str]) -> str | None:
+    """Why the app's `jobs/` does not hold exactly its jobs' instructions, a file `<name>.md` for
+    each (H.1); None when it does."""
+    shipped = folder / JOB_INSTRUCTIONS_DIR
+    found = sorted(p.name for p in shipped.iterdir()) if shipped.is_dir() else []
+    for name in sorted(jobs):
+        if not (shipped / f"{name}.md").is_file():
+            return f"jobs.{name}: its instructions {JOB_INSTRUCTIONS_DIR}/{name}.md do not exist"
+    if extra := [f for f in found if f.removesuffix(".md") not in jobs or not f.endswith(".md")]:
+        return f"{JOB_INSTRUCTIONS_DIR}/{extra[0]} is no job's instructions"
+    return None
 
 
 def snapshot(source: Path, target: Path, manifest: AppManifest) -> None:
-    """Copy what a deploy installs (the manifest, the backend's directory, the built UI) from
-    `source` to `target`. Symbolic links are kept, and must stay inside the copy: an agent could
-    otherwise publish any host file through the app's UI."""
+    """Copy what a deploy installs (the manifest, the backend's directory, the built UI, its
+    `schemas/`, its jobs' instructions `jobs/`) from `source` to
+    `target`, its jobs checked there. Symbolic links are kept, and must stay inside the copy: an
+    agent could otherwise publish any host file through the app's UI."""
     if not (source / manifest.server.entry).is_file():
         raise DeployError(f"server.entry {manifest.server.entry} does not exist")
     if not (source / manifest.ui.dir / "index.html").is_file():
         raise DeployError(f"{manifest.ui.dir}/index.html does not exist: build the UI first")
-    for need, agent in manifest.needs.agents.items():
-        if not (source / agent.from_ / "agent.toml").is_file():
-            raise DeployError(f"agents.{need}.from: {agent.from_}/agent.toml does not exist")
+    if problem := app_smd.shipped_problem(source, manifest.schemas):
+        raise DeployError(problem)
+    if problem := jobs_problem(source, list(manifest.jobs)):
+        raise DeployError(problem)
     target.mkdir(parents=True)
     shutil.copy2(source / MANIFEST_FILE, target / MANIFEST_FILE)
-    definitions = [a.from_ for a in manifest.needs.agents.values()]
-    for rel in (manifest.server.dir, manifest.ui.dir, *definitions):
+    formats = [app_smd.SCHEMAS_DIR] if manifest.schemas else []
+    instructions = [JOB_INSTRUCTIONS_DIR] if manifest.jobs else []
+    for rel in (manifest.server.dir, manifest.ui.dir, *formats, *instructions):
         (target / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source / rel, target / rel, symlinks=True, dirs_exist_ok=True)
     root, total = os.path.realpath(target), 0
@@ -209,6 +274,25 @@ def snapshot(source: Path, target: Path, manifest: AppManifest) -> None:
         total += sum(os.lstat(os.path.join(dirpath, n)).st_size for n in filenames)
     if total > MAX_APP_BYTES:
         raise DeployError(f"the app is {total // 2**20} MiB: more than {MAX_APP_BYTES // 2**20}")
+    check_jobs(manifest, target)  # the copy: no link leads out of it
+
+
+def check_jobs(manifest: AppManifest, folder: Path) -> None:
+    """Each job's form and result are JSON Schemas (D.18), its result says how it went (`status`,
+    `summary`: I.3's rule), and its instructions (in `folder`, a snapshot: every one there, no
+    link leading out) name only fields of its form."""
+    for name, job in manifest.jobs.items():
+        interface = AgentInterface(
+            fields=job.fields, result=job.result, timeout_sec=job.timeout_sec
+        )
+        try:
+            interfaces.check(interface)
+            path = folder / JOB_INSTRUCTIONS_DIR / f"{name}.md"
+            interfaces.check_instructions(path.read_text(errors="replace"), interface)
+        except interfaces.InterfaceError as e:
+            raise DeployError(f"jobs.{name}.{e}") from None
+        if found := interfaces.result_problems(job.result):
+            raise DeployError(f"jobs.{name}: {'; '.join(found)}")
 
 
 def unpack(data: bytes, target: Path) -> Path:
@@ -249,6 +333,10 @@ def folder_size(folder: Path) -> int:
     return sum(p.lstat().st_size for p in folder.rglob("*") if p.is_file() or p.is_symlink())
 
 
+def _dump(who: WhoWorks) -> dict[str, Any]:
+    return who.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
 def _answer_error(r: httpx.Response) -> str:
     """What a backend's answer that is no success says: its `error`, else its status."""
     with contextlib.suppress(ValueError, AttributeError):
@@ -266,7 +354,7 @@ async def healthy(
     deadline = time.monotonic() + START_TIMEOUT
     while True:
         if proc.returncode is not None:
-            raise AppError(f"the backend exited ({proc.returncode}); see the log")
+            raise AppError(f"the backend exited ({proc.returncode}); its log says why")
         if time.monotonic() > deadline:
             raise AppError(f"the backend did not answer {HEALTH_PATH} in time")
         if socket.exists():
@@ -281,6 +369,15 @@ async def healthy(
         await asyncio.sleep(0.2)
 
 
+class FolderHistory(Protocol):
+    """The notes history (D.5, notes_history.py, a layer above): a folder's commits, and one's
+    files with their lines. Read only: an app never undoes."""
+
+    def history(self, folder: str) -> NotesHistory: ...
+
+    def commit(self, folder: str, commit_id: str) -> NotesCommitDiff: ...
+
+
 class AppStore:
     def __init__(self, settings: Settings, token: str, inbox: Inbox, runs: AppRuns) -> None:
         self.settings = settings
@@ -293,15 +390,24 @@ class AppStore:
         self.errors: dict[str, str] = {}  # why a backend failed, until it starts again
         self.starting: set[str] = set()
         self.locks: dict[str, asyncio.Lock] = {}
-        self.links: dict[str, tuple[str, float]] = {}  # one-time code → (app, expiry)
+        # one-time code → (app, the path it opens, expiry)
+        self.links: dict[str, tuple[str, str, float]] = {}
         self.reaper: asyncio.Task[None] | None = None
         self.secrets = SecretStore(settings.data_dir)  # an app's are apps/<app>/<secret> (H.2)
         self.listeners: list[Callable[[], None]] = []  # the remote connector: what is shared
         self.inbox = inbox
+        self.nudges = Nudges(settings, inbox)  # what its apps ask a person to do (H.17)
+        self.sending: set[asyncio.Task[list[InboxMessage]]] = set()  # nudges at their slots
         self.sent: dict[str, list[float]] = {}  # app → recent notification times (rate limit)
-        self.runs = runs  # runs of agents the apps start (H.11)
+        self.runs = runs  # runs of the jobs the apps start (H.11)
+        # told after each change saved, and when a backend starts or stops (the web UI, D.30)
+        self.watchers: list[Callable[[], None]] = []
+        runs.call_then = self.call_then  # a job's `then`, when one of its runs ends
         self.starts: dict[str, str] = {}  # start token of an owner's request in progress → app
         self.previews: dict[str, Preview] = {}  # an app's name → its draft, opened (H.16)
+        # its read-write folders' history, for its code (H.9): set by the daemon once made
+        self.history: FolderHistory | None = None
+        runs.sessions.delete_listeners.append(self._session_deleted)
         self._load()
 
     # ── registry ────────────────────────────────────────────────────────
@@ -316,31 +422,47 @@ class AppStore:
                 name=name,
                 from_source=r["fromSource"],
                 deployments=[
-                    Deployment(d["seq"], d["version"], datetime.fromisoformat(d["deployedAt"]))
+                    Deployment(
+                        d["seq"],
+                        d["version"],
+                        datetime.fromisoformat(d["deployedAt"]),
+                    )
                     for d in r["deployments"]
                 ],
                 next_seq=r["nextSeq"],
                 last_used_at=datetime.fromisoformat(u) if (u := r["lastUsedAt"]) else None,
                 persons=r["persons"],
                 files=r["files"],
-                agents=r["agents"],
-                askable=r["askable"],
+                not_in_ask=r["notInAsk"],
+                who_works=WhoWorks.model_validate(w) if (w := r["whoWorks"]) else None,
+                jobs_who_works={
+                    j: WhoWorks.model_validate(w) for j, w in r["jobsWhoWorks"].items()
+                },
             )
+
+    def _tell(self) -> None:
+        for watcher in self.watchers:
+            watcher()
 
     def _save(self) -> None:
         apps = {
             r.name: {
                 "fromSource": r.from_source,
                 "deployments": [
-                    {"seq": d.seq, "version": d.version, "deployedAt": d.deployed_at.isoformat()}
+                    {
+                        "seq": d.seq,
+                        "version": d.version,
+                        "deployedAt": d.deployed_at.isoformat(),
+                    }
                     for d in r.deployments
                 ],
                 "nextSeq": r.next_seq,
                 "lastUsedAt": r.last_used_at.isoformat() if r.last_used_at else None,
                 "persons": r.persons,
                 "files": r.files,
-                "agents": r.agents,
-                "askable": r.askable,
+                "notInAsk": r.not_in_ask,
+                "whoWorks": _dump(r.who_works) if r.who_works else None,
+                "jobsWhoWorks": {j: _dump(w) for j, w in r.jobs_who_works.items()},
             }
             for r in self.records.values()
         }
@@ -348,6 +470,7 @@ class AppStore:
         tmp = self.file.with_suffix(".tmp")
         tmp.write_text(json.dumps({"apps": apps}, indent=2))
         tmp.replace(self.file)
+        self._tell()
 
     def get(self, name: str) -> AppRecord:
         record = self.records.get(name)
@@ -463,7 +586,8 @@ class AppStore:
             self._save()
             self.changed()
             self.secrets.delete(f"apps/{name}")
-            self.runs.forget(name)
+            await self.runs.forget(name)
+            self.nudges.forget(name)
             pins.forget(self.settings.state_dir, "app", name)
             shutil.rmtree(self.app_dir(name), ignore_errors=True)
 
@@ -562,26 +686,79 @@ class AppStore:
             return AppSource(error=str(e))
         if manifest.name != record.name:
             return AppSource(error=f"{MANIFEST_FILE} now names another app: {manifest.name}")
-        current = self.deployment_view(record.name, record.current)
+        installed = None
+        if record.current:
+            with contextlib.suppress(AppError):
+                installed = self.manifest(record.name, record.current.seq)
         return AppSource(
             version=manifest.version,
             description=manifest.description,
-            added_needs=manifest.added_needs(current.needs if current else None),
+            changes=manifest.changes,
+            added_needs=manifest.added_needs(installed),
             needs=manifest.needs,
         )
 
+    def offered_folder(self, record: AppRecord) -> Path | None:
+        """The folder of the version its source offers, as read last (D.26), while it differs
+        from its kept code's (rule app.update-takes-then-deploys); None: no source, an unreadable
+        one, none offered, or the same version."""
+        if record.from_source is None:
+            return None
+        try:
+            folder = sources.item(self.settings, record.from_source, "app", record.name)
+            manifest = read_manifest(folder)
+        except (sources.SourceError, AppError, OSError):
+            return None
+        with contextlib.suppress(AppError):
+            if read_manifest(self.source(record.name)).version == manifest.version:
+                return None
+        return folder if manifest.name == record.name else None
+
+    def offered_view(self, record: AppRecord) -> AppOffered | None:
+        """What Update would take: the version its source offers, what it changes and what it
+        adds to the installed one (rule deploy.what-it-adds-is-said-first)."""
+        if record.from_source is None or (folder := self.offered_folder(record)) is None:
+            return None
+        manifest = read_manifest(folder)
+        installed = None
+        if record.current:
+            with contextlib.suppress(AppError):
+                installed = self.manifest(record.name, record.current.seq)
+        return AppOffered(
+            source=record.from_source,
+            version=manifest.version,
+            changes=manifest.changes,
+            added_needs=manifest.added_needs(installed),
+        )
+
+    async def update(self, name: str) -> App:
+        """Update (H.6): the version its source offers taken (as Get it takes it), then deployed.
+        A deploy that fails leaves that version kept, ready to deploy, and the installed one
+        running (rule deploy.a-failure-changes-nothing)."""
+        record = self.get(name)
+        folder = self.offered_folder(record)
+        if record.from_source is None or folder is None:
+            raise AppError(f"{name}: its source offers no other version")
+        self.add_from_source(record.from_source, folder)
+        return await self.deploy(name)
+
     def view(self, name: str) -> App:
         record = self.get(name)
-        files, agents = self.needs_view(name)
+        files = self.needs_view(name)
         next_version = self.declared(name)[:1]
         suggests = next_version[0][0].automations if next_version else []
         current = self.deployment_view(name, record.current)
-        description = None
+        description, title = None, None
         if record.current:
             with contextlib.suppress(AppError):
-                description = self.manifest(name, record.current.seq).description
+                installed = self.manifest(name, record.current.seq)
+                description, title = installed.description, installed.title
+        else:
+            with contextlib.suppress(AppError):
+                title = read_manifest(self.source(name)).title
         return App(
             name=name,
+            title=title,
             description=description,
             url=f"{self.origin(name)}/",
             state=self.state(name),
@@ -589,18 +766,20 @@ class AppStore:
             current=current,
             previous=self.deployment_view(name, record.previous),
             source=self.source_view(record),
+            offered=self.offered_view(record),
             secrets=[
                 AppSecret(name=n, set=self.secrets.get(f"apps/{name}/{n}") is not None)
                 for n in self.declared_secrets(name)
             ],
             files=files,
-            agents=agents,
             suggests=suggests,
             persons=record.persons,
             last_used_at=record.last_used_at,
             from_source=record.from_source,
             actions=self.actions_view(name),
-            askable=record.askable,
+            nudges=self.nudges_view(name),
+            who_works=record.who_works,
+            jobs=self.jobs_view(name),
         )
 
     def views(self) -> list[App]:
@@ -614,6 +793,32 @@ class AppStore:
             for n, record in sorted(self.records.items())
             if any(is_within(path, folder) for path in record.files.values())
         ]
+
+    def written_folders(self) -> list[WrittenFolder]:
+        """Each folder given to a files need in `rw` of an app's installed version, with who
+        writes it (rule notes.writable-has-a-history); a file given, or a folder gone, is not."""
+        found: list[WrittenFolder] = []
+        for name, record in sorted(self.records.items()):
+            if record.current is None:
+                continue
+            try:
+                manifest = self.manifest(name, record.current.seq)
+            except AppError:
+                continue
+            for need, wanted in manifest.needs.files.items():
+                given = record.files.get(need)
+                if wanted.mode != "rw" or given is None or not os.path.isdir(given):
+                    continue
+                found.append(
+                    WrittenFolder(
+                        app=name,
+                        title=manifest.title or name,
+                        path=os.path.realpath(given),
+                        running=name in self.live,
+                        last_used_at=record.last_used_at,
+                    )
+                )
+        return found
 
     def log_tail(self, name: str) -> str:
         self.get(name)
@@ -635,20 +840,23 @@ class AppStore:
 
     # ── opening an app in a browser (H.4) ───────────────────────────────
 
-    def open_link(self, name: str) -> str:
+    def open_link(self, name: str, path: str = "/") -> str:
+        """A one-time link opening the app at `path`: `/`, or the page a nudge names (H.17)."""
         record = self.get(name)
         if record.current is None:
             raise AppError(f"{name} is not deployed yet")
         now = time.monotonic()
-        self.links = {c: v for c, v in self.links.items() if v[1] > now}
+        self.links = {c: v for c, v in self.links.items() if v[2] > now}
         code = secrets.token_urlsafe(24)
-        self.links[code] = (name, now + LINK_TTL)
+        self.links[code] = (name, path, now + LINK_TTL)
         return f"{self.origin(name)}/_handler/login?code={code}"
 
-    def redeem(self, name: str, code: str) -> bool:
-        """One-time: a link opens the app once, within LINK_TTL."""
+    def redeem(self, name: str, code: str) -> str | None:
+        """One-time: a link opens the app once, within LINK_TTL; the path it opens."""
         entry = self.links.pop(code, None)
-        return entry is not None and entry[0] == name and entry[1] > time.monotonic()
+        if entry is None or entry[0] != name or entry[2] <= time.monotonic():
+            return None
+        return entry[1]
 
     def cookie(self, name: str) -> str:
         """The app's cookie: bound to the app and the daemon's token (changing it logs out)."""
@@ -670,7 +878,10 @@ class AppStore:
             staging = self.app_dir(name) / "staging" / str(seq)
             check = self.app_dir(name) / "check-data"
             backup = self.app_dir(name) / "backups" / str(seq)
-            for leftover in (staging, check, backup):
+            # what a deploy of this number left, here or in a state since lost (a new state
+            # numbers from 1 again): no deployment recorded owns them
+            target = self.version_dir(name, seq)
+            for leftover in (staging, check, backup, target):
                 shutil.rmtree(leftover, ignore_errors=True)
             try:
                 source = self.source(name)
@@ -680,8 +891,7 @@ class AppStore:
                     raise DeployError(f"{MANIFEST_FILE} names another app: {manifest.name}")
                 app_secrets = self.secrets_for(name, manifest)
                 self.check_files(name, manifest)
-                self.check_agents(name, manifest, source)
-                self.check_actions(manifest, source)
+                self.check_actions(manifest)
                 await asyncio.to_thread(snapshot, source, staging, manifest)
                 await self._pull_runtime(name)
                 await self._run_tests(name, manifest, staging, check)
@@ -692,6 +902,7 @@ class AppStore:
                     name, seq, manifest, staging, check, app_secrets=app_secrets, check=True
                 )
                 await self._stop_backend(backend)
+                self.library_schemas(name, staging)  # the last step that may fail
             except BaseException as e:
                 shutil.rmtree(backup, ignore_errors=True)
                 shutil.rmtree(staging, ignore_errors=True)
@@ -702,7 +913,6 @@ class AppStore:
                 raise
             finally:
                 shutil.rmtree(check, ignore_errors=True)
-            target = self.version_dir(name, seq)
             target.parent.mkdir(parents=True, exist_ok=True)
             staging.replace(target)
             record.deployments.append(Deployment(seq, manifest.version, datetime.now(UTC)))
@@ -715,6 +925,17 @@ class AppStore:
             self._log(name, f"deployed {manifest.version} (#{seq})")
         self.changed()
         return self.view(name)
+
+    def library_schemas(self, name: str, folder: Path) -> None:
+        """The schemas an app brings (its `schemas/`, D.29) into the Library, those not there
+        yet: the person's from then on, as an agent definition's. A different one of an `$id`
+        there refuses the deploy, said, adding none."""
+        differs = f"{name} brings: it reads its documents with its own; replace yours in "
+        differs += "Library → Schemas to install it"
+        try:
+            definitions.install_schemas(folder, self.settings.schemas_dir, differs)
+        except knowledge_schemas.SchemaError as e:
+            raise DeployError(str(e)) from None
 
     async def rollback(self, name: str) -> App:
         """Back to the previous version, with the data as it was just before the current one was
@@ -753,7 +974,7 @@ class AppStore:
                 pull.kill()
                 raise DeployError(f"pulling {RUNTIME_IMAGE} took too long") from None
         if code:
-            raise DeployError(f"cannot pull {RUNTIME_IMAGE}; see the log")
+            raise DeployError(f"cannot pull {RUNTIME_IMAGE}; its log says why")
 
     async def _run_tests(self, name: str, manifest: AppManifest, code: Path, data: Path) -> None:
         """`bun test` on the backend's directory, with an empty data folder, in the sandbox."""
@@ -789,7 +1010,7 @@ class AppStore:
             shutil.rmtree(run, ignore_errors=True)
             shutil.rmtree(data, ignore_errors=True)
         if code_:
-            raise DeployError(f"the tests failed (exit {code_}); see the log")
+            raise DeployError(f"the tests failed (exit {code_}); its log says why")
 
     # ── backends (H.5) ──────────────────────────────────────────────────
 
@@ -814,9 +1035,11 @@ class AppStore:
                         )
                     except AppError as e:
                         self.errors[name] = str(e)
+                        self._tell()
                         raise
                     self.errors.pop(name, None)
                     self.live[name] = backend
+                    self._tell()
                     asyncio.get_running_loop().create_task(self._watch(name, backend))
         backend.last_used = time.monotonic()
         record.last_used_at = datetime.now(UTC)
@@ -840,6 +1063,7 @@ class AppStore:
         run.mkdir(parents=True, exist_ok=True)
         socket = run / "app.sock"
         socket.unlink(missing_ok=True)
+        given = self.check_files(name, manifest) if files is None else files
         spec = compose.app_sandbox_spec(
             name=f"handler-app-{name}-{secrets.token_hex(3)}",
             manifest=manifest,
@@ -847,17 +1071,20 @@ class AppStore:
             data=str(data),
             run=str(run),
             secrets=app_secrets,
-            files=self.check_files(name, manifest) if files is None else files,
+            files=given,
         )
         api: AppApi | None = None
-        if manifest.needs.handler_api:  # a trial run's notifications go nowhere, starts nothing
-            api = AppApi(name, run / "handler.sock", self.trial if check else self.from_app)
+        if manifest.handler_api:  # a trial run's notifications go nowhere, starts nothing
+            smd = app_smd.AppSmd(code / app_smd.SCHEMAS_DIR, given) if manifest.schemas else None
+            handle = self.with_smd(smd, self.trial if check else self.from_app)
+            api = AppApi(name, run / "handler.sock", handle)
             await api.start()
         sandbox_process.give_dev_agent(data, run)  # with its socket
         version = f"{manifest.version} (#{seq})"
         where = " on a copy of the data" if check else ""
         self._log(name, f"{'trying' if check else 'starting'} {version}{where}")
         self.starting.add(name)
+        self._tell()
         client = httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(socket)),
             base_url="http://app",
@@ -882,12 +1109,14 @@ class AppStore:
             raise
         finally:
             self.starting.discard(name)
+            self._tell()
 
     async def _watch(self, name: str, backend: Backend) -> None:
         code = await backend.process.wait()
         if self.live.get(name) is backend:  # exited by itself, not stopped by us
             self.live.pop(name)
-            self.errors[name] = f"the backend exited ({code}); see the log"
+            self.errors[name] = f"the backend exited ({code}); its log says why"
+            self._tell()
             self._log(name, f"backend exited ({code})")
             await self._close(backend)
 
@@ -926,6 +1155,7 @@ class AppStore:
     async def _stop(self, name: str) -> None:
         backend = self.live.pop(name, None)
         if backend is not None:
+            self._tell()
             self._log(name, "stopping the backend")
             await self._stop_backend(backend)
 
@@ -955,7 +1185,7 @@ class AppStore:
             raise AppError(f"{name} is an app you have: change it from its page")
         preview = name + DRAFT
         async with self.lock(preview):
-            await self.close_draft(name)
+            await self._close_draft(name)
             root = self.app_dir(preview)
             shutil.rmtree(root, ignore_errors=True)
             await asyncio.to_thread(snapshot, folder, root / "code", manifest)
@@ -1005,17 +1235,28 @@ class AppStore:
     def preview_link(self, name: str) -> str:
         """A one-time link that opens the app's draft (H.4)."""
         now = time.monotonic()
-        self.links = {c: v for c, v in self.links.items() if v[1] > now}
+        self.links = {c: v for c, v in self.links.items() if v[2] > now}
         code = secrets.token_urlsafe(24)
-        self.links[code] = (name + DRAFT, now + LINK_TTL)
+        self.links[code] = (name + DRAFT, "/", now + LINK_TTL)
         return f"{self.origin(name + DRAFT)}/_handler/login?code={code}"
+
+    async def _session_deleted(self, session: str) -> None:
+        """A draft's session deleted (thrown away, used, or with its agent): its opened copy too."""
+        if (opened := self.preview_of(session)) is not None:
+            await self.close_draft(opened)
 
     def preview_of(self, session: str) -> str | None:
         """The app whose draft that session has open."""
         return next((n for n, p in self.previews.items() if p.session == session), None)
 
-    async def close_draft(self, name: str) -> None:
-        """Its opened draft stopped and its copies removed (used, thrown away, idle)."""
+    async def close_draft(self, name: str, only: Preview | None = None) -> None:
+        """Its opened draft stopped and its copies removed (used, thrown away, idle): `only`
+        that one (the reaper's), not one opened again since."""
+        async with self.lock(name + DRAFT):
+            if only is None or self.previews.get(name) is only:
+                await self._close_draft(name)
+
+    async def _close_draft(self, name: str) -> None:
         preview = self.previews.pop(name, None)
         if preview is not None:
             await self._stop_backend(preview.backend)
@@ -1081,80 +1322,158 @@ class AppStore:
         record = self.get(name)
         record.files[need] = resolved
         self._save()
+        self.changed()  # a folder given rw: its history's first state (D.5)
         async with self.lock(name):
             await self._stop(name)
         return self.view(name)
 
-    def set_agent(self, name: str, need: str, agent_id: str) -> App:
-        """Give an agents need one of the person's agents: one that fits (H.2)."""
-        found = [(m, d) for m, d in self.declared(name) if need in m.needs.agents]
-        if not found:
-            raise AppError(f"{name} needs no agent {need}")
-        manifest, folder = found[0]
-        if problem := self.agent_problem(name, manifest.needs.agents[need], folder, agent_id):
-            raise AppError(f"{need}: {problem}")
+    # ── its jobs, run by its Who works (H.1, H.2) ───────────────────────
+
+    def set_who_works(self, name: str, who: WhoWorks) -> App:
+        """Who runs its jobs (a job's own aside): a program on an account or provider, or the
+        model alone on a provider, that can run here (rule app-job.runs-as-its-who-works)."""
         record = self.get(name)
-        record.agents[need] = agent_id
+        try:
+            app_jobs.runs_as(self.settings, who)
+        except AppRunError as e:
+            raise AppError(str(e)) from None
+        record.who_works = who
         self._save()
         return self.view(name)
 
-    def definition(self, need: AppManifestAgentNeed, folder: Path) -> AgentDefinition:
-        """The definition an agents need ships (in `folder`, the app's): a job's (H.2)."""
-        if bad := link_out(folder, folder / need.from_):
-            raise AppError(f"{need.from_}: {bad} is a link to outside the app")
-        try:
-            definition = definitions.read(folder / need.from_)
-        except definitions.DefinitionError as e:
-            raise AppError(f"{need.from_}: {e}") from None
-        if definition.interface is None or definition.interface.result is None:
-            raise AppError(f"{need.from_}: interface.json: a job's, with a result (D.18)")
-        try:
-            interfaces.check(definition.interface)
-            interfaces.check_instructions(definition.instructions, definition.interface)
-        except interfaces.InterfaceError as e:
-            raise AppError(f"{need.from_}: {e}") from None
-        return definition
+    def set_job_who_works(self, name: str, job: str, who: WhoWorks | None) -> App:
+        """Who runs that job, instead of the app's Who works; None: the app's again. One that
+        cannot run it (the model alone for a job reaching folders, schemas or hosts) is refused
+        (rule app-job.runs-as-its-who-works)."""
+        record = self.get(name)
+        declared = self.declared_jobs(name)
+        if job not in declared:
+            raise AppError(f"{name} has no job {job}")
+        if who is None:
+            record.jobs_who_works.pop(job, None)
+        else:
+            if why := app_jobs.cannot_run(declared[job], who):
+                raise AppError(f"job {job}: {why}")
+            try:
+                app_jobs.runs_as(self.settings, who)
+            except AppRunError as e:
+                raise AppError(str(e)) from None
+            record.jobs_who_works[job] = who
+        self._save()
+        return self.view(name)
 
-    def definition_dir(self, origin: AgentOrigin) -> Path:
-        """The folder of the definition an agent set up from an app's need comes from: the
-        source folder's (its skills go to the library)."""
-        name, need = origin.name, origin.agent or ""  # an app's origin names its need
-        found = [(m, d) for m, d in self.declared(name) if need in m.needs.agents]
-        if not found:
-            raise AppError(f"no app {name} needing an agent {need}")
-        manifest, folder = found[0]
-        self.definition(manifest.needs.agents[need], folder)
-        return folder / manifest.needs.agents[need].from_
+    def declared_jobs(self, name: str) -> dict[str, AppManifestJob]:
+        """The jobs of the version a deploy would install, then the installed one's (as its
+        needs, `needs_view`)."""
+        found: dict[str, AppManifestJob] = {}
+        for manifest, _ in self.declared(name):
+            for job_name, job in manifest.jobs.items():
+                found.setdefault(job_name, job)
+        return found
 
-    def agent_problem(
-        self, name: str, need: AppManifestAgentNeed, folder: Path, agent_id: str
-    ) -> str | None:
-        """Why that agent cannot be given for the need, None when it fits: a job whose form and
-        result fit the definition's (interfaces.misfit), in the folder given for `worksIn`."""
+    def job_problems(self, name: str, job_name: str) -> list[str]:
+        """Why an automation cannot run that job of that app (I.1): no such app or job (its
+        source's or its installed version's), nobody to run it, one who cannot (rule
+        app-job.runs-as-its-who-works); the terms of who runs it are the automation's to read
+        (`job_runs_as`)."""
+        if name not in self.records:
+            return [f"run.app: no app named {name}"]
+        job = self.declared_jobs(name).get(job_name)
+        if job is None:
+            return [f"run.job: {name} has no job {job_name}"]
+        record = self.get(name)
+        who = record.jobs_who_works.get(job_name) or record.who_works
+        if why := app_jobs.cannot_run(job, who):
+            return [f"run.job: {why}"]
         try:
-            wanted = self.definition(need, folder).interface
-        except AppError as e:
-            return str(e)
-        assert wanted is not None
-        return self.misfit(name, need, wanted, agent_id)
+            self.job_runs_as(name, job_name)
+        except AppRunError as e:
+            return [f"run.job: {e}"]
+        return []
 
-    def misfit(
-        self, name: str, need: AppManifestAgentNeed, wanted: AgentInterface, agent_id: str
-    ) -> str | None:
-        agent = self.runs.projects.registry.get(agent_id)
-        if agent is None:
-            return "the agent given was deleted"
-        if agent.app is not None and agent.app != name:
-            return f"it is one of the app {agent.app}'s parts"
-        if why := interfaces.misfit(wanted, agent.interface):
-            return why
-        if need.works_in is not None:
-            given = self.get(name).files.get(need.works_in)
-            works = os.path.realpath(agent.scope) if agent.scope else None
-            if given is not None and works != given:
-                where = agent.scope or "a folder of its own per session"
-                return f"it works in {where}, not in {given} ({need.works_in})"
-        return None
+    def job_runs_as(self, name: str, job_name: str) -> RunsAs:
+        """The model that job runs with now: its own Who works, else the app's (AppRunError when
+        none, or when it cannot run here)."""
+        record = self.get(name)
+        who = record.jobs_who_works.get(job_name) or record.who_works
+        if who is None:
+            raise AppRunError(409, "nobody is chosen to run it")
+        return app_jobs.runs_as(self.settings, who)
+
+    def jobs_view(self, name: str) -> list[AppJob]:
+        """Its jobs, each with what it reaches, who runs it (its own, else the app's) and why
+        that one cannot run it now."""
+        record = self.get(name)
+        out: list[AppJob] = []
+        for job_name, job in self.declared_jobs(name).items():
+            own = record.jobs_who_works.get(job_name)
+            who = own or record.who_works
+            problem = app_jobs.cannot_run(job, who)
+            if problem is None:
+                assert who is not None  # else a reason above
+                try:
+                    app_jobs.runs_as(self.settings, who)
+                except AppRunError as e:
+                    problem = str(e)
+            can_do = AppJobCanDo(
+                files=job.files, works_in=job.works_in, schemas=job.schemas, egress=job.egress
+            )
+            out.append(
+                AppJob(
+                    name=job_name,
+                    description=job.description,
+                    can_do=can_do,
+                    who_works=who,
+                    own=own is not None,
+                    problem=problem,
+                )
+            )
+        return out
+
+    def job_run(
+        self, name: str, job_name: str, fields: dict[str, Any], started_by: AppRunStartedBy
+    ) -> AppRun:
+        """A run of a job of the installed version, by its Who works, in the folders given to
+        the app (H.1, H.11): AppRunError 403 a job it does not declare, 409 nobody chosen to run
+        it, one that cannot (rule app-job.runs-as-its-who-works), a folder not given or that
+        cannot be mounted as it says, 400 an input its form refuses."""
+        record = self.get(name)
+        assert record.current is not None
+        seq = record.current.seq
+        job = self.manifest(name, seq).jobs.get(job_name)
+        if job is None:
+            raise AppRunError(403, f"{name} has no job {job_name}: not in its [jobs]")
+        who = record.jobs_who_works.get(job_name) or record.who_works
+        if why := app_jobs.cannot_run(job, who):
+            raise AppRunError(409, f"job {job_name}: {why}")
+        assert who is not None  # else a reason above
+        runs = app_jobs.runs_as(self.settings, who)
+        given: dict[str, str] = {}
+        for need in job.files:
+            path = record.files.get(need)
+            if path is None:
+                raise AppRunError(409, f"folder {need} not given (Apps page)")
+            try:
+                given[need] = self.check_folder(path)
+            except AppError as e:
+                raise AppRunError(409, f"folder {need}: {e}") from None
+            if not os.path.exists(given[need]):
+                raise AppRunError(409, f"folder {need}: {path} does not exist")
+        place = app_jobs.place(job, given)
+        instructions = self.version_dir(name, seq) / JOB_INSTRUCTIONS_DIR / f"{job_name}.md"
+        stand_in = app_jobs.stand_in(name, job_name, job, runs, instructions.read_text())
+        run = self.runs.start_job(
+            name,
+            job_name,
+            stand_in=stand_in,
+            runs=runs,
+            place=place,
+            fields=fields,
+            started_by=started_by,
+            then=job.then,
+        )
+        self._log(name, f"run {run.id} of job {job_name} started")
+        return run
 
     def check_files(self, name: str, manifest: AppManifest) -> list[tuple[str, str, bool]]:
         """The folders given for the manifest's files needs, checked now: (need, path, writable)."""
@@ -1171,47 +1490,23 @@ class AppStore:
                 raise DeployError(f"folder {need}: {given[need]} does not exist")
             if other := next((n for n, p, _ in out if p == path), None):
                 raise DeployError(f"folder {need}: {path} is also given for {other}")
+            git = os.path.join(path, ".git")
+            if wanted.mode == "rw" and os.path.lexists(git) and not compose.real_folder(git):
+                raise DeployError(
+                    f"folder {need}: its .git is not a folder (a link or a worktree's file),"
+                    " so it cannot be kept read-only: give another folder"
+                )
             out.append((need, path, wanted.mode == "rw"))
         return out
 
-    def check_agents(self, name: str, manifest: AppManifest, folder: Path) -> None:
-        """Each agents need has a definition, and an agent given that fits it (H.2, H.11)."""
-        given = self.get(name).agents
-        for need, wanted in manifest.needs.agents.items():
-            self.definition(wanted, folder)
-            if need not in given:
-                raise DeployError(f"agent {need} not given (Apps page, or handler app agent)")
-            if problem := self.agent_problem(name, wanted, folder, given[need]):
-                raise DeployError(f"agent {need}: {problem}")
-
-    def given_agent(self, name: str, need: str) -> AgentRecord:
-        """The agent given for a need of the installed version, fitting it now: AppRunError 403
-        for a need it does not declare, 409 when it no longer fits."""
-        record = self.get(name)
-        assert record.current is not None
-        manifest = self.manifest(name, record.current.seq)
-        wanted = manifest.needs.agents.get(need)
-        if wanted is None:
-            raise AppRunError(403, f"{name} needs no agent {need}: not in its needs.agents")
-        folder = self.version_dir(name, record.current.seq)
-        agent_id = record.agents.get(need)
-        if agent_id is None:
-            raise AppRunError(409, f"agent {need} not given (Apps page)")
-        if problem := self.agent_problem(name, wanted, folder, agent_id):
-            raise AppRunError(409, f"agent {need}: {problem}")
-        agent = self.runs.projects.registry.get(agent_id)
-        assert agent is not None
-        return agent
-
-    def needs_view(self, name: str) -> tuple[list[AppFileNeed], list[AppAgentNeed]]:
-        """The files and agents needs of the version a deploy would install (the source's; the
-        installed one's when the source cannot be read), with what was given and, for an agent,
-        those of the person's that fit. A need only the installed version has is not asked for:
-        the next deploy drops it (its binding stays, for a rollback)."""
+    def needs_view(self, name: str) -> list[AppFileNeed]:
+        """The files needs of the version a deploy would install (the source's; the installed
+        one's when the source cannot be read), with what was given. A need only the installed
+        version has is not asked for: the next deploy drops it (its binding stays, for a
+        rollback)."""
         record = self.get(name)
         files: dict[str, AppFileNeed] = {}
-        agents: dict[str, AppAgentNeed] = {}
-        for manifest, folder in self.declared(name)[:1]:
+        for manifest, _ in self.declared(name)[:1]:
             for need, f in manifest.needs.files.items():
                 files.setdefault(
                     need,
@@ -1223,81 +1518,41 @@ class AppStore:
                         file=path is not None and Path(path).is_file(),
                     ),
                 )
-            for need, a in manifest.needs.agents.items():
-                if need in agents:
-                    continue
-                given = record.agents.get(need)
-                try:
-                    definition = self.definition(a, folder)
-                except AppError as e:
-                    agents[need] = AppAgentNeed(
-                        name=need,
-                        description=a.description,
-                        works_in=a.works_in,
-                        origin=AgentOrigin(kind="app", name=name, agent=need),
-                        agent_id=given,
-                        problem=str(e),
-                    )
-                    continue
-                wanted = definition.interface
-                assert wanted is not None
-                agents[need] = AppAgentNeed(
-                    name=need,
-                    description=a.description,
-                    works_in=a.works_in,
-                    definition=definition,
-                    origin=AgentOrigin(kind="app", name=name, agent=need),
-                    agent_id=given,
-                    problem=self.misfit(name, a, wanted, given) if given else None,
-                    fits=[
-                        agent.id
-                        for agent in self.runs.projects.registry.agents.values()
-                        if self.misfit(name, a, wanted, agent.id) is None
-                    ],
-                )
-        return list(files.values()), list(agents.values())
+        return list(files.values())
 
     # ── its actions, what the person can ask it (H.12) ──────────────────
 
-    def check_actions(self, manifest: AppManifest, folder: Path) -> None:
-        """A route's form is a form's JSON Schema (D.18); an agent's action runs a job whose result
-        says how it went (`status`, `summary`: I.3's rule)."""
+    def check_actions(self, manifest: AppManifest) -> None:
+        """A route's form is a form's JSON Schema (D.18); a job's action takes its job's form and
+        result, checked with its job (`check_jobs`)."""
         for name, action in manifest.actions.items():
             if action.fields is not None:
                 try:
                     interfaces.check(AgentInterface(fields=action.fields))
                 except interfaces.InterfaceError as e:
                     raise DeployError(f"actions.{name}.{e}") from None
-            if action.agent is not None:
-                wanted = self.definition(manifest.needs.agents[action.agent], folder).interface
-                assert wanted is not None and wanted.result is not None
-                if found := interfaces.result_problems(wanted.result):
-                    raise DeployError(
-                        f"actions.{name}: the agent {action.agent}: {'; '.join(found)}"
-                    )
 
     def actions_view(self, name: str) -> list[AppAction]:
         """The actions of the installed version (before a first deploy, its source's), each with
-        its form: the route's, or its agent's definition's."""
+        its form: the route's or its job's."""
         record = self.get(name)
         declared = self.declared(name)
         found = declared[-1:] if record.current else declared[:1]
         out: list[AppAction] = []
-        for manifest, folder in found:
+        for manifest, _ in found:
             for action_name, action in manifest.actions.items():
                 fields = action.fields
-                if action.agent is not None:
-                    with contextlib.suppress(AppError):
-                        need = manifest.needs.agents[action.agent]
-                        interface = self.definition(need, folder).interface
-                        fields = interface.fields if interface else None
+                if action.job is not None:
+                    fields = manifest.jobs[action.job].fields
+                by = "code" if action.route else "job"
                 out.append(
                     AppAction(
                         name=action_name,
                         description=action.description,
                         examples=action.examples,
-                        by="code" if action.route else "agent",
+                        by=by,
                         fields=fields,
+                        in_ask=action_name not in record.not_in_ask,
                     )
                 )
         return out
@@ -1305,23 +1560,39 @@ class AppStore:
     def askable(self) -> bool:
         """An installed app offers an action to Ask (cheap: read while the host decides to poll)."""
         for record in self.records.values():
-            if record.askable and record.current:
+            if record.current:
                 with contextlib.suppress(AppError):
-                    if self.manifest(record.name, record.current.seq).actions:
+                    actions = self.manifest(record.name, record.current.seq).actions
+                    if set(actions) - set(record.not_in_ask):
                         return True
         return False
 
-    def set_askable(self, name: str, askable: bool) -> App:
-        """Whether its actions are offered to Ask (D.24): off, they are tried from its page only."""
-        self.get(name).askable = askable
+    def set_ask(self, name: str, not_in_ask: list[str]) -> App:
+        """The actions you take out of Ask (D.24), the others offered: one out is still tried on
+        its page and opened by a nudge. An action the app does not have: InputError."""
+        record = self.get(name)
+        unknown = set(not_in_ask) - {a.name for a in self.actions_view(name)}
+        if unknown:
+            raise InputError(f"{name} has no action {', '.join(sorted(unknown))}")
+        record.not_in_ask = sorted(set(not_in_ask))
         self._save()
         self.changed()  # the host may poll for the owner's phone, or stop (D.24)
         return self.view(name)
 
-    async def act(self, name: str, action_name: str, fields: dict[str, Any]) -> ActionRun:
-        """One action of the installed version, the owner's: its code answers it now; its agent's
-        run is answered with its result if it ends within ACTION_WAIT, else as running (read it
-        again with `action_run`; its end reaches the inbox, H.11)."""
+    async def act(
+        self,
+        name: str,
+        action_name: str,
+        fields: dict[str, Any],
+        nudge: str | None = None,
+        *,
+        asked: bool = False,
+    ) -> ActionRun:
+        """One action of the installed version, the owner's: its code answers it now; its job's
+        run is answered with its result if it ends within ACTION_WAIT, else as running (read it again with `action_run`; its end reaches the inbox, H.11). From an open nudge pointing at
+        it (H.17): the nudge is done once it succeeds, its code told which (NUDGE_HEADER).
+        `asked`: Ask's pick (D.24); otherwise its form was filled by the person (its run started
+        "via" a nudge, or "try")."""
         record = self.get(name)
         if record.current is None:
             raise AppError(f"{name} is not installed")
@@ -1329,16 +1600,26 @@ class AppStore:
         action = manifest.actions.get(action_name)
         if action is None:
             raise AppNotFoundError(f"{name} has no action {action_name}")
+        answered = self.nudge_of(name, nudge, action_name) if nudge is not None else None
+        via = "nudge" if nudge is not None else "ask" if asked else "try"
         if action.route is not None:
             if action.fields is not None and (found := interfaces.errors(action.fields, fields)):
                 raise InputError(f"input invalid: {'; '.join(found)}")
-            return await self._act_by_code(name, action_name, action.route, fields)
-        assert action.agent is not None
+            done = await self._act_by_code(
+                name, action_name, action.route, fields, answered, via=via
+            )
+            if nudge is not None:
+                self.nudges.action_ended(nudge, done.result.status if done.result else "failed")
+            return done
         try:
-            run = self.runs.start(name, action.agent, self.given_agent(name, action.agent), fields)
+            started_by = StartedByAction(action=action_name, via=via)
+            assert action.job is not None
+            run = self.job_run(name, action.job, fields, started_by)
         except AppRunError as e:
             raise (InputError if e.status == 400 else AppError)(str(e)) from None
-        self._log(name, f"action {action_name}: run {run.id} of {action.agent} started")
+        self._log(name, f"action {action_name}: run {run.id} of {action.job} started")
+        if nudge is not None:
+            self.nudges.running(nudge, run.id)
         deadline = time.monotonic() + ACTION_WAIT
         view = self.action_run(name, action_name, run.id)
         while view.state == "running" and time.monotonic() < deadline:
@@ -1347,7 +1628,7 @@ class AppStore:
         return view
 
     def action_run(self, name: str, action_name: str, run_id: str) -> ActionRun:
-        """An agent's action, as its run is now: its result's `status` and `summary`, the whole
+        """A job's action, as its run is now: its result's `status` and `summary`, the whole
         result as `data`."""
         self.get(name)
         try:
@@ -1358,6 +1639,9 @@ class AppStore:
         base["session_id"] = run.session_id
         if run.state in ("waiting", "running"):
             return ActionRun(**base, state="running")
+        for m in self.nudges.open(name):  # a nudge it was done from (H.17)
+            if m.nudge is not None and m.nudge.run_id == run.id:
+                self.nudges.action_ended(m.id, self.run_state(name, run.id))
         if run.state == "succeeded" and isinstance(run.result, dict):
             told = told_result(run.result)
             summary = told["summary"] or "Done."
@@ -1365,15 +1649,309 @@ class AppStore:
             return ActionRun(**base, state="succeeded", result=result)
         return ActionRun(**base, state="failed", error=run.error or run.state)
 
+    def run_state(self, name: str, run_id: str) -> str:
+        """How an action's job run went, for its nudge (H.17): "running", its result's status,
+        or "failed"."""
+        try:
+            run = self.runs.get(name, run_id)
+        except AppRunError:
+            return "failed"
+        if run.state in ("waiting", "running"):
+            return "running"
+        if run.state == "succeeded" and isinstance(run.result, dict):
+            return str(told_result(run.result)["status"])
+        return "failed"
+
+    # ── its nudges, what it asks a person to do (H.17) ──────────────────
+
+    def nudges_view(self, name: str) -> list[AppNudge]:
+        """The nudges of the installed version (before a first deploy, its source's), each with
+        how often it alerts you and when handlerd sends it (the app's, yours, the next slot)."""
+        record = self.get(name)
+        declared = self.declared(name)
+        found = declared[-1:] if record.current else declared[:1]
+        now = datetime.now(UTC)
+        views = []
+        for manifest, _ in found:
+            for n, d in manifest.nudges.items():
+                own = self.nudges.own_when(name, n) if d.when is not None else None
+                when = own or d.when
+                views.append(
+                    AppNudge(
+                        name=n,
+                        description=d.description,
+                        action=d.action,
+                        open=d.open,
+                        remind=d.remind,
+                        if_ignored=d.if_ignored,
+                        setting=self.nudges.setting(name, n),
+                        when=d.when,
+                        own_when=own,
+                        next_at=self.nudges.next_at(name, n, when, now)
+                        if when is not None and record.current
+                        else None,
+                        prepared=d.prepare is not None,
+                        off=self.nudges.is_off(name, n),
+                    )
+                )
+        return views
+
+    def set_nudge_setting(self, name: str, nudge: str, setting: NudgeSetting) -> App:
+        if nudge not in {n.name for n in self.nudges_view(name)}:
+            raise AppNotFoundError(f"{name} has no nudge {nudge}")
+        self.nudges.set_setting(name, nudge, setting)
+        return self.view(name)
+
+    def set_nudge_off(self, name: str, nudge: str, off: bool) -> App:
+        """That nudge off (none sent, its `prepare` not called, its open ones reminding no more)
+        or on again, from its next slot: none missed while off is sent."""
+        if nudge not in {n.name for n in self.nudges_view(name)}:
+            raise AppNotFoundError(f"{name} has no nudge {nudge}")
+        self.nudges.set_off(name, nudge, off)
+        self._log(name, f"nudge {nudge}: turned {'off' if off else 'on'} by you")
+        return self.view(name)
+
+    def set_nudge_when(self, name: str, nudge: str, when: Schedule | None) -> App:
+        """When handlerd sends that nudge: yours replacing the app's, or the app's again (None).
+        Only a nudge the app gives a `when`: the others its code sends."""
+        found = next((n for n in self.nudges_view(name) if n.name == nudge), None)
+        if found is None:
+            raise AppNotFoundError(f"{name} has no nudge {nudge}")
+        if found.when is None:
+            raise AppError(f"{nudge} is sent by {name}'s code: it has no time to change")
+        self.nudges.set_when(name, nudge, when)
+        return self.view(name)
+
+    # ── its nudges sent at their `when` (H.17) ──────────────────────────
+
+    def send_due_nudges(self, now: datetime | None = None) -> None:
+        """Each installed app's nudge whose slot came (its `when`, or yours): its slot taken now,
+        its open ones expired with `until = "next"` (whatever its `prepare` answers: the slot
+        came), then sent (after its `prepare`) in the background. A slot missed while handlerd
+        was off: the latest one, once."""
+        now = now or datetime.now(UTC)
+        for name, record in list(self.records.items()):
+            if record.current is None:
+                continue
+            for nudge, declared in self.manifest(name, record.current.seq).nudges.items():
+                if declared.when is None:
+                    continue
+                when = self.nudges.own_when(name, nudge) or declared.when
+                slot = self.nudges.due(name, nudge, when, now)  # taken even while off
+                if slot is not None and not self.nudges.is_off(name, nudge):
+                    if declared.until == "next" and (expired := self.nudges.expire(name, nudge)):
+                        self._log(name, f"nudge {nudge}: {len(expired)} expired, its next slot")
+                    task = asyncio.get_running_loop().create_task(
+                        self.send_at_slot(name, nudge, declared, slot_key(when, slot))
+                    )
+                    self.sending.add(task)
+                    task.add_done_callback(self.sending.discard)
+
+    async def send_at_slot(
+        self, name: str, nudge: str, declared: AppManifestNudge, key: str
+    ) -> list[InboxMessage]:
+        """One slot of a scheduled nudge: without `prepare`, its `description` as title, the slot
+        as key; with it, what its route answers (none: 204). To the owner. A failure (no answer,
+        a bad one) is told in the app's log and the owner's inbox; never retried."""
+        try:
+            if declared.prepare is None:
+                prepared = [PreparedNudge(title=declared.description)]
+            else:
+                prepared = await self.prepare_nudge(name, nudge, declared.prepare)
+            form = None
+            if declared.action is not None:
+                form = next(
+                    (a.fields for a in self.actions_view(name) if a.name == declared.action), None
+                )
+            sent = []
+            for p in prepared:
+                payload = p.model_dump(exclude_none=True) | {"key": p.key or key}
+                sent.append(self.nudges.send(name, nudge, declared, payload, persons=[], form=form))
+        except (AppError, NudgeError) as e:
+            self._log(name, f"nudge {nudge} at {key}: not sent: {e}")
+            self.inbox.add(
+                source="app",
+                name=name,
+                person="owner",
+                title=f"{declared.description}: not sent",
+                summary=f"Its nudge {nudge} for {key} was not sent: {e}",
+                status="failed",
+                app=name,
+            )
+            return []
+        self._log(name, f"nudge {nudge} at {key}: sent {len(sent)}")
+        return sent
+
+    async def prepare_nudge(self, name: str, nudge: str, route: str) -> list[PreparedNudge]:
+        """Its `prepare` route called as the owner, with no start token (it cannot start a run):
+        the nudges it answers, of this name, each with its own key when several; none for 204.
+        AppError when it cannot be called or answers something else."""
+        method, path = route.split(" ", 1)
+        backend = await self.ensure_running(name)
+        try:
+            r = await backend.client.request(
+                method, path, headers={PERSON_HEADER: "owner"}, timeout=CALL_TIMEOUT
+            )
+        except httpx.HTTPError as e:
+            raise AppError(f"{route}: {str(e) or type(e).__name__}") from None
+        self.touch(name)
+        self._log(name, f"nudge {nudge}: {route}: {r.status_code}")
+        if r.status_code == 204:
+            return []
+        if not r.is_success:
+            raise AppError(f"{route}: {_answer_error(r)}")
+        try:
+            answer = PREPARED.validate_json(r.content)
+        except ValidationError as e:
+            where = ".".join(str(x) for x in e.errors()[0]["loc"]) or "(top)"
+            raise AppError(f"{route} answered no nudge: {where}: {e.errors()[0]['msg']}") from None
+        if not isinstance(answer, list):
+            return [answer]
+        keys = [p.key for p in answer]
+        if len(answer) > MAX_PREPARED or None in keys or len(set(keys)) < len(keys):
+            raise AppError(
+                f"{route} answered several nudges: at most {MAX_PREPARED}, each with its own key"
+            )
+        return answer
+
+    async def call_then(self, name: str, route: str, payload: dict[str, Any]) -> str | None:
+        """A job's `then` route called once a run of it ended (H.11, rule
+        app-job.then-called-once): as the owner, with no start token (it cannot start a run: no
+        loop), the backend started if needed, as a nudge's `prepare` is; its answer's body
+        ignored (2xx: done). None when it was done, else why it failed (no backend, no answer,
+        an error), said on the run, never retried."""
+        method, path = route.split(" ", 1)
+        try:
+            backend = await self.ensure_running(name)
+            r = await backend.client.request(
+                method, path, headers={PERSON_HEADER: "owner"}, json=payload, timeout=CALL_TIMEOUT
+            )
+        except AppError as e:
+            return str(e)
+        except httpx.HTTPError as e:
+            return str(e) or type(e).__name__
+        self.touch(name)
+        self._log(name, f"run {payload['runId']}: then {route}: {r.status_code}")
+        return None if r.is_success else _answer_error(r)
+
+    def nudge_of(self, name: str, message_id: str, action: str) -> InboxMessage:
+        """The open nudge an action is done from: of this app, pointing at this action."""
+        try:
+            m = self.nudges.get(message_id, name)
+        except NudgeError as e:
+            raise (AppNotFoundError if e.status == 404 else AppError)(str(e)) from None
+        assert m.nudge is not None
+        if m.nudge.action != action:
+            raise AppError(f"this nudge opens {m.nudge.action or 'a page'}, not {action}")
+        return m
+
+    def nudge_link(self, message_id: str) -> str:
+        """A one-time link to the page an open nudge opens."""
+        try:
+            m = self.nudges.get(message_id)
+        except NudgeError as e:
+            raise (AppNotFoundError if e.status == 404 else AppError)(str(e)) from None
+        assert m.nudge is not None and m.app is not None
+        if m.nudge.open is None:
+            raise AppError("this nudge opens an action's form, not a page")
+        return self.open_link(m.app, m.nudge.open)
+
+    async def nudge_call(
+        self, name: str, method: str, path: str, payload: dict[str, Any] | None
+    ) -> tuple[int, dict[str, Any]]:
+        """`POST /nudge`, `POST /nudge/{id}/done`, `DELETE /nudge/{id}` from its backend; or
+        `POST /nudge/done`, `DELETE /nudge` with `{name, key}`: the open ones of that name and key
+        (whoever they went to), `{ids}` those ended, none an empty list."""
+        record = self.get(name)
+        assert record.current is not None
+        manifest = self.manifest(name, record.current.seq)
+        parts = path.split("/")[2:]  # "/nudge/abc/done" → ["abc", "done"]
+        try:
+            if method == "POST" and not parts:
+                return self.send_nudge(name, manifest, payload or {}, record.persons)
+            if (method, parts) in (("POST", ["done"]), ("DELETE", [])):
+                ended = self.nudges.keyed(name, payload or {}, list(manifest.nudges))
+                for m in ended:
+                    assert m.nudge is not None
+                    if method == "POST":
+                        self.nudges.end(m.id, "done")
+                        self._log(name, f"nudge {m.id} ({m.nudge.key}): done, said the app")
+                    else:
+                        self.nudges.withdraw(name, m.id)
+                        self._log(name, f"nudge {m.id} ({m.nudge.key}): withdrawn")
+                return 200, {"ids": [m.id for m in ended]}
+            if method == "POST" and len(parts) == 2 and parts[1] == "done":
+                self.nudges.get(parts[0], name)
+                self.nudges.end(parts[0], "done")
+                self._log(name, f"nudge {parts[0]}: done, said the app")
+                return 200, {}
+            if method == "DELETE" and len(parts) == 1:
+                self.nudges.withdraw(name, parts[0])
+                self._log(name, f"nudge {parts[0]}: withdrawn")
+                return 200, {}
+        except NudgeError as e:
+            return e.status, {"error": str(e)}
+        return 404, {
+            "error": "POST /nudge, POST /nudge/{id}/done, DELETE /nudge/{id}, "
+            "POST /nudge/done {name, key}, DELETE /nudge {name, key}"
+        }
+
+    def send_nudge(
+        self, name: str, manifest: AppManifest, payload: dict[str, Any], persons: list[str]
+    ) -> tuple[int, dict[str, Any]]:
+        nudge = payload.get("name")
+        declared = manifest.nudges.get(nudge) if isinstance(nudge, str) else None
+        if declared is None:
+            raise NudgeError(403, f"name: one of its nudges ({', '.join(manifest.nudges)})")
+        assert isinstance(nudge, str)
+        if self.nudges.is_off(name, nudge):  # the person turned it off: not sent, as a trial's
+            self._log(name, f"nudge {nudge}: not sent, turned off by you")
+            return 200, {"id": None}
+        if not self.rate_ok(name):
+            raise NudgeError(429, f"at most {NOTIFY_PER_HOUR} notifications an hour")
+        form = None
+        if declared.action is not None:
+            form = next(
+                (a.fields for a in self.actions_view(name) if a.name == declared.action), None
+            )
+        message = self.nudges.send(name, nudge, declared, payload, persons=persons, form=form)
+        self._log(name, f"nudge {nudge} for {message.person}: {message.title}")
+        return 200, {"id": message.id}
+
+    def rate_ok(self, name: str) -> bool:
+        """Its notifications and nudges sent in the last hour are fewer than NOTIFY_PER_HOUR (its
+        reminders are Handler's, not counted); counts this one when it is."""
+        now = time.monotonic()
+        recent = [t for t in self.sent.get(name, []) if now - t < 3600]
+        if len(recent) >= NOTIFY_PER_HOUR:
+            self.sent[name] = recent
+            return False
+        self.sent[name] = [*recent, now]
+        return True
+
     async def _act_by_code(
-        self, name: str, action_name: str, route: str, fields: dict[str, Any]
+        self,
+        name: str,
+        action_name: str,
+        route: str,
+        fields: dict[str, Any],
+        nudge: InboxMessage | None,
+        *,
+        via: Literal["ask", "nudge", "try"],
     ) -> ActionRun:
         """`POST /api/…` with the fields, as the owner (who may start runs meanwhile, H.11): its
-        answer is the ActionResult."""
+        answer is the ActionResult. The call says where it was asked (`via`, as a job's run's
+        `startedBy`); answering a nudge (H.17), which one: its id, and its key when it has one
+        (as is: NudgeKey holds only what a header value may)."""
         method, path = route.split(" ", 1)
         backend = await self.ensure_running(name)
         start = self.issue_start(name, "owner")
         headers = {PERSON_HEADER: "owner", START_HEADER: start or "", ACTION_HEADER: action_name}
+        headers[VIA_HEADER] = via
+        if nudge is not None:
+            assert nudge.nudge is not None
+            key = nudge.nudge.key
+            headers[NUDGE_HEADER] = nudge.id + (f"; key={key}" if key else "")
         try:
             r = await backend.client.request(
                 method, path, headers=headers, json=fields, timeout=ACTION_TIMEOUT
@@ -1396,11 +1974,27 @@ class AppStore:
 
     # ── what the backend asks handler (H.9, H.11) ───────────────────────
 
+    @staticmethod
+    def with_smd(smd: app_smd.AppSmd | None, handle: AppApiHandler) -> AppApiHandler:
+        """`/smd/*` answered on the folders that backend was given, a trial's and a draft's
+        too (their copies), when its version declares `schemas`; the rest by `handle`."""
+
+        async def answer(
+            name: str, method: str, path: str, payload: dict[str, Any] | None
+        ) -> tuple[int, dict[str, Any]]:
+            if not path.startswith("/smd/"):
+                return await handle(name, method, path, payload)
+            if smd is None:
+                return 403, {"error": "declare the formats it reads in `schemas` in app.toml"}
+            return await smd.answer(method, path, payload)
+
+        return answer
+
     async def trial(
         self, _name: str, method: str, path: str, _payload: dict[str, Any] | None
     ) -> tuple[int, dict[str, Any]]:
         """A deploy's trial run: its notifications go nowhere, it starts no run."""
-        if (method, path) == ("POST", "/notify"):
+        if (method, path) in (("POST", "/notify"), ("POST", "/nudge")):
             return 200, {"id": None}
         return 403, {"error": "a deploy's trial run starts nothing"}
 
@@ -1410,19 +2004,61 @@ class AppStore:
         record = self.records.get(name)
         if record is None or record.current is None:
             return 404, {"error": f"no app named {name}"}
-        needs = self.manifest(name, record.current.seq).needs
+        manifest = self.manifest(name, record.current.seq)
+        needs = manifest.needs
+        call: Awaitable[tuple[int, dict[str, Any]]] | None = None
         try:
-            if (method, path) == ("POST", "/notify"):
+            if urlsplit(path).path == "/history" or path.startswith("/history/"):
+                call = self.history_call(record, manifest, method, path)
+            elif path == "/nudge" or path.startswith("/nudge/"):
+                if not manifest.nudges:
+                    raise AppRunError(403, "declare it in [nudges.<name>] in app.toml")
+                call = self.nudge_call(name, method, path, payload)
+            elif (method, path) == ("POST", "/notify"):
                 if not needs.notify:
                     raise AppRunError(403, "add `notify = true` to [needs] in app.toml")
-                return await self.notification(name, payload or {})
-            if path == "/runs" or path.startswith("/runs/"):
-                if not needs.agents:
-                    raise AppRunError(403, "add the jobs it runs to [needs.agents.<name>]")
-                return await self.run_call(name, method, path, payload)
+                call = self.notification(name, payload or {})
+            elif path == "/runs" or path.startswith("/runs/"):
+                if not manifest.jobs:
+                    raise AppRunError(403, "declare the jobs it runs in [jobs.<name>]")
+                call = self.run_call(name, method, path, payload)
+            if call is not None:
+                return await call
         except AppRunError as e:
             return e.status, {"error": str(e)}
-        return 404, {"error": "POST /notify, POST /runs, GET /runs/{id}, POST /runs/{id}/cancel"}
+        return 404, {
+            "error": "POST /notify, POST /nudge, POST /runs, GET /runs, GET /runs/{id}, "
+            "POST /runs/{id}/cancel, POST /smd/parse, POST /smd/check, POST /smd/write, "
+            "GET /history, GET /history/{id}"
+        }
+
+    async def history_call(
+        self, record: AppRecord, manifest: AppManifest, method: str, path: str
+    ) -> tuple[int, dict[str, Any]]:
+        """`GET /history?files=<need>`, `GET /history/{id}?files=<need>`: the changes of a
+        folder given to one of its own read-write files needs, read only (rule
+        `app-sock.history-read-only`): no undo, no other folder."""
+        url = urlsplit(path)
+        parts = url.path.split("/")[2:]  # "/history/abc" → ["abc"]
+        if method != "GET" or len(parts) > 1 or (parts and not parts[0]):
+            return 404, {"error": "GET /history?files=<need>, GET /history/{id}?files=<need>"}
+        need = (parse_qs(url.query).get("files") or [""])[0]
+        wanted = manifest.needs.files.get(need)
+        if wanted is None or wanted.mode != "rw":
+            raise AppRunError(403, 'files: one of its read-write files needs (mode = "rw")')
+        given = record.files.get(need)
+        if given is None or self.history is None:
+            return 404, {"error": f"no folder given for {need}"}
+        folder = os.path.realpath(given)
+        history = self.history
+        try:
+            if parts:
+                diff = await asyncio.to_thread(history.commit, folder, parts[0])
+                return 200, diff.model_dump(mode="json", by_alias=True, exclude_none=True)
+            listed = await asyncio.to_thread(history.history, folder)
+            return 200, listed.model_dump(mode="json", by_alias=True, exclude_none=True)
+        except ValueError as e:  # no history yet, no such change in it
+            return 404, {"error": str(e)}
 
     async def run_call(
         self,
@@ -1442,16 +2078,19 @@ class AppStore:
                 raise AppRunError(
                     403, "start: a run starts only while answering a request of the owner's"
                 )
-            agent = self.given_agent(name, request.agent)
-            run = self.runs.start(name, request.agent, agent, request.fields)
-            self._log(name, f"run {run.id} of {run.agent} started")
+            run = self.job_run(name, request.job, request.fields, StartedByCode())
             return 202, run.model_dump(mode="json", by_alias=True, exclude_none=True)
+        if method == "GET" and not parts:
+            runs = self.runs.recent(name)
+            return 200, {
+                "runs": [r.model_dump(mode="json", by_alias=True, exclude_none=True) for r in runs]
+            }
         if method == "GET" and len(parts) == 1:
             run = self.runs.get(name, parts[0])
         elif method == "POST" and len(parts) == 2 and parts[1] == "cancel":
             run = await self.runs.cancel(name, parts[0])
         else:
-            return 404, {"error": "POST /runs, GET /runs/{id}, POST /runs/{id}/cancel"}
+            return 404, {"error": "POST /runs, GET /runs, GET /runs/{id}, POST /runs/{id}/cancel"}
         return 200, run.model_dump(mode="json", by_alias=True, exclude_none=True)
 
     def issue_start(self, name: str, person: str) -> str | None:
@@ -1479,11 +2118,8 @@ class AppStore:
             return 400, {"error": "unknown app or person"}
         if person != "owner" and person not in record.persons:
             return 403, {"error": f"{name} is not shared with {person}"}
-        now = time.monotonic()
-        recent = [t for t in self.sent.get(name, []) if now - t < 3600]
-        if len(recent) >= NOTIFY_PER_HOUR:
+        if not self.rate_ok(name):
             return 429, {"error": f"at most {NOTIFY_PER_HOUR} notifications an hour"}
-        self.sent[name] = [*recent, now]
         self._log(name, f"notification for {person}: {title}")  # into the person's inbox (H.9)
         message = self.inbox.add(
             source="app", name=name, person=person, title=title, summary=body, app=name
@@ -1515,6 +2151,8 @@ class AppStore:
             shutil.rmtree(leftover, ignore_errors=True)  # drafts opened before a restart
         self.reaper = asyncio.get_running_loop().create_task(self._reap())
         self.runs.start_watching(list(self.records))
+        self.nudges.tick(self.run_state)  # a reminder missed while off: once, now (H.17)
+        self.send_due_nudges()  # a slot missed while off: the latest, once, now (H.17)
 
     async def _reap(self) -> None:
         interval = max(1.0, min(30.0, self.settings.app_idle_timeout / 4))
@@ -1529,8 +2167,11 @@ class AppStore:
                             self._log(name, f"idle for {idle:.0f} s")
                             await self._stop(name)
             for name, preview in list(self.previews.items()):
-                if now - preview.backend.last_used > self.settings.app_idle_timeout:
-                    await self.close_draft(name)
+                idle = now - preview.backend.last_used > self.settings.app_idle_timeout
+                if idle and not self.lock(name + DRAFT).locked():
+                    await self.close_draft(name, only=preview)
+            self.nudges.tick(self.run_state)
+            self.send_due_nudges()
             with contextlib.suppress(OSError):
                 self._save()  # last-used times
 

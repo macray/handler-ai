@@ -2,14 +2,24 @@
 to in Chat (its agents, agents.py)."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from handler_contracts import AgentOrigin
-from handler_control import agents, handler_needs
+from handler_contracts import AgentInterface, AgentOrigin
+from handler_control import agents, handler_needs, interfaces
 from handler_control.agents import AgentRecord, RunsAs
 
 MODEL = RunsAs(harness="claude-code", account="perso")
+RESULT: dict[str, Any] = {
+    "type": "object",
+    "required": ["status", "summary"],
+    "properties": {
+        "status": {"enum": ["ok", "attention", "failed"]},
+        "summary": {"type": "string"},
+    },
+}
+OPTIONAL = {"type": "object", "properties": {"request": {"type": "string"}}}
 
 
 def test_who_you_talk_to_are_chats_agents_the_last_used_first() -> None:
@@ -17,8 +27,7 @@ def test_who_you_talk_to_are_chats_agents_the_last_used_first() -> None:
     new = AgentRecord(id="a2", scope=None, model=MODEL, chat=True)
     new.last_used_at = new.created_at.replace(year=new.created_at.year + 1)
     outside = AgentRecord(id="a3", scope=None, model=MODEL)
-    part = AgentRecord(id="a4", scope=None, model=MODEL, app="planner")
-    assert [a.id for a in agents.chats([old, new, outside, part])] == ["a2", "a1"]
+    assert [a.id for a in agents.chats([old, new, outside])] == ["a2", "a1"]
 
 
 @pytest.mark.rule("agent.deleting-it-stops-what-runs-on-it", "helper.handler-uses-the-one-given")
@@ -38,6 +47,26 @@ def test_a_chat_helper_fits_when_set_up_for_its_need() -> None:
     assert handler_needs.misfit(need, mine, None, None) is None
     assert handler_needs.misfit(need, other, None, None) is not None
     assert handler_needs.misfit(need, mine, None, "/home/me/code") is not None  # it has no folder
+
+
+@pytest.mark.rule("helper.handler-uses-the-one-given")
+def test_misfit_compares_properties_types_and_required() -> None:
+    """A job's need fits an agent whose form takes each field Handler sends and whose result
+    gives each field it reads: properties, types and `required` only."""
+    wanted = AgentInterface.model_validate({"fields": OPTIONAL, "result": RESULT})
+
+    def why(**interface: Any) -> str | None:
+        return interfaces.misfit(wanted, AgentInterface.model_validate(interface))
+
+    assert why(fields=OPTIONAL, result=RESULT) is None
+    extra = {"type": "object", "properties": {**RESULT["properties"], "more": {"type": "string"}}}
+    assert why(fields=OPTIONAL, result={**RESULT, **extra}) is None
+    assert why(result=RESULT) == "its form has no field request"
+    number = {"type": "object", "properties": {"request": {"type": "number"}}}
+    assert why(fields=number, result=RESULT) == "its form's request is not a string"
+    loose = {**RESULT, "required": ["status"]}
+    assert why(fields=OPTIONAL, result=loose) == ("its result does not always give summary")
+    assert interfaces.misfit(wanted, None) == "it is not a job"
 
 
 @pytest.mark.rule("definition.only-the-origin-follows")

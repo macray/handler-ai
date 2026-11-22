@@ -106,7 +106,7 @@ def test_only_the_container_loosens(runtime: Runtime, scope: Path, confinement: 
 TOOLBOX = os.environ.get("HANDLER_TEST_TOOLBOX_IMAGE", "localhost/handler-ai-toolbox:latest")
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 @requires_internet
 @pytest.mark.timeout(dev_env.IMAGE_TIMEOUT)
 def test_containers_run_inside_a_nested_toolbox_sandbox(runtime: Runtime, scope: Path) -> None:
@@ -294,7 +294,7 @@ def test_read_only_folder(runtime: Runtime, scope: Path) -> None:
 @pytest.mark.rule(
     "sandbox.sees-only-what-it-is-given",
     "sandbox.read-only-stays-read-only",
-    "need.a-file-given-is-that-file",
+    "app-need.a-file-given-is-that-file",
 )
 def test_a_file_is_given_alone_at_its_path(runtime: Runtime, scope: Path) -> None:
     """An app's file need (H.9): a folder whose source is a file. The sandbox sees that file
@@ -331,7 +331,7 @@ def test_a_file_is_given_alone_at_its_path(runtime: Runtime, scope: Path) -> Non
         shutil.rmtree(mine, ignore_errors=True)
 
 
-@pytest.mark.rule("need.a-file-given-is-that-file")
+@pytest.mark.rule("app-need.a-file-given-is-that-file")
 def test_a_file_given_is_that_file_until_replaced(runtime: Runtime, scope: Path) -> None:
     """The sandbox reads what the host writes in place; once the host replaces the file (an
     editor saving by rename), the sandbox keeps the one it was given: a Linux bind mount holds
@@ -388,6 +388,7 @@ def test_a_cache_s_commands_are_on_path(runtime: Runtime, scope: Path, tmp_path:
     assert path.endswith(f":{target}/bin")
 
 
+@pytest.mark.rule("sandbox.gives-its-files-tools-and-kept-files")
 def test_a_tool_is_an_executable_in_handler_s_folder(runtime: Runtime, scope: Path) -> None:
     tool = {"target": "/run/handler/bin/hello", "content": "#!/bin/sh\necho hello\n"}
     script = "/run/handler/bin/hello; echo x >> /run/handler/bin/hello 2>/dev/null || echo ro-ok"
@@ -456,6 +457,7 @@ def test_a_read_only_file_keeps_its_parents_writable(runtime: Runtime, scope: Pa
     assert runtime.leftovers(doc["name"]) == []
 
 
+@pytest.mark.rule("sandbox.gives-its-files-tools-and-kept-files")
 def test_a_writable_file_is_replaceable(runtime: Runtime, scope: Path) -> None:
     """A writable file can be rewritten atomically (temp file + rename), unlike a mounted one."""
     script = (
@@ -490,7 +492,7 @@ def test_a_folder_in_the_home_keeps_its_parents_writable(
     assert (state / "s").exists()
 
 
-@pytest.mark.rule("need.a-file-given-is-that-file")
+@pytest.mark.rule("app-need.a-file-given-is-that-file")
 def test_a_file_given_in_the_home_is_mounted_as_a_file(runtime: Runtime, scope: Path) -> None:
     """An app's file need whose path is in the sandbox's home (a person whose own home is
     where the sandbox's is): its mount point there is a file, not a folder.
@@ -508,6 +510,7 @@ def test_a_file_given_in_the_home_is_mounted_as_a_file(runtime: Runtime, scope: 
         shutil.rmtree(mine, ignore_errors=True)
 
 
+@pytest.mark.rule("sandbox.gives-its-files-tools-and-kept-files")
 def test_a_kept_file_alone_in_its_folder(runtime: Runtime, scope: Path, tmp_path: Path) -> None:
     """A state file the harness rewrites (Claude Code's ~/.claude.json), alone in its folder
     (A.1): what the sandbox writes in it is on the host after."""

@@ -59,7 +59,7 @@ def files(result: Any) -> dict[str, str]:
     return {f.target: f.content for f in result.files}
 
 
-@pytest.mark.rule("provider.through-a-protocol-both-speak")
+@pytest.mark.rule("provider-config.through-a-protocol-both-speak")
 def test_loopback_is_the_containers_host() -> None:
     assert reachable("http://127.0.0.1:3000/v1") == "http://host.containers.internal:3000/v1"
     assert reachable("http://localhost/v1") == "http://host.containers.internal/v1"
@@ -67,7 +67,9 @@ def test_loopback_is_the_containers_host() -> None:
     assert reachable("https://api.example.com/v1") == "https://api.example.com/v1"
 
 
-@pytest.mark.rule("launch.mode-and-model-over-acp", "provider.every-field-reaches-the-harness")
+@pytest.mark.rule(
+    "launch.mode-and-model-over-acp", "provider-config.every-field-reaches-the-harness"
+)
 def test_codex_gets_a_config_and_a_model_catalog() -> None:
     result = launch("codex", LLAMACPP)
     written = files(result)
@@ -93,7 +95,7 @@ def test_codex_gets_a_config_and_a_model_catalog() -> None:
     assert result.session_defaults.config_options is None  # in the config, not chosen over ACP
 
 
-@pytest.mark.rule("provider.every-field-reaches-the-harness")
+@pytest.mark.rule("provider-config.every-field-reaches-the-harness")
 def test_codex_points_at_the_system_prompt_the_provider_gives() -> None:
     result = launch("codex", LLAMACPP, files={"instructions_md": {"content": "You are…"}})
     config = tomllib.loads(files(result)["/home/agent/.codex/config.toml"])
@@ -101,7 +103,9 @@ def test_codex_points_at_the_system_prompt_the_provider_gives() -> None:
     assert "/home/agent/.codex/instructions.md" in files(result)
 
 
-@pytest.mark.rule("provider.every-field-reaches-the-harness", "provider.room-left-for-a-reply")
+@pytest.mark.rule(
+    "provider-config.every-field-reaches-the-harness", "provider-config.room-left-for-a-reply"
+)
 def test_vibe_gets_a_provider_and_a_model() -> None:
     result = launch("vibe", LLAMACPP)
     config = tomllib.loads(files(result)["/home/agent/.vibe/config.toml"])
@@ -120,7 +124,7 @@ def test_vibe_gets_a_provider_and_a_model() -> None:
     assert "MISTRAL_API_KEY" not in result.env
 
 
-@pytest.mark.rule("provider.room-left-for-a-reply")
+@pytest.mark.rule("provider-config.room-left-for-a-reply")
 def test_vibe_reserves_the_reply_or_its_summary_request_whichever_is_larger() -> None:
     def written(model: dict[str, Any]) -> dict[str, Any]:
         config = tomllib.loads(
@@ -148,7 +152,7 @@ def test_vibe_key_goes_to_its_own_variable() -> None:
     assert "sk-secret" not in "".join(files(result).values())  # never in a file (B3)
 
 
-@pytest.mark.rule("provider.every-field-reaches-the-harness")
+@pytest.mark.rule("provider-config.every-field-reaches-the-harness")
 def test_pi_gets_models_and_settings_with_the_models_native_fields() -> None:
     result = launch("pi", LLAMACPP)
     written = files(result)
@@ -166,7 +170,7 @@ def test_pi_gets_models_and_settings_with_the_models_native_fields() -> None:
     assert settings["compaction"] == {"reserveTokens": 32768}  # room for a reply (B9)
 
 
-@pytest.mark.rule("provider.room-left-for-a-reply")
+@pytest.mark.rule("provider-config.room-left-for-a-reply")
 def test_pi_reserves_at_most_a_fifth_of_a_small_window() -> None:
     result = launch("pi", LLAMACPP | {"models": [{"id": "small", "contextWindow": 32000}]})
     settings = json.loads(files(result)["/home/agent/.pi/agent/settings.json"])
@@ -182,7 +186,9 @@ def test_pi_key_is_the_name_of_its_variable() -> None:
     assert "sk-secret" not in "".join(files(result).values())
 
 
-@pytest.mark.rule("launch.mode-and-model-over-acp", "provider.every-field-reaches-the-harness")
+@pytest.mark.rule(
+    "launch.mode-and-model-over-acp", "provider-config.every-field-reaches-the-harness"
+)
 def test_claude_code_gets_its_endpoint_key_and_model_in_the_environment() -> None:
     result = launch("claude-code", ANTHROPIC, key="sk-ant")
     assert result.env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com"
@@ -193,7 +199,9 @@ def test_claude_code_gets_its_endpoint_key_and_model_in_the_environment() -> Non
     assert result.session_defaults.config_options is None  # the model is not chosen over ACP
 
 
-@pytest.mark.rule("launch.what-it-cannot-honour-fails", "provider.every-field-reaches-the-harness")
+@pytest.mark.rule(
+    "launch.what-it-cannot-honour-fails", "provider-config.every-field-reaches-the-harness"
+)
 def test_the_model_is_chosen_by_config_model() -> None:
     result = launch("vibe", LLAMACPP, config={"model": "small"})
     config = tomllib.loads(files(result)["/home/agent/.vibe/config.toml"])
@@ -202,7 +210,9 @@ def test_the_model_is_chosen_by_config_model() -> None:
         launch("vibe", LLAMACPP, config={"model": "nope"})
 
 
-@pytest.mark.rule("launch.what-it-cannot-honour-fails", "provider.through-a-protocol-both-speak")
+@pytest.mark.rule(
+    "launch.what-it-cannot-honour-fails", "provider-config.through-a-protocol-both-speak"
+)
 def test_a_protocol_the_harness_does_not_speak_is_refused() -> None:
     with pytest.raises(RenderError, match="speaks openai-chat, the provider anthropic"):
         launch("vibe", ANTHROPIC)
@@ -218,6 +228,7 @@ def test_a_file_the_provider_writes_cannot_also_be_one_of_its_files() -> None:
         launch("pi", LLAMACPP, files={"settings_json": {"content": "{}"}})
 
 
+@pytest.mark.rule("agent.it-reaches-only-the-hosts-of-what-it-uses")
 def test_the_login_or_the_provider_hosts_are_the_only_egress() -> None:
     codex = catalog.get("codex").descriptor
     on_provider = render(codex, agent("codex", LLAMACPP), permission_mode="bypass")
@@ -229,3 +240,27 @@ def test_the_login_or_the_provider_hosts_are_the_only_egress() -> None:
         "chatgpt.com:443",
         "auth.openai.com:443",
     ]
+
+
+@pytest.mark.rule("launch.codex-on-a-provider-has-no-vendor-features")
+def test_codex_on_a_provider_has_its_vendor_s_features_off() -> None:
+    """If this fails: Codex on a local model offers web search, plugins or subagents its
+    provider does not serve, and its turns fail on them."""
+    config = tomllib.loads(files(launch("codex", LLAMACPP))["/home/agent/.codex/config.toml"])
+    assert config["web_search"] == "disabled"
+    assert config["features"] == {
+        "plugins": False,
+        "goals": False,
+        "multi_agent": False,
+        "view_image": False,
+    }
+    assert config["tools"]["update_plan"] == {"enabled": True}
+
+
+@pytest.mark.rule("launch.config-files-read-only-unless-the-harness-rewrites-them")
+def test_a_config_file_is_read_only_unless_the_harness_rewrites_it() -> None:
+    """pi rewrites its settings.json (`seed`), never its models.json.
+    If this fails: an agent rewrites the models Handler wrote for it, or pi fails to save."""
+    given = {f.target: (f.mode, f.writable) for f in launch("pi", LLAMACPP).files}
+    assert given["/home/agent/.pi/agent/models.json"] == ("0444", False)
+    assert given["/home/agent/.pi/agent/settings.json"] == ("0600", True)

@@ -35,7 +35,7 @@ nav = [
     { "Working with an agent" = ["docs/cli/run.md", "docs/cli/attach.md", "docs/cli/terminal.md", "docs/cli/acp.md", "docs/cli/agent-options.md"] },
     { "What runs" = ["docs/cli/session.md", "docs/cli/agent.md", "docs/cli/project.md", "docs/cli/plan.md"] },
     { "Model access" = ["docs/cli/account.md", "docs/cli/provider.md", "docs/cli/secret.md"] },
-    { "What an agent can get" = ["docs/cli/tool.md", "docs/cli/connection.md", "docs/cli/notes.md", "docs/cli/source.md"] },
+    { "What an agent can get" = ["docs/cli/tool.md", "docs/cli/connection.md", "docs/cli/notes.md", "docs/cli/schema.md", "docs/cli/source.md"] },
     { "Images, apps, automations" = ["docs/cli/image.md", "docs/cli/toolbox.md", "docs/cli/runtime.md", "docs/cli/app.md", "docs/cli/automation.md", "docs/cli/inbox.md", "docs/cli/ask.md"] },
     { "Handler itself" = ["docs/cli/setup.md", "docs/cli/daemon.md", "docs/cli/ui.md"] },
   ] },

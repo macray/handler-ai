@@ -5,10 +5,10 @@ in your browser) and give handler the token it prints, or tell handler where you
 never runs that sign-in nor reads its output. A file login (Codex, Vibe): handler runs the harness's
 login here and keeps the credential file it leaves.
 
-handler account list                 accounts, their harness, plan, login and areas
-handler account add NAME HARNESS [--description TEXT] [--plan PLAN] [--area AREA …]
+handler account list                 accounts, their harness, subscription, login and areas
+handler account add NAME HARNESS [--description TEXT] [--subscription SUBSCRIPTION] [--area AREA …]
                 [--token | --token-env VAR | --token-file PATH | --token-command CMD]
-                                     PLAN: its subscription's (e.g. pro, max for claude-code),
+                                     SUBSCRIPTION: which one it is (e.g. pro, max for claude-code),
                                      told to the harness, which cannot learn it from a token.
                                      --area: the areas it is made for (Work,
                                      Personal…, or any; none: it runs nowhere a project has one)
@@ -24,7 +24,8 @@ handler account login NAME [--keep-open] a file login: its harness's own login r
                                      for Enter at the end (a window the web UI opened for it)
 handler account import NAME FILE     or give a file login done elsewhere: the credential file it
                                      left (e.g. ~/.codex/auth.json after `codex login`)
-handler account rm NAME              it and its login (refused while an agent uses it)
+handler account rm NAME              it and its login (agents using it cannot start until given
+                                     another; it names them)
 """
 
 import argparse
@@ -54,7 +55,7 @@ def add_parser(sub: Any) -> None:
     add.add_argument("name")
     add.add_argument("harness")
     add.add_argument("--description")
-    add.add_argument("--plan")
+    add.add_argument("--subscription")
     add.add_argument(
         "--area",
         action="append",
@@ -85,11 +86,11 @@ def add_parser(sub: Any) -> None:
 def dispatch(args: argparse.Namespace) -> int:
     d = Daemon()
     if args.account_cmd == "list":
-        rows = [["NAME", "HARNESS", "PLAN", "LOGIN", "AREAS", "AGENTS"]]
+        rows = [["NAME", "HARNESS", "SUBSCRIPTION", "LOGIN", "AREAS", "AGENTS"]]
         for a in d.call("GET", "/v1/accounts"):
-            harness, plan = a.get("harness") or "?", a.get("plan") or "-"
+            harness, subscription = a.get("harness") or "?", a.get("subscription") or "-"
             areas = ", ".join(a.get("areas", [])) or "-"
-            rows.append([a["name"], harness, plan, login_status(a), areas,
+            rows.append([a["name"], harness, subscription, login_status(a), areas,
                          ", ".join(a["agents"])])  # fmt: skip
         table(rows) if len(rows) > 1 else print("no account")
         return 0
@@ -101,8 +102,11 @@ def dispatch(args: argparse.Namespace) -> int:
         return import_login(d, args.name, args.file)
     if args.account_cmd == "login":
         return login_window(d, args.name, keep_open=args.keep_open)
+    using = [a["agents"] for a in d.call("GET", "/v1/accounts") if a["name"] == args.name]
     d.call("DELETE", f"/v1/accounts/{args.name}")
     print(f"{args.name}: removed")
+    if using and using[0]:
+        print(f"these agents cannot start until given another account: {', '.join(using[0])}")
     return 0
 
 
@@ -120,10 +124,14 @@ def login_window(d: Daemon, name: str, *, keep_open: bool) -> int:
 
 
 def login_status(a: dict[str, Any]) -> str:
-    """Its login as `handler account list` says it: logged in (and how), or what is missing."""
+    """Its login as `handler account list` says it: logged in (and how), or what is missing, in the
+    web UI's words: "logged out on <day>" (a login it had that ended), else "not logged in"."""
     if a["status"] == "invalid":
         return a.get("error") or "invalid"
     if a["status"] != "ready":
+        # handlerd gives an end only to a login it has, and says incomplete with one once it passed
+        if a.get("expiresAt"):
+            return f"logged out on {a['expiresAt'][:10]}"
         return "; ".join(a.get("problems") or ["not logged in"])
     where = {"secret": "token in handler", "env": "token from an env var",
              "file": "token from a file",
@@ -139,12 +147,22 @@ def add(d: Daemon, args: argparse.Namespace) -> int:
         "description": args.description,
         "areas": args.area,
     }
-    body |= {"plan": args.plan} if args.plan else {}
-    made = d.call("POST", "/v1/accounts", body)
-    print(f"{args.name}: created")
+    body |= {"subscription": args.subscription} if args.subscription else {}
+    given = None  # the token, asked for before anything is made
     if args.token or args.token_env or args.token_file or args.token_command:
         given = token_body(args.name, args.token_env, args.token_file, args.token_command)
-        return give_token(d, args.name, given)
+        if not given.get("tokenRef") and not given.get("token"):
+            raise ClientError(f"no token given for {args.name}")
+    made = d.call("POST", "/v1/accounts", body)
+    if given is not None:  # all or nothing: a token refused leaves no account
+        try:
+            done = d.call("PUT", f"/v1/accounts/{args.name}/login", given)
+        except ClientError:
+            d.call("DELETE", f"/v1/accounts/{args.name}")
+            raise
+        print(f"{args.name}: created")
+        return logged_in(args.name, done)
+    print(f"{args.name}: created")
     if made.get("login") == "token":
         print(f"log it in: run `{token_command(d, args.harness)}`, then: handler account token "
               f"{args.name}")  # fmt: skip
@@ -190,10 +208,13 @@ def ask_token(name: str, what: str = "token") -> str:
 
 
 def save(d: Daemon, name: str, body: dict[str, Any]) -> int:
-    made = d.call("PUT", f"/v1/accounts/{name}/login", body)
-    logged_in = made["status"] == "ready"
-    print(f"{name}: {'logged in' if logged_in else login_status(made)}")
-    return 0 if logged_in else 1
+    return logged_in(name, d.call("PUT", f"/v1/accounts/{name}/login", body))
+
+
+def logged_in(name: str, account: dict[str, Any]) -> int:
+    ready = account["status"] == "ready"
+    print(f"{name}: {'logged in' if ready else login_status(account)}")
+    return 0 if ready else 1
 
 
 def login(d: Daemon, name: str) -> int:
@@ -214,8 +235,6 @@ def login(d: Daemon, name: str) -> int:
             f"'{name}' logs in with a token you make: run `{recipe['tokenCommand']}`, "
             f"then: handler account token {name}"
         )
-    if not harness.get("loginFile"):  # a handlerd older than this handler
-        raise ClientError("handlerd does not say where the login leaves its file: restart it")
     path = search_path(recipe["command"][0], account["harness"])
     argv = [str(shutil.which(recipe["command"][0], path=path)), *recipe["command"][1:]]
     if recipe.get("help"):

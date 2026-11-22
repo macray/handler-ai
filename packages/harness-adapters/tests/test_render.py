@@ -16,7 +16,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from handler_contracts import AgentSpec, CacheDeclaration, McpServer, StdioMcpServer
-from handler_harness import RenderError, catalog, harness_hosts, starting_instructions
+from handler_harness import RenderError, catalog, harness_env, harness_hosts, starting_instructions
 from handler_harness import render as render_launch
 from handler_harness.render import FILTERED_NETWORK, SANDBOX_ENV, SANDBOX_ENV_SCRIPT
 
@@ -69,6 +69,7 @@ def test_golden_claude_perso() -> None:
     assert actual == expected
 
 
+@pytest.mark.rule("launch.a-cache-is-placed-in-the-harness-home")
 def test_caches_are_in_the_harness_home() -> None:
     caches = [*CARGO, (cache("/opt/x"), "/h/x"), (cache("~/.bun", "bin"), "/h/bun")]
     launch = render(claude(), agent(), caches=caches)
@@ -78,6 +79,30 @@ def test_caches_are_in_the_harness_home() -> None:
         ("/home/agent/.bun", "/h/bun", "/home/agent/.bun/bin"),  # its commands, on PATH
     ]
     assert render(claude(), agent()).caches == []
+
+
+@pytest.mark.rule("policy.its-harness-s-session-meta-reaches-every-session")
+def test_a_harness_s_session_meta_is_a_session_default() -> None:
+    """Claude Code's adapter is told what to add to its system prompt; a harness with nothing to
+    tell its adapter gives none, and a terminal program gets none (nothing goes over ACP)."""
+    meta = render(claude(), agent()).session_defaults
+    assert meta is not None and meta.meta is not None
+    assert set(meta.meta) == {"systemPrompt"}
+    assert "file tools (Write, Edit)" in meta.meta["systemPrompt"]["append"]
+    vibe = render(catalog.get("vibe").descriptor, agent(harness="vibe", config={}))
+    assert vibe.session_defaults is not None and vibe.session_defaults.meta is None
+    assert render(claude(), agent(), terminal=[]).session_defaults is None
+
+
+@pytest.mark.rule("launch.a-run-gets-its-harness-s-unattended-env")
+def test_a_run_of_claude_code_runs_no_background_command() -> None:
+    """A run's Claude Code has no background command, and commands that may last as long as
+    the run's limit; a session someone follows keeps them."""
+    run = render(claude(), agent(), unattended=True).env
+    assert run["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+    assert run["BASH_MAX_TIMEOUT_MS"] == str(24 * 3600 * 1000)  # a step's longest limit
+    followed = render(claude(), agent()).env
+    assert not {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "BASH_MAX_TIMEOUT_MS"} & set(followed)
 
 
 @pytest.mark.rule("launch.mode-and-model-over-acp")
@@ -98,10 +123,10 @@ def test_model_goes_through_acp_config_option() -> None:
     assert "ANTHROPIC_MODEL" not in launch.env
 
 
-@pytest.mark.rule("launch.the-plan-is-told")
-def test_the_account_s_plan_is_told_to_the_harness() -> None:
-    """Claude Code cannot learn it from a token login (B.1 `login.planEnv`)."""
-    launch = render(claude(), agent(account_plan="max"))
+@pytest.mark.rule("launch.the-subscription-is-told")
+def test_the_account_s_subscription_is_told_to_the_harness() -> None:
+    """Claude Code cannot learn it from a token login (B.1 `login.subscriptionEnv`)."""
+    launch = render(claude(), agent(account_subscription="max"))
     assert launch.env["CLAUDE_CODE_SUBSCRIPTION_TYPE"] == "max"
     unset = render(claude(), agent())
     assert "CLAUDE_CODE_SUBSCRIPTION_TYPE" not in unset.env
@@ -118,12 +143,14 @@ def test_account_connectors_off_by_default() -> None:
 DOCS = {"type": "http", "name": "docs", "url": "https://mcp.example.org/sse"}
 
 
+@pytest.mark.rule("agent.it-reaches-only-the-hosts-of-what-it-uses")
 def test_http_mcp_server_host_added_to_egress() -> None:
     launch = render(claude(), agent(), mcp_servers=servers(DOCS))
     assert "mcp.example.org:443" in launch.egress  # https: port 443 (the URL's scheme)
     assert launch.egress[:2] == ["api.anthropic.com:443", "platform.claude.com:443"]
 
 
+@pytest.mark.rule("agent.it-reaches-only-the-hosts-of-what-it-uses")
 def test_each_host_says_what_requires_it() -> None:
     """What clients are shown (Agent.requiredHosts): the launch's egress, with its reasons."""
     hosts = harness_hosts(claude(), agent(), servers(DOCS))
@@ -284,6 +311,7 @@ def test_skills_are_read_only_folders_under_their_name() -> None:
     }
 
 
+@pytest.mark.rule("launch.config-files-read-only-unless-the-harness-rewrites-them")
 def test_config_file_becomes_a_writable_file_for_vibe() -> None:
     vibe = catalog.get("vibe").descriptor
     p = agent(harness="vibe", config={}, files={"config_toml": {"content": "x = 1"}})
@@ -311,6 +339,7 @@ def test_unknown_config_file_is_an_error() -> None:
         render(claude(), agent(files={"nope": {"content": "x"}}), {"nope": "x"})
 
 
+@pytest.mark.rule("session.its-harness-history-is-its-own")
 def test_per_session_slot_is_bound_by_the_daemon_only() -> None:
     vibe = catalog.get("vibe").descriptor
     p = agent(harness="vibe", config={})
@@ -324,6 +353,7 @@ def test_per_session_slot_is_bound_by_the_daemon_only() -> None:
 # ── state: the agent's own, the account's login, the daemon's sessions ──
 
 
+@pytest.mark.rule("agent.its-state-is-its-own")
 def test_the_agent_s_own_state_is_kept_by_handler() -> None:
     p = agent()
     launch = render(claude(), p, state_root="/data/agent-state/work")
@@ -529,7 +559,7 @@ def host_out_of_reach() -> Iterator[list[str]]:
         yield touched
 
 
-@pytest.mark.rule("launch.render-is-pure-intent")
+@pytest.mark.rule("launch.render-reads-nothing-and-starts-nothing")
 @pytest.mark.parametrize("name", [h.name for h in catalog.all_harnesses()])
 def test_render_reads_nothing_starts_nothing_and_gives_the_same_launch(name: str) -> None:
     """Every harness's launch, rendered twice with the host out of reach: nothing touched, the
@@ -574,6 +604,7 @@ CODEX_OVERRIDES = [
 ]
 
 
+@pytest.mark.rule("harness.no-telemetry-no-self-update")
 def test_every_harness_says_how_its_telemetry_is_off() -> None:
     """If this fails: a harness was added without its privacy settings being looked for."""
     assert sorted(PRIVACY) == sorted(h.name for h in catalog.all_harnesses())
@@ -609,3 +640,19 @@ def test_handler_codex_starts_codex_with_its_telemetry_and_updates_off() -> None
     wrapper = containerfile[: containerfile.index(wrapper)].rsplit("printf", 1)[1]
     for override in CODEX_OVERRIDES:
         assert f"-c {override}" in wrapper
+
+
+@pytest.mark.rule("agent.its-env-never-sets-what-others-own")
+def test_harness_env_is_what_render_sets() -> None:
+    """What an agent's own variables may not set (D.8): every variable its launch sets, its
+    secrets' too, whatever their values, a run's (its harness's unattended env) too; on an
+    account or on a provider."""
+    on_account = agent(account_subscription="max")
+    launch = render(claude(), on_account, account_token="t", unattended=True)
+    assert harness_env(claude(), on_account, "bypass") == sorted(launch.env)
+    assert "NODE_USE_ENV_PROXY" in launch.env
+    anthropic = LOCAL | {"endpoints": {"anthropic": "http://127.0.0.1:3000"}}
+    on_provider = agent(account=None, provider="local", providerSpec=anthropic, config={})
+    launch = render(claude(), on_provider, provider_key="k", unattended=True)
+    assert harness_env(claude(), on_provider, "bypass") == sorted(launch.env)
+    assert {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"} <= set(launch.env)

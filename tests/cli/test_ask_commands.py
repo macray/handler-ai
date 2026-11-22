@@ -28,7 +28,10 @@ class Answers:
 def ask(monkeypatch: pytest.MonkeyPatch, daemon: Answers, *words: str) -> int:
     monkeypatch.setattr(ask_commands, "Daemon", daemon)
     monkeypatch.setattr(ask_commands.time, "sleep", lambda _: None)
-    return ask_commands.dispatch(argparse.Namespace(words=list(words)))
+    args = argparse.Namespace(
+        words=list(words), listen=False, toggle=False, check=False, history=False
+    )
+    return ask_commands.dispatch(args)
 
 
 @pytest.mark.rule("ask.a-pick-runs-at-once-as-the-owner")
@@ -71,3 +74,44 @@ def test_a_question_without_a_terminal_stops(
     monkeypatch.setattr(ask_commands.sys.stdin, "isatty", lambda: False)
     assert ask(monkeypatch, Answers(needs), "call", "the", "bank") == 1
     assert "Which day?" in capsys.readouterr().out
+
+
+@pytest.mark.rule("ask.each-ask-is-kept")
+def test_history_says_what_was_heard_where_it_went_and_how_it_ended(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`handler ask --history`: each ask, from anywhere, newest first: when, from where, what
+    was said, the app and action, how it ended.
+
+    If this fails: from a terminal you cannot tell what Handler got from your key."""
+    answer = {"kind": "pick", "summary": "s", "app": "planner", "action": "add"}
+    kept = {
+        "keep": True,
+        "asks": [
+            {
+                "id": "a1",
+                "at": "2026-11-20T09:12:00Z",
+                "via": "key",
+                "turns": [{"who": "you", "text": "add call the bank tomorrow"}],
+                "outcome": "done",
+                "summary": "Added Call the bank, Friday 21 November.",
+                "answer": answer,
+            },
+            {
+                "id": "a2",
+                "at": "2026-11-20T09:10:00Z",
+                "via": "key",
+                "turns": [],
+                "outcome": "failed",
+                "summary": "Nothing was written down: the provider failed",
+            },
+        ],
+    }
+    monkeypatch.setattr(ask_commands, "Daemon", Answers(kept))
+    args = argparse.Namespace(words=[], listen=False, toggle=False, check=False, history=True)
+    assert ask_commands.dispatch(args) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert "key       “add call the bank tomorrow”" in out[0]
+    assert out[1].strip() == "→ planner · add  ✓ Added Call the bank, Friday 21 November."
+    assert "(nothing heard)" in out[2]
+    assert out[3].strip() == "✕ Nothing was written down: the provider failed"

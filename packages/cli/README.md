@@ -1,7 +1,7 @@
 # cli — `handler`
 
 **Implements:** a client of contracts C (ACP endpoint) and D (Control API).
-**Depends on:** `handler_contracts` only (+ httpx, websockets). **Never touches podman**: everything goes
+**Depends on:** `handler_contracts` only (+ httpx, websockets; sounddevice on a Mac, for `ask --listen`). **Never touches podman**: everything goes
 through `handlerd`, so the CLI, the web UI and editors get the same policy and the same agents.
 **Used by:** you, editors (`handler acp`). Nothing on a timer: an automation runs at a time inside handlerd (contracts §I).
 
@@ -30,6 +30,7 @@ handler ui [--print]
 
 | File | Role |
 |---|---|
+| `entry.py` | the `handler` command: `ask --listen` straight to `listen.py` (the recording starts before the rest is loaded), anything else to `cli.py` |
 | `cli.py` | the top-level help and parser, `terminal`, `acp`, `connection list`, `notes list`, `ui`; the other nouns' modules are in `NOUNS` |
 | `client.py` | discovery (`$HANDLER_URL`, token file) and HTTP calls with readable errors |
 | `session_commands.py`, `terminal.py`, `session_bridge.py` | `handler run`, `attach`, `session …`; the terminal client; a session as a stdio ACP agent |
@@ -41,6 +42,7 @@ handler ui [--print]
 | `image_commands.py` | `handler image …` (D.4) |
 | `app_commands.py`, `app_window.py` | `handler app …` (H) |
 | `automation_commands.py`, `inbox_commands.py` | `handler automation …` (I), `handler inbox` (I.9) |
+| `ask_commands.py`, `listen.py`, `voice_device.py` | `handler ask` (D.24); `--listen`: by voice (D.25), `--toggle` for a key; what it needs of this computer, per OS (record, sounds, notifications) |
 | `setup.py`, `daemon_commands.py` | `handler setup`: the service, the host check (`GET /v1/runtime`), the first image build; `handler daemon …`: the systemd user unit for `handlerd` |
 
 Tests: `tests/cli/` (against a real `handlerd`).

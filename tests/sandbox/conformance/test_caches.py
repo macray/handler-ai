@@ -55,6 +55,24 @@ def test_size_counts_inner_ids_files_and_a_missing_folder_as_zero(
 
 
 @pytest.mark.rule("cache.measured-and-emptied-whoever-wrote-it")
+def test_size_measures_each_of_many_folders_a_shared_hard_link_in_both(
+    cache: Cache, folder: Path
+) -> None:
+    """Measured in one go (the page lists a project's caches by the dozen), each its own."""
+    small, big, linked = folder / "small", folder / "big", folder / "linked"
+    for f in (small, big, linked):
+        f.mkdir()
+    (small / "f").write_bytes(b"x" * 10_000)
+    (big / "f").write_bytes(b"x" * 1_000_000)
+    (linked / "f").hardlink_to(big / "f")
+    r = cache("size", str(small), str(big), str(linked))
+    assert r.returncode == 0, r.stderr
+    sizes = json.loads(r.stdout)
+    assert 10_000 <= sizes[str(small)] < 100_000
+    assert sizes[str(big)] >= 1_000_000 and sizes[str(linked)] >= 1_000_000
+
+
+@pytest.mark.rule("cache.measured-and-emptied-whoever-wrote-it")
 def test_clear_empties_the_folder_inner_ids_files_too(
     runtime: Runtime, cache: Cache, folder: Path
 ) -> None:

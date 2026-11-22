@@ -4,17 +4,23 @@
   // running sandbox at once; allowed, the card says so; kept blocked, it becomes one grey line (no
   // card again for that host). Not answered, it stays, one line once the next turn starts. Where
   // the client cannot answer (`ondecide` not given: the phone), it says where to. While the filter
-  // holds the agent's request for the answer (`until`), it counts the seconds down; answered while
-  // a turn runs, it says the agent will be told when it finishes.
+  // holds the agent's request for the answer (`until`), it counts the seconds down and says what
+  // happens at 0: the filter refuses it, the agent goes on without the host, and an answer after
+  // that is told to it (`tells`: not a run, which takes no prompt). Answered while a turn runs, it
+  // says the agent will be told when it finishes. `agent`: its name, else "The agent".
   import type { HostDecision, HostEntry } from "../lib/session.svelte";
 
   let {
     entry,
     past = false,
     ondecide,
+    agent,
+    tells = true,
   }: {
     entry: HostEntry;
     past?: boolean; // an earlier turn's
+    agent?: string;
+    tells?: boolean; // a later answer is told to the agent (not a run's)
     ondecide?: (host: string, decision: HostDecision) => Promise<void>;
   } = $props();
 
@@ -72,7 +78,9 @@
       {/if}
     </div>
     {#if left > 0}
-      <p class="hint waiting" data-testid="host-waiting">The agent is waiting · <span class="tabular-nums">{left} s</span></p>
+      <p class="hint waiting" data-testid="host-waiting">
+        {agent || "The agent"} is waiting for your answer · <span class="tabular-nums">{left} s</span>. Then it goes on without this site{#if tells}; allowing it later still tells {agent || "the agent"}{/if}.
+      </p>
     {/if}
     {#if ondecide}
       <div class="answers">

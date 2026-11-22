@@ -5,7 +5,7 @@ export interface AccountInfo {
 name: string
 harness?: (string | null)
 description?: (string | null)
-plan?: (string | null)
+subscription?: (string | null)
 login?: (("token" | "file") | null)
 token?: (("secret" | "env" | "file" | "command") | null)
 loggedInAt?: (string | null)
@@ -46,7 +46,7 @@ export interface AccountRequest {
 name: string
 harness: string
 description?: (string | null)
-plan?: (string | null)
+subscription?: (string | null)
 connectors?: boolean
 areas?: string[]
 }
@@ -55,6 +55,7 @@ export interface ActionRequest {
 fields?: {
 [k: string]: unknown
 }
+nudge?: (string | null)
 }
 
 export interface ActionRun {
@@ -68,7 +69,7 @@ sessionId?: (string | null)
 }
 /**
  * What an action gives (H.12): how it went, one or two sentences readable aloud, and what else
- * the app wants to show. A route answers it; an agent's run gives it from its result (its
+ * the app wants to show. A route answers it; a job's run gives it from its result (its
  * `status` and `summary`, I.3's rule).
  */
 
@@ -78,6 +79,7 @@ summary: string
 data?: {
 [k: string]: unknown
 }
+open?: (string | null)
 }
 
 export interface AddSourceRequest {
@@ -89,6 +91,8 @@ name: string
 state?: ("installed" | "preparing" | "ready" | "failed")
 stateDetail?: (string | null)
 description?: (string | null)
+connect?: (string | null)
+connectionCheck?: (string[] | null)
 image?: (string | null)
 imagePresent?: boolean
 version?: (string | null)
@@ -112,7 +116,9 @@ updateAvailable?: boolean
  * what it holds, in people's words (shown first): a short name, then after ": " more if
  * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
  * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
- * PATH after the image's (`bin` for `~/.cargo/bin`).
+ * PATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write
+ * (most), or a container engine's images (`images`), which a runtime may give as a store of
+ * the sandbox's own and the images' downloads shared (contract A.9).
  */
 
 export interface CacheDeclaration {
@@ -120,6 +126,7 @@ target: string
 about: string
 general?: boolean
 bin?: (string | null)
+kind?: ("folder" | "images")
 }
 /**
  * A setting or secret slot of an addon (G.1), for the binding form.
@@ -189,7 +196,9 @@ toolbox?: AddonToolbox
  * what it holds, in people's words (shown first): a short name, then after ": " more if
  * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
  * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
- * PATH after the image's (`bin` for `~/.cargo/bin`).
+ * PATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write
+ * (most), or a container engine's images (`images`), which a runtime may give as a store of
+ * the sandbox's own and the images' downloads shared (contract A.9).
  */
 
 export interface AddonToolbox {
@@ -271,12 +280,19 @@ blocked?: string[]
 confinement?: ("strict" | "nested" | "privileged")
 permissions?: ("ask" | "accept-edits" | "bypass")
 addons?: AddonUse[]
-knowledge?: string[]
+knowledge?: KnowledgeFolderUse[]
+schemas?: KnowledgeUse[]
 display?: boolean
+env?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[A-Za-z_][A-Za-z0-9_]*$".
+ */
+[k: string]: string
+}
 interface?: (AgentInterface | null)
 modelAlone?: boolean
 projectId?: (string | null)
-app?: (string | null)
 chat?: boolean
 scope?: (string | null)
 name?: (string | null)
@@ -312,6 +328,24 @@ addon: string
 binding?: (string | null)
 }
 /**
+ * A notes folder an agent gets (D.5), at /notes/<its name>: read-only, or read-write.
+ */
+
+export interface KnowledgeFolderUse {
+folder: string
+access?: ("read" | "write")
+}
+/**
+ * A schema an agent reads or writes (D.29): it gets that schema, read-only; its documents
+ * are in its notes folders. `write`: it may make and change documents of that schema (where:
+ * its read-write folders, D.5).
+ */
+
+export interface KnowledgeUse {
+schemaId: string
+access?: ("read" | "write")
+}
+/**
  * How a session of an agent starts and ends (D.18): a form (one of its fields may name a
  * skill of the library to work on, its subject), and maybe the result its final message holds.
  * With a result, a job: each run is unattended, so in permission mode `bypass` (no one is there
@@ -328,16 +362,16 @@ result?: ({
 timeoutSec?: (number | null)
 }
 /**
- * What an agent was set up from, kept for good: the definition of an app's need (H.2), an
- * agents file's agent (D.23), or the definition of one of Handler's needs (D.18). Only what it
- * came from: where the agent lives is its home (`projectId`, `app`, `chat`).
+ * What an agent was set up from, kept for good: an agents file's agent (D.23), or the
+ * definition of one of Handler's needs (D.18). Only what it came from: where the agent lives is
+ * its home (`projectId`, `chat`).
  */
 
 export interface AgentOrigin {
-kind: ("app" | "agents-file" | "handler-need")
+kind: ("agents-file" | "handler-need")
 name: string
 agent?: (string | null)
-version?: (number | null)
+version: number
 }
 
 export interface Agent {
@@ -349,8 +383,16 @@ blocked?: string[]
 confinement: ("strict" | "nested" | "privileged")
 permissions: ("ask" | "accept-edits" | "bypass")
 addons?: AddonUse[]
-knowledge?: string[]
+knowledge?: KnowledgeFolderUse[]
+schemas?: KnowledgeUse[]
 display?: boolean
+env?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[A-Za-z_][A-Za-z0-9_]*$".
+ */
+[k: string]: string
+}
 interface?: (AgentInterface | null)
 modelAlone?: boolean
 scope?: (string | null)
@@ -359,7 +401,6 @@ name?: (string | null)
 projectId?: (string | null)
 description?: (string | null)
 instructions?: (string | null)
-app?: (string | null)
 chat?: boolean
 origin?: (AgentOrigin | null)
 remoteStart?: boolean
@@ -442,8 +483,8 @@ checks?: AgentsFileCheck[]
 /**
  * What an agent set up from it starts with (D.18): everything but what it runs as and where
  * it works, its defaults; `skills` come with it, installed in the library when it is set up.
- * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
- * and those Handler ships for its needs (D.18).
+ * An agents file's agents are definitions (D.23), and so are those Handler ships for its needs
+ * (D.18).
  */
 
 export interface AgentDefinition {
@@ -459,7 +500,15 @@ skills?: string[]
 interface?: (AgentInterface | null)
 addons?: string[]
 knowledge?: string[]
+schemas?: KnowledgeUse[]
 display?: boolean
+env?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[A-Za-z_][A-Za-z0-9_]*$".
+ */
+[k: string]: string
+}
 modelAlone?: boolean
 }
 /**
@@ -487,10 +536,11 @@ export interface AppAction {
 name: string
 description: string
 examples?: string[]
-by: ("code" | "agent")
+by: ("code" | "job")
 fields?: ({
 [k: string]: unknown
 } | null)
+inAsk?: boolean
 }
 
 export interface AppLink {
@@ -501,8 +551,56 @@ export interface AppLog {
 text: string
 }
 
+export interface AppOpenRequest {
+path?: string
+}
+
+export interface AppRun {
+id: string
+job: string
+startedBy: (StartedByCode | StartedByAction | StartedByAutomation)
+fields: {
+[k: string]: unknown
+}
+sessionId: string
+state: ("waiting" | "running" | "succeeded" | "failed" | "cancelled")
+at: string
+endedAt?: (string | null)
+result?: {
+[k: string]: unknown
+}
+error?: (string | null)
+thenError?: (string | null)
+}
+/**
+ * A run the app's code started (`POST /runs`, while answering the owner).
+ */
+
+export interface StartedByCode {
+by?: "code"
+}
+/**
+ * A run one of the app's actions started (H.12), and how the person asked it: Ask's pick
+ * (D.24), its form filled on the app's page or on a phone ("try"), or a nudge (H.17).
+ */
+
+export interface StartedByAction {
+by?: "action"
+action: string
+via: ("ask" | "try" | "nudge")
+}
+/**
+ * A run an automation started (I.3): one the app suggested, or one of yours.
+ */
+
+export interface StartedByAutomation {
+by?: "automation"
+automation: string
+}
+
 export interface App {
 name: string
+title?: (string | null)
 description?: (string | null)
 url: string
 state: ("stopped" | "starting" | "running" | "failed")
@@ -510,15 +608,17 @@ error?: (string | null)
 current?: (AppDeployment | null)
 previous?: (AppDeployment | null)
 source: AppSource
+offered?: (AppOffered | null)
 secrets?: AppSecret[]
 files?: AppFileNeed[]
-agents?: AppAgentNeed[]
 suggests?: AppManifestSuggestedAutomation[]
 persons?: string[]
 lastUsedAt?: (string | null)
 fromSource?: (string | null)
 actions?: AppAction[]
-askable?: boolean
+nudges?: AppNudge[]
+whoWorks?: (WhoWorks | null)
+jobs?: AppJob[]
 }
 /**
  * One installed version of an app (H.6).
@@ -540,9 +640,6 @@ files?: {
 [k: string]: AppManifestFileNeed
 }
 notify?: boolean
-agents?: {
-[k: string]: AppManifestAgentNeed
-}
 }
 /**
  * A folder (or a file) of the person's the backend reads (or writes), H.9: which one is the
@@ -561,28 +658,27 @@ mode?: ("ro" | "rw")
 init?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string, string]
 }
 /**
- * A job the app starts runs of (H.11): which agent is the person's choice at install, one of
- * theirs that fits or one set up from the definition the app ships.
- * 
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
- */
-
-export interface AppManifestAgentNeed {
-description?: (string | null)
-from: string
-worksIn?: (string | null)
-}
-/**
  * The app's source folder as it is now: what Deploy would install (H.6).
  */
 
 export interface AppSource {
 version?: (string | null)
 description?: (string | null)
+changes?: (string | null)
 error?: (string | null)
 addedNeeds?: string[]
 needs?: (AppManifestNeeds | null)
+}
+/**
+ * The version the source an app came from offers, as read last (D.26), while it differs
+ * from its kept code's: Update takes it, then deploys it (H.6).
+ */
+
+export interface AppOffered {
+source: string
+version: string
+changes?: (string | null)
+addedNeeds?: string[]
 }
 /**
  * A secret an app declares (current or source version): whether it has a value. The value
@@ -605,35 +701,20 @@ path?: (string | null)
 file?: boolean
 }
 /**
- * An agent an app needs (current or source version, H.2), the one given for it, and the
- * person's agents that fit it (D.18: its form takes what the app sends, its result gives what
- * the app reads; it works in the folder given for `worksIn`).
- */
-
-export interface AppAgentNeed {
-name: string
-description?: (string | null)
-worksIn?: (string | null)
-definition?: (AgentDefinition | null)
-origin: AgentOrigin
-agentId?: (string | null)
-problem?: (string | null)
-fits?: string[]
-}
-/**
- * What an agent set up from it starts with (D.18): everything but what it runs as and where
- * it works, its defaults; `skills` come with it, installed in the library when it is set up.
- * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
- * and those Handler ships for its needs (D.18).
+ * An automation the app suggests (`[[automations]]`, I.1): installed with the app, made and
+ * turned on at Install unless the person switches it off there (`optional`: off unless they
+ * switch it on; the CLI asks for each); later made from the app's page, off; its results open
+ * the app.
  */
 
 export interface AppManifestSuggestedAutomation {
 description: string
 when: Schedule
 run: AppManifestSuggestedRun
+optional?: boolean
 }
 /**
- * A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.
+ * A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.
  */
 
 export interface Schedule {
@@ -642,12 +723,14 @@ at?: (string | null)
 days?: (("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[] | null)
 }
 /**
- * What a suggested automation runs: the agent given for one of the app's needs.
+ * What a suggested automation runs: one of the app's jobs (`job`, with its `input`), or one
+ * of its routes (`call`, as a person's automation calls it: `run = { app, call }`, I.3).
  */
 
 export interface AppManifestSuggestedRun {
-agent: string
+job?: (string | null)
 input?: AutomationAgentInput
+call?: (string | null)
 }
 /**
  * What the agent's run is started with (D.18 `SessionInput`).
@@ -661,6 +744,71 @@ fields?: {
 /**
  * One of an app's actions (H.12), as its page and Ask's router see it.
  */
+
+export interface AppNudge {
+name: string
+description: string
+action?: (string | null)
+open?: (string | null)
+remind?: (AppManifestNudgeRemind | null)
+ifIgnored?: (string | null)
+setting?: ("default" | "once" | "silent")
+when?: (Schedule | null)
+ownWhen?: (Schedule | null)
+nextAt?: (string | null)
+prepared?: boolean
+off?: boolean
+}
+/**
+ * How often an open nudge alerts again, by default (the person tones it per nudge, H.17):
+ * every `every`, `times` times after its first alert.
+ */
+
+export interface AppManifestNudgeRemind {
+every: string
+times?: number
+}
+/**
+ * Who runs an app's jobs (H.2): a program (a harness) on an account or a provider, and a
+ * model; no program: the model alone, on a provider (D.18), for a job reaching no folder, tool
+ * or host. One per app, chosen by the person, and maybe one of a job's own.
+ */
+
+export interface WhoWorks {
+program?: (string | null)
+account?: (string | null)
+provider?: (string | null)
+model?: (string | null)
+}
+/**
+ * One of an app's jobs (H.1), as its page shows it: what it does and reaches, who runs it.
+ */
+
+export interface AppJob {
+name: string
+description: string
+canDo: AppJobCanDo
+whoWorks?: (WhoWorks | null)
+own?: boolean
+problem?: (string | null)
+}
+/**
+ * What a job reaches (H.1), its declaration's: the folders given to the app's files needs it
+ * reads or writes, those it works in, its schemas, its hosts.
+ */
+
+export interface AppJobCanDo {
+files?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
+ */
+[k: string]: "read" | "write"
+}
+worksIn?: string[]
+schemas?: string[]
+egress?: string[]
+}
 
 export interface ApprovePlanRequest {
 agentId?: (string | null)
@@ -683,6 +831,41 @@ export interface AreaRequest {
 name: string
 color: ("blue" | "violet" | "cyan" | "pink" | "slate")
 }
+
+export interface AskHistorySettings {
+keep: boolean
+}
+
+export interface AskHistory {
+keep: boolean
+asks: AskRecord[]
+}
+/**
+ * One ask Handler received, kept in Ask's history (D.24): what was said, where it went,
+ * how it ended.
+ */
+
+export interface AskRecord {
+id: string
+at: string
+via: ("web" | "phone" | "cli" | "key")
+spoken: boolean
+turns: AskTurn[]
+outcome: ("done" | "attention" | "failed" | "running" | "question" | "none")
+summary: string
+answer?: (AssistantAnswer | null)
+}
+/**
+ * One turn of an exchange with Ask: the person's words, or what Handler answered.
+ */
+
+export interface AskTurn {
+who: ("you" | "handler")
+text: string
+}
+/**
+ * What Ask did with what was said (D.24).
+ */
 
 export interface AssistantAnswer {
 kind: ("pick" | "needs" | "none")
@@ -715,15 +898,12 @@ export interface AssistantRequest {
  */
 turns: [AskTurn]|[AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]|[AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn, AskTurn]
 timezone?: (string | null)
+via?: ("web" | "phone" | "cli" | "key")
+spoken?: boolean
 }
 /**
  * One turn of an exchange with Ask: the person's words, or what Handler answered.
  */
-
-export interface AskTurn {
-who: ("you" | "handler")
-text: string
-}
 
 export interface AutomationCheck {
 problems?: string[]
@@ -745,14 +925,14 @@ apiVersion: "handler.automation/v1"
 description?: (string | null)
 when: ("session.stopped" | Schedule)
 only?: (AutomationOnly | null)
-run: (string | AutomationAgentRun | AutomationAppCall)
+run: (string | AutomationAgentRun | AutomationJobRun | AutomationAppCall)
 timeoutSec?: (number | null)
 services?: (AutomationServices | null)
 append?: AutomationAppend[]
 app?: (string | null)
 }
 /**
- * A `when` that is a time (I.2): every N minutes or hours, or at a local time of day.
+ * A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.
  */
 
 export interface AutomationOnly {
@@ -770,6 +950,24 @@ input?: AutomationAgentInput
 }
 /**
  * What the agent's run is started with (D.18 `SessionInput`).
+ */
+
+export interface AutomationJobRun {
+app: string
+job: string
+input?: AutomationAgentInput1
+}
+/**
+ * What the agent's run is started with (D.18 `SessionInput`).
+ */
+
+export interface AutomationAgentInput1 {
+fields?: {
+[k: string]: unknown
+}
+}
+/**
+ * `run = { app, call }`: a call to an app's route, as the owner (I.3, H.9).
  */
 
 export interface AutomationAppCall {
@@ -863,6 +1061,13 @@ onlyProjects?: string[]
  * automation.toml (I.1).
  */
 
+export interface BindingCheck {
+ok: boolean
+at: string
+output?: string
+error?: (string | null)
+}
+
 export interface BindingInfo {
 name: string
 addon?: (string | null)
@@ -874,7 +1079,12 @@ secrets?: string[]
 handWritten?: string[]
 error?: (string | null)
 usedBy?: string[]
+checked?: (BindingCheck | null)
 }
+/**
+ * A connection's check (G.2, D.15): its tool's `connectionCheck`, run as an agent of it gets
+ * the tool. Kept while handlerd runs, forgotten when the connection is saved again.
+ */
 
 export interface BindingRequest {
 name: string
@@ -925,6 +1135,7 @@ target: string
 about: string
 general?: boolean
 bin?: (string | null)
+kind?: ("folder" | "images")
 declaredBy: string[]
 }
 /**
@@ -965,7 +1176,9 @@ caches: CacheDeclaration[]
  * what it holds, in people's words (shown first): a short name, then after ": " more if
  * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
  * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
- * PATH after the image's (`bin` for `~/.cargo/bin`).
+ * PATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write
+ * (most), or a container engine's images (`images`), which a runtime may give as a store of
+ * the sandbox's own and the images' downloads shared (contract A.9).
  */
 
 export interface CheckUpdateRequest {
@@ -1125,17 +1338,22 @@ fits?: string[]
 /**
  * What an agent set up from it starts with (D.18): everything but what it runs as and where
  * it works, its defaults; `skills` come with it, installed in the library when it is set up.
- * An agents file's agents are definitions (D.23), and so are an app's (H.2, `needs.agents`)
- * and those Handler ships for its needs (D.18).
+ * An agents file's agents are definitions (D.23), and so are those Handler ships for its needs
+ * (D.18).
  */
+
+export interface HarnessImage {
+name: string
+image: string
+imagePresent: boolean
+version?: (string | null)
+builtAt?: (string | null)
+}
 
 export interface HarnessInfo {
 name: string
 product: string
 image: string
-imagePresent: boolean
-version?: (string | null)
-builtAt?: (string | null)
 providerProtocols?: ("anthropic" | "openai-chat" | "responses" | "transcriptions")[]
 login?: (LoginRecipe | null)
 loginFile?: (string | null)
@@ -1178,8 +1396,8 @@ env?: {
 }
 hosts?: string[]
 help?: (string | null)
-plans?: string[]
-planEnv?: (string | null)
+subscriptions?: string[]
+subscriptionEnv?: (string | null)
 }
 
 export interface Health {
@@ -1243,7 +1461,7 @@ again?: boolean
 
 export interface InboxMessage {
 id: string
-source: ("app" | "automation" | "plan" | "session")
+source: ("app" | "automation" | "plan" | "session" | "notes" | "ask")
 name: string
 agent?: (string | null)
 agentId?: (string | null)
@@ -1263,11 +1481,42 @@ sessionId?: (string | null)
 app?: (string | null)
 at: string
 read?: boolean
+kind?: ("message" | "nudge")
+nudge?: (InboxNudge | null)
 }
 /**
  * A host the network filter refused to a run, or to a session while nobody could answer, and
  * the agent's lists named in neither (F.9, D.27, I.3): how many times; once you answered, your
  * answer (as the agent's lists say now).
+ */
+
+export interface InboxNudge {
+name: string
+key?: (string | null)
+state?: ("open" | "done" | "dismissed" | "expired")
+action?: (string | null)
+open?: (string | null)
+form?: ({
+[k: string]: unknown
+} | null)
+fields?: ({
+[k: string]: unknown
+} | null)
+until?: (string | null)
+remind?: (AppManifestNudgeRemind | null)
+setting?: ("default" | "once" | "silent")
+when?: (Schedule | null)
+ownWhen?: (Schedule | null)
+off?: boolean
+ifIgnored?: (string | null)
+alerts?: number
+nextAlertAt?: (string | null)
+runId?: (string | null)
+endedAt?: (string | null)
+}
+/**
+ * How often an open nudge alerts again, by default (the person tones it per nudge, H.17):
+ * every `every`, `times` times after its first alert.
  */
 
 export interface KeepAttemptRequest {
@@ -1314,6 +1563,108 @@ image: string
 imagePresent: boolean
 builtAt?: (string | null)
 }
+
+export interface NotesCommitDiff {
+commit: NotesCommit
+files: NotesFileDiff[]
+}
+/**
+ * One state of a read-write notes folder kept by Handler (D.5): `first`, the history's
+ * start (its files not listed); `changes`, what changed in a lapse (~5 min), with the agents
+ * that could write then; `while-off`, what changed while handlerd was not running; `undo`,
+ * a change put back.
+ */
+
+export interface NotesCommit {
+id: string
+at: string
+kind: ("first" | "changes" | "while-off" | "undo")
+couldWrite?: NotesWriter[]
+undoes?: (string | null)
+files: NotesFileChange[]
+fileCount: number
+}
+/**
+ * An agent, or an app, that could write the folder and ran in a commit's lapse (its name
+ * then): `agentId` for an agent, `app` for an app.
+ */
+
+export interface NotesWriter {
+agentId?: (string | null)
+app?: (string | null)
+name: string
+}
+
+export interface NotesFileChange {
+path: string
+change: ("added" | "changed" | "deleted")
+link?: boolean
+added?: (number | null)
+removed?: (number | null)
+under?: (string | null)
+}
+
+export interface NotesFileDiff {
+path: string
+change: ("added" | "changed" | "deleted")
+link?: boolean
+added?: (number | null)
+removed?: (number | null)
+under?: (string | null)
+linkTarget?: (string | null)
+diff?: (string | null)
+}
+
+export interface NotesHistory {
+folder: string
+commits: NotesCommit[]
+}
+/**
+ * One state of a read-write notes folder kept by Handler (D.5): `first`, the history's
+ * start (its files not listed); `changes`, what changed in a lapse (~5 min), with the agents
+ * that could write then; `while-off`, what changed while handlerd was not running; `undo`,
+ * a change put back.
+ */
+
+export interface NotesUndoRequest {
+folder: string
+commit: string
+}
+
+export interface NotesUndo {
+commit: (NotesCommit | null)
+skipped?: string[]
+}
+/**
+ * One state of a read-write notes folder kept by Handler (D.5): `first`, the history's
+ * start (its files not listed); `changes`, what changed in a lapse (~5 min), with the agents
+ * that could write then; `while-off`, what changed while handlerd was not running; `undo`,
+ * a change put back.
+ */
+
+export interface NudgeFillRequest {
+said: string
+timezone?: (string | null)
+}
+
+export interface NudgeFill {
+said: string
+fields?: ({
+[k: string]: unknown
+} | null)
+question?: (string | null)
+}
+
+export interface NudgeSettingRequest {
+setting: ("default" | "once" | "silent")
+}
+
+export interface NudgeWhenRequest {
+when: (Schedule | null)
+}
+/**
+ * A `when` that is a time (I.2): every N minutes, hours or days, or at a local time of day.
+ */
 
 export interface PairDeviceRequest {
 name: string
@@ -1520,6 +1871,9 @@ urls: string[]
 models?: ProviderModel[]
 error?: (string | null)
 hint?: (string | null)
+redirects?: {
+[k: string]: string
+}
 }
 
 export interface ProviderRequest {
@@ -1603,6 +1957,7 @@ attached?: string[]
 export interface RemoteStatus {
 gatewayUrl?: (string | null)
 hostId?: (string | null)
+computerName: string
 light: ("off" | "idle" | "ok" | "unreachable" | "unauthorized")
 detail?: (string | null)
 since?: (string | null)
@@ -1662,6 +2017,20 @@ check?: (RuntimeCheck | null)
 export interface SavePlanDraftRequest {
 text: string
 digest: string
+}
+
+export interface SchemaInfo {
+id: string
+title?: (string | null)
+description?: (string | null)
+extends?: (string | null)
+error?: (string | null)
+content?: (string | null)
+}
+
+export interface SchemaRequest {
+content: string
+replace?: boolean
 }
 
 export interface SecretInfo {
@@ -1744,7 +2113,7 @@ browsable: boolean
 
 export interface Session {
 id: string
-agentId: string
+agentId?: (string | null)
 projectId?: (string | null)
 harness: (string | null)
 account?: (string | null)
@@ -1765,6 +2134,7 @@ request?: (string | null)
 harnessVersion?: (string | null)
 origin?: ("ui" | "cli" | "editor" | "phone" | "automation" | "app" | "check" | "ask" | "plan")
 app?: (string | null)
+job?: (string | null)
 waitingFor?: (string | null)
 lastStopReason?: (string | null)
 answer?: (string | null)
@@ -1820,10 +2190,6 @@ projectId: string
 folder: string
 }
 
-export interface SetAppAgentRequest {
-agentId: string
-}
-
 export interface SetAppFileRequest {
 path: string
 create?: boolean
@@ -1838,6 +2204,10 @@ persons: []|[string]|[string, string]|[string, string, string]|[string, string, 
 
 export interface SetAppSecretRequest {
 value: string
+}
+
+export interface SetComputerNameRequest {
+computerName: string
 }
 
 export interface SetHandlerNeedAgentRequest {
@@ -1945,6 +2315,7 @@ items?: SourceItem[]
 export interface SourceItem {
 kind: ("app" | "agents" | "addon" | "system-package")
 name: string
+title?: (string | null)
 description?: (string | null)
 version?: (string | null)
 installed?: boolean
@@ -1965,8 +2336,10 @@ weakens?: boolean
 export interface AppManifest {
 apiVersion: "handler.app/v1"
 name: string
+title?: (string | null)
 version: string
 description?: (string | null)
+changes?: (string | null)
 server?: AppManifestServer
 ui?: AppManifestUi
 needs?: AppManifestNeeds
@@ -1984,7 +2357,17 @@ automations?: []|[AppManifestSuggestedAutomation]|[AppManifestSuggestedAutomatio
 actions?: {
 [k: string]: AppManifestAction
 }
+jobs?: {
+[k: string]: AppManifestJob
+}
+nudges?: {
+[k: string]: AppManifestNudge
+}
 resources?: (Resources | null)
+/**
+ * @maxItems 10
+ */
+schemas?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string, string]
 }
 
 export interface AppManifestServer {
@@ -2005,11 +2388,68 @@ description: string
  */
 examples?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]
 route?: (string | null)
-agent?: (string | null)
+job?: (string | null)
 fields?: ({
 [k: string]: unknown
 } | null)
 }
+/**
+ * A job (H.1): work of the app's that needs a model, run by the Who works the person chose
+ * for the app. Its instructions are `jobs/<name>.md` of the app's folder; what it reaches (its
+ * folders and their access, its schemas, its hosts) is declared here, said before a deploy that
+ * adds to it.
+ * 
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
+ */
+
+export interface AppManifestJob {
+description: string
+files?: {
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
+ */
+[k: string]: "read" | "write"
+}
+worksIn?: string[]
+/**
+ * @maxItems 10
+ */
+schemas?: []|[string]|[string, string]|[string, string, string]|[string, string, string, string]|[string, string, string, string, string]|[string, string, string, string, string, string]|[string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string]|[string, string, string, string, string, string, string, string, string, string]
+egress?: string[]
+fields?: ({
+[k: string]: unknown
+} | null)
+result: {
+[k: string]: unknown
+}
+timeout?: (string | null)
+then?: (string | null)
+}
+/**
+ * A nudge (H.17): something the app asks a person to do, under a name that stays the same
+ * from one to the next (`daily-log`). A click opens one of its actions' form (`action`) or a
+ * page of its UI (`open`): the manifest's, never the call's.
+ * 
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,29}$".
+ */
+
+export interface AppManifestNudge {
+description: string
+action?: (string | null)
+open?: (string | null)
+remind?: (AppManifestNudgeRemind | null)
+ifIgnored?: (string | null)
+when?: (Schedule | null)
+prepare?: (string | null)
+until?: ("next" | null)
+}
+/**
+ * How often an open nudge alerts again, by default (the person tones it per nudge, H.17):
+ * every `every`, `times` times after its first alert.
+ */
 
 export interface Resources {
 memory?: (string | null)
@@ -2025,6 +2465,7 @@ export interface SpeechRequest {
 audio: string
 format: ("webm" | "ogg" | "mp4" | "wav" | "mp3")
 language?: (string | null)
+via?: ("web" | "phone" | "cli" | "key")
 }
 
 export interface StartImprovementRequest {
@@ -2051,7 +2492,9 @@ error?: (string | null)
  * what it holds, in people's words (shown first): a short name, then after ": " more if
  * needed ("Tool caches: uv and pip packages…"); whether it is a general folder any tool
  * writes to (`~/.cache`) rather than one tool's (`~/.cargo`); its folder of commands, put on
- * PATH after the image's (`bin` for `~/.cargo/bin`).
+ * PATH after the image's (`bin` for `~/.cargo/bin`); its kind: a folder tools read and write
+ * (most), or a container engine's images (`images`), which a runtime may give as a store of
+ * the sandbox's own and the images' downloads shared (contract A.9).
  */
 
 export interface SystemPackageDaemon {
@@ -2145,7 +2588,7 @@ usedBy?: UseRef[]
  */
 
 export interface UseRef {
-kind: ("agent" | "skill" | "knowledge" | "addon" | "account" | "provider" | "automation" | "app" | "project" | "handler")
+kind: ("agent" | "skill" | "knowledge" | "schema" | "addon" | "account" | "provider" | "automation" | "app" | "project" | "handler")
 id: string
 label: string
 how: string

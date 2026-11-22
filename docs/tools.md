@@ -12,8 +12,8 @@ Three places a tool comes from:
 
 | Source | How |
 |---|---|
-| a [source](sources.md): Handler's offers `github`, `playwright`, `lightpanda` and toolchains (`go`, `java`, `rust`, `bun`); one you added, its own | Library → Tools → Get more → github → Install, or `handler tool add github` (`--from SOURCE` for one you added) |
-| a folder on this machine | Library → Tools → Get more → From a folder or an archive, or `handler tool add ./my-tool` |
+| a [source](sources.md): Handler's offers `github`, `playwright`, `lightpanda` and toolchains (`go`, `java`, `rust`, `bun`); one you added, its own | Library → Tools → Community → github → Install, or `handler tool add github` (`--from SOURCE` for one you added) |
+| a folder on this machine | Library → Tools → Community → From a folder or an archive, or `handler tool add ./my-tool` |
 | an `https://…tar.gz` archive (a forge's archive of a tool's repository works) | the URL, or `handler tool add https://…/archive/main.tar.gz` |
 
 Before anything is installed you see what it brings: the hosts its agents may reach, the secrets
@@ -49,7 +49,7 @@ build already running), and starts by itself once it is built, with the request 
   turn them off in Settings → Expert → Sandboxes.
 - `handler tool list` lists them all with where each comes from; `handler source list` what the sources offer.
 
-Built-in tools (`app-builder`) come with Handler and need no install. A tool of yours with a built-in
+Built-in tools (`app-builder`, `knowledge`) come with Handler and need no install. A tool of yours with a built-in
 one's name replaces it.
 
 ## Writing one
@@ -61,7 +61,8 @@ my-tool/
 ├── tool.toml        the manifest (handler.tool/v1, below)
 ├── Containerfile     only if it brings a program (`image` in the manifest)
 ├── skills/<skill>/   skills, each with a SKILL.md, given to the agents that have the tool
-└── PROVISIONING.md   for people: how to create the least-privilege account a connection needs
+└── CONNECT.md        for people: how to create the least-privilege account a connection
+                      needs, shown in its Connect form
 ```
 
 `tool.toml`:
@@ -73,6 +74,7 @@ description = "what agents can do with it"
 image = "localhost/handler-ai-tool-my-tool"  # only with a program: built from the Containerfile
 commands = ["mytool"]                   # exactly what the image's bin/ holds
 check = ["mytool", "--version"]         # run when the image is built: must exit 0
+connectionCheck = ["mytool", "whoami"]  # checks a connection works (needs settings or secrets)
 needs = ["cc"]                          # commands it runs from the toolbox (a system package
                                         # gives them, added when the tool is installed)
 egress = ["api.example.com:443"]        # hosts its agents may reach
@@ -96,6 +98,11 @@ required = true
 description = "an API token with read access only"
 hosts = ["api.example.com:443"]         # where it goes: some of egress (default: all of them)
 ```
+
+`connectionCheck` runs each time a connection is saved, and on its **Check** (`handler connection
+check NAME`): as an agent of it would, with its settings, a stand-in for each secret, only the
+tool's hosts, no project folder. It works when it exits 0; otherwise the connection's row says
+it fails, with what it printed. The connection stays saved either way.
 
 Agents get a stand-in, and Handler puts the value in their requests to its `hosts`; this is not
 yet checked with each tool's program, so count a tool's secrets as readable by the agent

@@ -15,7 +15,7 @@ from .test_automations import conversation
     "automation.off-until-you-turn-it-on",
     "automation.says-what-it-does",
     "automation.deleting-it-stops-and-removes-all",
-    "try.now-on-or-off",
+    "automation.try-runs-it-now-even-off",
 )
 def test_the_cli_drives_an_automation(daemon: Daemon, knowledge: Path) -> None:
     assert "env-issues" in handler(daemon, "automation", "examples").stdout
@@ -56,7 +56,11 @@ def test_the_cli_drives_an_automation(daemon: Daemon, knowledge: Path) -> None:
     assert "by-cli" not in handler(daemon, "automation", "list").stdout
 
 
-@pytest.mark.rule("schedule.the-latest-slot-once", "try.now-on-or-off", "inbox.keeps-the-last-200")
+@pytest.mark.rule(
+    "schedule.the-latest-slot-once",
+    "automation.try-runs-it-now-even-off",
+    "inbox.keeps-the-last-200",
+)
 def test_the_cli_shows_a_schedule_and_the_inbox(daemon: Daemon) -> None:
     folder = daemon.config_dir / "automations" / "cli-hourly"
     folder.mkdir(parents=True)

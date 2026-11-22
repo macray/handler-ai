@@ -66,7 +66,9 @@ def fetch(address: str) -> str:
 
 
 @pytest.mark.rule(
-    "network.filtered-fails-closed", "network.enforcement-decides", "network.decisions-are-seen"
+    "network.filtered-fails-closed",
+    "network.log-only-lets-through-what-enforce-denies",
+    "network.decisions-are-seen",
 )
 def test_filtered_enforce(runtime: Runtime, scope: Path, local_servers: tuple[str, str]) -> None:
     listed, unlisted = local_servers
@@ -105,7 +107,7 @@ def test_a_filter_that_stops_ends_its_sandbox(runtime: Runtime, scope: Path) -> 
     assert runtime.leftovers(doc["name"]) == []
 
 
-@pytest.mark.rule("network.enforcement-decides")
+@pytest.mark.rule("network.log-only-lets-through-what-enforce-denies")
 def test_filtered_log_only_reports_unlisted(
     runtime: Runtime, scope: Path, local_servers: tuple[str, str]
 ) -> None:
@@ -133,6 +135,73 @@ def test_a_plain_http_answer_passes_as_it_comes(runtime: Runtime, scope: Path) -
     status, first, total = r.stdout.decode().split()
     assert status == "200", r.stderr.decode()
     assert float(first) < 1.5 and float(total) >= 2.5, r.stdout.decode()
+
+
+def test_a_plain_http_upload_passes_as_it_comes(runtime: Runtime, scope: Path) -> None:
+    """Without secrets, the filter passes a request's body on as it arrives, never holding it
+    whole: a large upload would take its memory. The server gets the first half of a 64 MiB
+    upload while the sandbox still waits (3 s) to send the second; a next request is answered."""
+    with runtime.local_server() as server:
+        url = f"http://{server}:8000"
+        half = f"head -c {32 * 2**20} /dev/zero"  # busybox's head: no `32M`
+        upload = f"({half}; sleep 3; {half})"
+        script = (
+            f"{CURL} --retry 5 --retry-connrefused {url}/ >/dev/null; "
+            f"{upload} | curl -s -m 30 -T - {url}/upload; echo; {CURL} {url}/"
+        )
+        doc = spec(scope, sh(script), network=local_filter(server))
+        r = run(runtime.binary, doc, unchained=True)
+    size, seconds, status = r.stdout.decode().split()
+    assert int(size) == 64 * 2**20 and status == "200", r.stdout.decode() + r.stderr.decode()
+    assert float(seconds) >= 2.5, r.stdout.decode()  # held whole, it would arrive at once
+
+
+# in the filter's image, its program mitmdump, which runs this script as it loads it: each
+# request half-closed (pause s after it is sent), its answer's status, or nothing; read until the
+# filter closes the connection (within the socket's 10 s)
+HALF_CLOSE = """\
+import os, socket, time, urllib.parse, urllib.request
+url = "{url}"
+for _ in range(20):  # the server just started: wait until it answers
+    try:
+        urllib.request.urlopen(url, timeout=5)
+        break
+    except OSError:
+        time.sleep(0.5)
+proxy = urllib.parse.urlsplit(os.environ["http_proxy"])
+for pause, connection in ((0, "close"), (0.5, "close"), (0, "keep-alive")):
+    s = socket.create_connection((proxy.hostname, proxy.port), timeout=10)
+    head = f"GET {url} HTTP/1.1\\r\\nHost: x\\r\\nConnection: {connection}\\r\\n\\r\\n"
+    s.sendall(head.encode())
+    time.sleep(pause)
+    s.shutdown(socket.SHUT_WR)
+    got = b""
+    try:
+        while chunk := s.recv(65536):
+            got += chunk
+    except TimeoutError:
+        got += b" timeout"
+    status = got.split(b"\\r\\n")[0].split(b" ")[1:2] or [b"nothing"]
+    timeout = "timeout" if got.endswith(b" timeout") else ""
+    print(pause, connection, status[0].decode(), timeout, flush=True)
+os._exit(0)
+"""
+
+
+@pytest.mark.rule("network.an-entry-is-a-host-and-its-port")
+def test_a_request_half_closed_at_once_gets_its_answer(runtime: Runtime, scope: Path) -> None:
+    """A client that half-closes its connection as soon as its request is sent (`nc -N`, some
+    scripts) gets a listed host's answer, as one that waits before closing does; then the
+    filter closes the connection, keep-alive asked or not (no next request can come)."""
+    probe = scope / "probe.py"
+    with runtime.local_server() as server:
+        probe.write_text(HALF_CLOSE.replace("{url}", f"http://{server}:8000/x"))
+        net = local_filter(server)
+        doc = spec(scope, ["-q", "-s", str(probe)], network=net, image=runtime.server_image)
+        r = run(runtime.binary, doc, unchained=True)
+    said = [line.split() for line in r.stdout.decode().splitlines()]
+    expected = [["0", "close", "200"], ["0.5", "close", "200"], ["0", "keep-alive", "200"]]
+    assert said == expected, r.stdout.decode() + r.stderr.decode()
 
 
 @pytest.mark.rule("network.an-entry-is-a-host-and-its-port", "network.every-request-is-judged")

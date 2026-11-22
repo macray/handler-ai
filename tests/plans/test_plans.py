@@ -61,7 +61,7 @@ def wait_plan(daemon: Daemon, plan_id: str, state: str) -> dict[str, Any]:
             time.sleep(0.2)
 
 
-@pytest.mark.rule("plan.one-step-after-another", "plan.a-step-knows-only-its-notes")
+@pytest.mark.rule("plan.one-step-after-another", "plan.a-step-knows-only-the-earlier-steps-notes")
 def test_a_two_step_plan_runs_both(daemon: Daemon) -> None:
     folder, agent = project(daemon)
     found = read(daemon, agent)
@@ -92,7 +92,7 @@ def test_a_two_step_plan_runs_both(daemon: Daemon) -> None:
     assert "### Step 1: The first\n\nnotes of step 1" in second
 
 
-@pytest.mark.rule("plan.its-agent-its-settings", "plan.started-by-you-only")
+@pytest.mark.rule("plan.each-step-a-session-of-its-runner-as-set-now", "plan.started-by-you-only")
 def test_the_review_chooses_its_runner_and_switches_it_to_bypass(daemon: Daemon) -> None:
     folder, dev = project(daemon, PLAN.format(first="").replace("Agent: dev\n", ""))
     body = {"model": {"account": "fake"}, "projectId": dev["projectId"], "name": "helper"}
@@ -216,7 +216,9 @@ def plan_messages(daemon: Daemon, plan_id: str) -> list[dict[str, Any]]:
 
 
 @pytest.mark.rule(
-    "plan.a-refused-host-is-reported", "plan.stops-at-the-first-failure", "inbox.what-it-is-told"
+    "plan.a-refused-host-is-reported",
+    "plan.stops-at-the-first-failure",
+    "inbox.told-by-handlerd-alone",
 )
 def test_a_step_failed_on_a_refused_host_names_it_and_runs_again_once_allowed(
     daemon: Daemon,
@@ -250,7 +252,9 @@ def test_a_step_failed_on_a_refused_host_names_it_and_runs_again_once_allowed(
 
 
 @pytest.mark.rule(
-    "plan.a-refused-host-is-reported", "plan.a-step-knows-only-its-notes", "inbox.what-it-is-told"
+    "plan.a-refused-host-is-reported",
+    "plan.a-step-knows-only-the-earlier-steps-notes",
+    "inbox.told-by-handlerd-alone",
 )
 def test_a_step_completed_with_hosts_refused_says_so_in_its_notes_and_the_inbox(
     daemon: Daemon,

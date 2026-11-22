@@ -75,6 +75,18 @@ EgressEntry = Annotated[str, AfterValidator(_egress_entry)]
 subdomains only, '192.168.1.20:11434' an IPv4 address (e.g. a model server on the LAN). No default
 port: https is 443, http 80, and any other port is written out."""
 
+Duration = Annotated[str, Field(pattern=r"^[1-9]\d{0,3}[mhd]$")]
+"""A duration in a hand-written document (a schedule's `every` I.2, a nudge's reminders H.17):
+N minutes, hours or days, "30m", "2h", "1d"."""
+
+_MINUTES = {"m": 1, "h": 60, "d": 24 * 60}
+
+
+def duration_minutes(duration: str) -> int:
+    """A `Duration` in minutes: "2h" is 120."""
+    return int(duration[:-1]) * _MINUTES[duration[-1]]
+
+
 EnvName = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 EnvMap = dict[EnvName, str]
 
@@ -227,3 +239,7 @@ class Resources(StrictDocument):
 def is_within(path: str, root: str) -> bool:
     """True when `path` equals `root` or is below it (both already normalized)."""
     return path == root or path.startswith("/" if root == "/" else f"{root}/")
+
+
+# a schema's `$id` (structured knowledge, D.29): `<name>@<version>`, as the SMD format names one
+SchemaId = Annotated[str, Field(max_length=128, pattern=r"^[a-z0-9][a-z0-9-]*@[1-9][0-9]*$")]

@@ -21,7 +21,7 @@ from .client import Daemon
 from .on_terminal import on_terminal
 
 _TERM = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
-START_TIMEOUT = 600.0  # seconds: handlerd's own limit (a first start may build the proxy's image)
+START_TIMEOUT = 130.0  # seconds: handlerd's own limit (READY_TIMEOUT), and its answer
 
 
 def _start(args: list[str], model: dict[str, Any] | None, folder: str) -> TerminalStart:

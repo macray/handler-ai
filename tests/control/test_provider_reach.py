@@ -27,7 +27,7 @@ def server() -> Iterator[ModelsServer]:
     s.close()
 
 
-@pytest.mark.rule("provider.a-test-asks-from-where-a-sandbox-is")
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
 def test_a_server_that_answers_fills_the_models(daemon: Daemon, server: ModelsServer) -> None:
     """llama-server's two protocols are one server, asked once at this computer's network address
     (never its loopback); its model and the context it was started with (`/props`, not the
@@ -52,7 +52,7 @@ def test_a_server_that_answers_fills_the_models(daemon: Daemon, server: ModelsSe
         c.delete("/v1/providers/llama")
 
 
-@pytest.mark.rule("provider.a-test-asks-from-where-a-sandbox-is")
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
 def test_a_server_on_the_loopback_only_is_not_reached(daemon: Daemon) -> None:
     """llama-server as started by default answers handlerd on 127.0.0.1, but no sandbox: not
     reached, with the error and what to start it with."""
@@ -70,7 +70,45 @@ def test_a_server_on_the_loopback_only_is_not_reached(daemon: Daemon) -> None:
     assert loopback.requests == []
 
 
-@pytest.mark.rule("provider.a-test-asks-from-where-a-sandbox-is")
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
+def test_an_endpoint_that_redirects_to_https_is_not_reached(daemon: Daemon) -> None:
+    """A server answering `http://` with a 308 to `https://`: an agent on Only these sites is
+    allowed its endpoint's host and port, never where it redirects, so the test says so and
+    gives each endpoint's `https://` form to use instead; the redirect is not followed (a key
+    never goes where the server sends it)."""
+    moved = ModelsServer([{"id": "m"}], redirect=True)
+    endpoint = moved.endpoint()
+    try:
+        with daemon.http() as c:
+            reach = c.post(
+                "/v1/providers/test",
+                json={"endpoints": {"openai-chat": endpoint}, "key": KEY},
+            ).json()
+    finally:
+        moved.close()
+    assert not reach["ok"] and reach["models"] == []
+    asked = moved.requests[0]["headers"]["Host"].rsplit(":", 1)[0]
+    assert reach["error"] == (f"{AGENTS_HOST}:{moved.port} redirects to https://{asked}/v1/models")
+    assert reach["redirects"] == {"openai-chat": "https://127.0.0.1/v1"}
+    assert reach["hint"].startswith("Use https://127.0.0.1/v1 as its endpoint")
+    assert len(moved.requests) == 1  # not followed
+
+
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
+def test_https_to_a_plain_http_server_says_to_try_http(
+    daemon: Daemon, server: ModelsServer
+) -> None:
+    """`https://` typed for a server that speaks plain HTTP on that port: something answered,
+    not over TLS, so the test says so and the `http://` address to try, not "nothing answered"."""
+    endpoint = "https://" + server.endpoint().removeprefix("http://")
+    with daemon.http() as c:
+        reach = c.post("/v1/providers/test", json={"endpoints": {"openai-chat": endpoint}}).json()
+    assert not reach["ok"]
+    assert "answered, but not over HTTPS" in reach["error"], reach["error"]
+    assert f"is it http://{AGENTS_HOST}:{server.port}/v1/models?" in reach["error"]
+
+
+@pytest.mark.rule("provider.tested-from-where-agents-reach-it")
 def test_a_saved_provider_is_tested_with_its_key(daemon: Daemon, server: ModelsServer) -> None:
     """Its key goes to its own endpoints' hosts only; an answer that is not a model list is not
     ready; the list shows the last test."""

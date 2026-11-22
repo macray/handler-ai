@@ -14,6 +14,7 @@ def executable(folder: Path, name: str) -> Path:
     return path
 
 
+@pytest.mark.rule("account.a-login-opens-in-your-terminal")
 def test_handler_terminal_wins_then_the_first_known_one(tmp_path: Path) -> None:
     assert terminal.command({"HANDLER_TERMINAL": "foot --app-id handler", "PATH": ""}) == [
         "foot",
@@ -25,6 +26,7 @@ def test_handler_terminal_wins_then_the_first_known_one(tmp_path: Path) -> None:
     assert terminal.command({"PATH": str(tmp_path)}) == [str(kgx), "--"]
 
 
+@pytest.mark.rule("account.a-login-opens-in-your-terminal")
 def test_no_terminal_says_how_to_set_one(tmp_path: Path) -> None:
     with pytest.raises(terminal.TerminalError, match="HANDLER_TERMINAL"):
         terminal.command({"PATH": str(tmp_path)})

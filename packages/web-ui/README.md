@@ -27,7 +27,8 @@ No Node or Bun on the host? `scripts/build-web-ui.sh` builds inside the toolbox 
 | `src/lib/helpers.ts` + `components/HelperCard.svelte`, `HelpersSettings.svelte`, `HelperPage.svelte` | **Handler's helpers** (D.18): by the feature each serves, the set-up card where it bites, Settings → Helpers and a helper's page |
 | `src/lib/sessions.svelte.ts` | **the supervised chat sessions** (sidebar): daemon-held (F), so a reload re-attaches and the turn in progress carries on. Status (needs you / working / replied / idle / open elsewhere / stopped); several tabs at once (F.7: prompts from the others are shown, a permission answered elsewhere is withdrawn); close = stop, resumable from the project's page |
 | `src/lib/agents.ts` | helpers shared by agents of projects and ad-hoc ones: the settings of an ad-hoc agent (saved from the network panel), how sandboxed an agent is, folder names, "2 hours ago" |
-| `src/lib/router.svelte.ts` | hash routes (`#/sessions/<session id>` survives a reload) |
+| `src/lib/router.svelte.ts` | hash routes (`#/sessions/<session id>`: Running with that session alone; survives a reload) |
+| `src/lib/running.svelte.ts` | Running: what it lists, the grid's shapes, what this browser keeps of it (hidden, order, layout, full screen) |
 | `src/views/` | Projects (home), Project (start with a request, live / recent sessions, agents), ProjectEdit, AgentEdit, Session (chat + network panel, Close), Settings (model access, helpers, folders, your phone, appearance; Expert: areas, secrets, voice, caches, sandboxes, sources), Knowledge |
 | `src/components/` | Sidebar, PageHeader (the top bar: breadcrumb, actions), SessionStatus, ModelAccessPicker (an account or a provider, the harness, the model), AgentEditor (presets, risks confirmed), FoldersSettings (work folders), HostList (allowed hosts), FolderPicker (with new folder), BindingPicker, KnowledgePicker, SessionControls, NetworkPanel, SandboxesSettings, StatusBadge, PhoneSettings, QrCode, HelperCard, AccountsSettings (create, log in in a terminal window handlerd opens, rename), ProvidersSettings + ProviderForm (from a template) |
 | `src/lib/components/ui/` | [shadcn-svelte](https://shadcn-svelte.com) components (bits-ui, Tailwind v4), copied in by its CLI (`components.json`): add more with `bunx shadcn-svelte add <name>`, edit freely |
@@ -37,4 +38,4 @@ No Node or Bun on the host? `scripts/build-web-ui.sh` builds inside the toolbox 
 Security layers for agent output: renderer (no raw HTML, no unsafe links/images) → DOMPurify →
 the daemon's Content-Security-Policy. The UI implements no `fs`/`terminal` client capability.
 
-Tests: `tests/` (vitest); real browser: `tests/e2e/test_web_ui.py` (repository root).
+Tests: `tests/` (vitest); real browser: `tests/e2e/web_ui/` (repository root).

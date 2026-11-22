@@ -4,7 +4,8 @@
 
 On start: bring the user's files to the current format (migrations/), create the token file if
 needed, give the user a toolbox folder (the default's copy) if
-they have none, sweep leftovers of crashed sandboxes, serve.
+they have none, start the runtime's engine where it does not start by itself (Apple's container
+service), sweep leftovers of crashed sandboxes, serve.
 """
 
 import logging
@@ -24,11 +25,22 @@ from .settings import Settings
 log = logging.getLogger("handler.daemon")
 
 
-def sweep() -> None:
-    """Best effort: remove containers/networks left by sandboxes whose launcher died."""
+def prepare_runtime() -> None:
+    """Best effort, before serving: the runtime's engine started where it does not start by
+    itself (`start-engine`: Apple's container service, gone after a restart), what it said
+    logged; then what sandboxes whose launcher died left removed (`sweep`)."""
     binary = sandbox_process.binary()
-    if shutil.which(binary) or binary.startswith("/"):
-        subprocess.run([binary, "sweep"], check=False, capture_output=True, timeout=120)
+    if not (shutil.which(binary) or binary.startswith("/")):
+        return
+    started = subprocess.run(
+        [binary, "start-engine"], check=False, capture_output=True, text=True, timeout=180
+    )
+    for line in started.stderr.splitlines():
+        log.info("%s", line)
+    subprocess.run([binary, "sweep"], check=False, capture_output=True, timeout=120)
+
+
+SHUTDOWN_GRACE = 5  # seconds
 
 
 def main() -> int:
@@ -51,16 +63,19 @@ def main() -> int:
     if catalog.seed_toolbox():
         log.info("toolbox:    %s (the default toolbox.toml written)", catalog.toolbox_dir())
     try:
-        sweep()
+        prepare_runtime()
         addon_folders.sweep(settings)  # the addon folders no sandbox mounts any more
     except (OSError, subprocess.SubprocessError) as e:
-        log.warning("sweep failed: %s", e)
+        log.warning("preparing the runtime failed: %s", e)
     uvicorn.run(
         app,
         host=settings.host,
         port=settings.port,
         ws_max_size=DEFAULT_MAX_MESSAGE_BYTES,
         ws_ping_interval=None,  # clients send their own heartbeats ($/ping, P5)
+        # an open page's event stream (D.30) never ends by itself: on stop, wait this long for
+        # requests under way, then close what is still open, instead of waiting for every tab
+        timeout_graceful_shutdown=SHUTDOWN_GRACE,
         log_level="info",
     )
     return 0

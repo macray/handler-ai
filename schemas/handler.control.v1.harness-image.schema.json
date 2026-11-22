@@ -1,0 +1,51 @@
+{
+  "$id": "urn:handler.control/v1/harness-image",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "GET /v1/harness-images (D.2): a harness's image `:latest`, asked of the runtime (D.4).",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "image": {
+      "title": "Image",
+      "type": "string"
+    },
+    "imagePresent": {
+      "title": "Imagepresent",
+      "type": "boolean"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "builtAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Builtat"
+    }
+  },
+  "required": [
+    "name",
+    "image",
+    "imagePresent"
+  ],
+  "title": "HarnessImage",
+  "type": "object"
+}

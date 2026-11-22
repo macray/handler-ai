@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from handler_contracts import (
     DEFAULT_MAX_MESSAGE_BYTES,
+    AddonUse,
     AgentSpec,
     FilteredNetwork,
     HarnessDescriptor,
@@ -39,6 +40,7 @@ from . import (
     config_files,
     folders,
     knowledge,
+    knowledge_schemas,
     providers,
     runtime,
     sandbox_process,
@@ -72,9 +74,9 @@ class ImageMissingError(AgentStartError):
         )
 
 
-NETWORK_FILTER, ADDON = "network-filter", "addon:"  # build targets (D.4)
-# agents with a network allow-list or a secret need it; handlerd builds it as it starts (D.4)
-NETWORK_FILTER_MISSING = str(ImageMissingError(NETWORK_FILTER))
+# build targets (D.4); the network filter: agents with a network allow-list or a secret need it,
+# and handlerd builds it as it starts
+NETWORK_FILTER, ADDON = "network-filter", "addon:"
 
 
 def missing(target: str) -> AgentStartError:
@@ -90,11 +92,23 @@ def _require_images(spec: SandboxSpec, harness: str) -> None:
     its addons' (their folders, each mounted at <ADDONS_ROOT>/<its name>, G.2)."""
     if runtime.missing_proxy(spec):
         raise missing(NETWORK_FILTER)
-    if not runtime.exists(spec.image):
+    if runtime.inspect_now(spec.image) is None:  # not remembered: an image gone, said as missing
         raise missing(harness)
     for addon in spec.addons:
         if not Path(addon.source).is_dir():
             raise ImageMissingError(f"{ADDON}{PurePosixPath(addon.target).name}")
+
+
+@dataclass(frozen=True)
+class JobPlace:
+    """Where an app's job's run works (H.1, H.11), from what the person gave the app: its folder
+    (read-write; None: a folder of its own, its session's) and its other folders, each at its
+    path; `writes`: the real path of each folder it writes, on which its run takes its turn among
+    the runs writing it (app_jobs.place, SessionStore.turns)."""
+
+    work: str | None
+    folders: tuple[HostFolder, ...] = ()
+    writes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -146,6 +160,8 @@ def prepare(
     terminal: TerminalStart | None = None,
     folder: str | None = None,
     subject: HostFolder | None = None,
+    unattended: bool = False,
+    job: JobPlace | None = None,
 ) -> tuple[SandboxSpec, HarnessLaunch, list[str] | None, list[SessionMount]]:
     """Everything up to the SandboxSpec — no side effects except reading files and secrets.
     Also returns the required allow-list entries (see StartedAgent.egress_base): those of `runs`,
@@ -157,6 +173,9 @@ def prepare(
     `folder`: a folderless agent's session's own folder (D.18), where it works.
     `subject`: what a session works on, mounted read-only: a run's (an agent with an interface,
     D.18), a plan builder's project (D.27).
+    `unattended`: a run's sandbox (D.18): its harness's `unattendedEnv` too.
+    `job`: an app's job's run (H.11): `folder` is its folder (the app's, checked by its store,
+    or its session's own), its other folders mounted at their paths.
     """
     if agent.model_alone:  # its sessions talk to handlerd's model agent (sessions.py)
         raise AgentStartError("an agent on the model alone works in sessions only (D.18)")
@@ -170,6 +189,9 @@ def prepare(
         if folder is None:
             raise AgentStartError("a folderless agent works in sessions only (D.18)")
         roots = (str(sessions_root(settings)), str(plan_drafts_root(settings)))
+    if job is not None:  # a folder given to its app, not one of the work folders (H.9)
+        assert folder is not None
+        roots = (folder,)
     try:
         scope = compose.check_scope(folders.roots(settings), agent.scope or folder or "", roots)
         if terminal is not None and terminal.folder is not None:
@@ -216,9 +238,12 @@ def prepare(
             caches=caches.mounts(
                 settings, agent.caches, agent.project_id, [u.addon for u in agent.addon_uses]
             ),
+            unattended=unattended,
         )
         name = f"handler-{agent.id}-{connection_id}"
         known = knowledge.folders(knowledge_root, notes)
+        used = [u.schema_id for u in agent.schemas]
+        schemas = knowledge_schemas.files(settings.schemas_dir, used) if used else None
         spec = compose.sandbox_spec(
             name=name,
             launch=launch,
@@ -238,13 +263,18 @@ def prepare(
             paste=str(paste_folder(settings, name)) if terminal is not None else None,
             injections=delivery.injections,
             daemons=toolbox.daemons(settings),
+            agent_env=agent.env,
+            schemas=schemas,
+            app_folders=list(job.folders) if job is not None else None,
         )
     except (
         compose.ScopeError,
         compose.AddonConflictError,
         compose.DaemonConflictError,
+        compose.AgentEnvConflictError,
         addons.SelectionError,
         knowledge.KnowledgeError,
+        knowledge_schemas.SchemaError,
         secrets.SecretError,
         config_files.ConfigFileError,
         RenderError,
@@ -255,7 +285,15 @@ def prepare(
     base = None
     if isinstance(spec.network, FilteredNetwork):
         base = compose.required_egress(launch, extra.egress)
-    seen = compose.seen(launch=launch, scope=scope, addons=extra, knowledge=known, subject=subject)
+    app_folders = list(job.folders) if job is not None else None
+    seen = compose.seen(
+        launch=launch,
+        scope=scope,
+        addons=extra,
+        knowledge=known,
+        subject=subject,
+        app_folders=app_folders,
+    )
     return spec, launch, base, seen
 
 
@@ -289,13 +327,14 @@ def _deliver(
     return account_token, provider_key
 
 
-def required_hosts(settings: Settings, spec: AgentSpec, agent: AgentRecord) -> list[RequiredHost]:
+def required_hosts(settings: Settings, spec: AgentSpec, uses: list[AddonUse]) -> list[RequiredHost]:
     """What a filtered agent reaches whatever its own entries say, and what requires it (A.3):
-    its harness's hosts (account login, HTTP MCP servers, provider endpoint) and its addons'. Built
-    from the same functions as its sandboxes' allow-list (render's egress, the addons' G4), without
-    reading any secret. AgentStartError when the agent cannot start."""
+    its harness's hosts (account login, HTTP MCP servers, provider endpoint) and its addons'
+    (`uses`: its own, its project's, the knowledge tool). Built from the same functions as its
+    sandboxes' allow-list (render's egress, the addons' G4), without reading any secret.
+    AgentStartError when the agent cannot start."""
     try:
-        selected = addons.check(settings.bindings_dir, agent.addon_uses)
+        selected = addons.check(settings.bindings_dir, uses)
         descriptor = catalog.get(spec.harness).descriptor
         hosts = harness_hosts(descriptor, spec, addons.mcp_servers(selected))
     except (addons.SelectionError, catalog.UnknownHarnessError, RenderError) as e:
@@ -409,6 +448,8 @@ async def start(
     *,
     folder: str | None = None,
     subject: HostFolder | None = None,
+    unattended: bool = False,
+    job: JobPlace | None = None,
 ) -> StartedAgent:
     connection_id = connection_id or uuid.uuid4().hex[:8]
     spec, launch, base, seen = prepare(
@@ -419,6 +460,8 @@ async def start(
         session_state=session_state,
         folder=folder,
         subject=subject,
+        unattended=unattended,
+        job=job,
     )
     assert runs.harness is not None  # an agent program's (prepare)
     await asyncio.to_thread(_require_images, spec, runs.harness)

@@ -1,12 +1,13 @@
 <script lang="ts">
   // A project's page: its header (Projects ›, its name, its folder and branch, its pin and ⋯:
-  // Export agents, Get agents…: Library → Agents → Get more for this project), then four tabs. Sessions: its agents as
+  // Export agents, Get agents…: Library → Agents → Community for this project), then four tabs. Sessions: its agents as
   // one row of tabs (AgentTabs: the rest under "+N more", + to add one, Edit in the chosen one),
   // the chosen one's box (who works and what it gets and may do, as chips in its footer:
   // AgentWorkspace), what waits for you (answered in place
   // when this tab is attached to it), and what the agent did; with no agent yet, NoAgentYet (a
   // suggestion added in one click, Set up an agent, Get agents…). Plans, Automations: this project's
   // (ProjectPlans, ProjectAutomations). Settings: the project's own (ProjectEditor), Delete last.
+  import { ask } from "../lib/ask.svelte";
   import AppWindow from "@lucide/svelte/icons/app-window";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import Download from "@lucide/svelte/icons/download";
@@ -29,10 +30,11 @@
   import SessionStatus from "../components/SessionStatus.svelte";
   import When from "../components/When.svelte";
   import { inFolder } from "../lib/agents";
+  import { onChange } from "../lib/events.svelte";
   import { api } from "../lib/api";
   import { bell, question } from "../lib/bell.svelte";
   import type { Agent, App, AutomationView, Project, Session } from "../lib/contracts.gen";
-  import { agentLabel, projects } from "../lib/projects.svelte";
+  import { agentLabel, projects, shortFolder } from "../lib/projects.svelte";
   import { href, navigate, type ProjectTab } from "../lib/router.svelte";
   import { sessions, type SessionStatus as Status } from "../lib/sessions.svelte";
 
@@ -78,8 +80,7 @@
   $effect(() => {
     void sessions.stopping.size; // a session closed here has stopped: load again
     void load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+    return onChange(["projects", "sessions", "agents", "automations", "apps", "plans", "plan-drafts"], () => void load());
   });
 
   const agent = $derived(
@@ -126,7 +127,7 @@
     if (!project) return;
     const running = project.agents.reduce((n, a) => n + a.connections.length, 0);
     const also = running ? ` Its ${running} running agent(s) are stopped.` : "";
-    if (!confirm(`Delete the project ${project.name} and its agents? The folder stays as it is.${also}`)) return;
+    if (!(await ask({ title: `Delete the project ${project.name} and its agents?`, detail: `The folder stays as it is.${also}`, yes: "Delete", danger: true }))) return;
     try {
       await api.deleteProject(project.id);
       void projects.refresh();
@@ -143,7 +144,7 @@
   {/snippet}
   {#snippet sub()}
     {#if project}
-      <span class="fact truncate" title={project.folder} data-testid="project-folder">{project.folder}</span>
+      <span class="fact truncate" title={project.folder} data-testid="project-folder">{shortFolder(project.folder)}</span>
       {#if project.branch}<span class="inline-flex items-center gap-1 rounded-md border px-1.5 py-px" title="Its git branch" data-testid="project-branch"><GitBranch class="size-3" />{project.branch}</span>{/if}
       {#if project.description}<span class="basis-full text-sm">{project.description}</span>{/if}
     {/if}
@@ -238,7 +239,7 @@
               {@const last = appRuns.filter((r) => r.app === a.name).sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0]}
               <li class="flex items-center gap-2 px-4 py-2.5">
                 <AppWindow class="size-4 text-primary" />
-                <a class="text-foreground no-underline hover:underline" href={href({ view: "apps", app: a.name })} title="Its page" data-testid="project-app">{a.name}</a>
+                <a class="text-foreground no-underline hover:underline" href={href({ view: "apps", app: a.name, tab: "settings" })} title="Its settings" data-testid="project-app">{a.name}</a>
                 <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {(a.files ?? []).some((f) => f.mode === "rw" && f.path && project && inFolder(f.path, project.folder)) ? "reads and writes it" : "reads it"}{#if last}{" · its agent ran "}<When at={last.createdAt} />{/if}
                 </span>

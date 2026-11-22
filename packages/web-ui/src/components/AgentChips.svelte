@@ -1,5 +1,5 @@
 <script lang="ts">
-  // What the agent gets and may do, as chips in its box's footer after who works (ModelChoice):
+  // What the agent gets and may do, as chips in its box's footer after who works (WhoWorksChoice):
   // its tools, its network (the meter: more bars, safer; then "4 sites", "No network" or "Any
   // site" in amber), then one amber chip per switch that weakens its sandbox beyond the default
   // (learning the sites, runs containers, windows on my screen, privileged, shared caches). Each

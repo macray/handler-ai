@@ -12,14 +12,31 @@ class PodmanError(RuntimeError):
     pass
 
 
+# how a user gets the subordinate ids every id of an image needs (only root can: check.py's item)
+ADD_IDS = (
+    "sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER, then "
+    "podman system migrate"
+)
+
+
 def podman(*args: str, check: bool = True, timeout: float = 120) -> str:
     proc = subprocess.run(
         ["podman", *args], capture_output=True, text=True, timeout=timeout, check=False
     )
     if check and proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip().splitlines()
-        raise PodmanError(f"podman {args[0]} failed: {detail[-1] if detail else proc.returncode}")
+        raise PodmanError(f"podman {args[0]} failed: {said(proc)}")
     return proc.stdout.strip()
+
+
+def said(proc: subprocess.CompletedProcess[str]) -> str:
+    """What a failed podman call said: its last line, and how to fix too few subordinate ids
+    (podman's own words name the files, not the command)."""
+    output = proc.stderr or proc.stdout or ""
+    lines = output.strip().splitlines()
+    last = lines[-1] if lines else f"exit code {proc.returncode}"
+    if "insufficient UIDs or GIDs" in output:  # an image using ids beyond the user's
+        last += f" (your user has too few subordinate ids for this image: {ADD_IDS})"
+    return last
 
 
 def quiet(*args: str) -> None:

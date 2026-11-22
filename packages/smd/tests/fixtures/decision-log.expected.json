@@ -1,0 +1,20 @@
+{
+  "meta": { "schema": "decision-log@1" },
+  "title": "Backend decisions",
+  "preamble": null,
+  "items": [
+    {
+      "title": "Use PostgreSQL",
+      "slug": "use-postgresql",
+      "line": 7,
+      "fields": { "status": "accepted", "date": "2026-11-10", "owner": "jane.doe", "tags": "database, backend" },
+      "field_lines": { "status": 8, "date": 9, "owner": 10, "tags": 11 },
+      "body": null,
+      "entries": null,
+      "sections": {
+        "context": { "heading": "Context", "line": 13, "content": "We need relational integrity and JSON support." },
+        "decision": { "heading": "Decision", "line": 16, "content": "PostgreSQL 17, managed." }
+      }
+    }
+  ]
+}

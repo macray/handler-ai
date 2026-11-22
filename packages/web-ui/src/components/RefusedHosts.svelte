@@ -1,13 +1,15 @@
 <script lang="ts">
   // The hosts Handler's network filter refused to a run (a plan's step, an automation's run) or to
   // a session while nobody was there (F.9), each with how many times: what the agent said of them,
-  // and your answer, *Allow* (and run again, for a run) or *Keep blocked*, for those not answered.
+  // and your answer, *Allow* (and run again, for a run: "Allow <host> for <agent>, run again from
+  // step N", lib/hosts.ts allowAgain) or *Keep blocked*, for those not answered.
   // A run that completed did without them: its result may differ.
   import Ban from "@lucide/svelte/icons/ban";
   import Check from "@lucide/svelte/icons/check";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import { Button } from "$lib/components/ui/button";
   import type { RefusedHost } from "../lib/contracts.gen";
+  import { allowAgain } from "../lib/hosts";
 
   let {
     hosts,
@@ -22,8 +24,9 @@
     said?: string | null;
     completed?: boolean;
     busy?: boolean;
-    /** a run's: what *Allow* runs again ("Allow and run again from step 2"); null: Allow alone */
-    again?: string | null;
+    /** a run's: whose run *Allow* runs again, and from which step (none: an automation's run);
+     *  null: Allow alone */
+    again?: { agent?: string | null; step?: number | null } | null;
     onallow: (hosts: string[]) => void;
     onkeep: (hosts: string[]) => void;
   } = $props();
@@ -49,7 +52,7 @@
   {#if open.length}
     <div class="flex flex-wrap gap-2 pt-1">
       <Button size="sm" disabled={busy} onclick={() => onallow(open)} data-testid="refused-allow">
-        {#if again}<RotateCcw />{again}{:else}<Check />Allow{/if}
+        {#if again}<RotateCcw />{allowAgain(open, again.agent, again.step)}{:else}<Check />Allow{/if}
       </Button>
       <Button size="sm" variant="outline" disabled={busy} onclick={() => onkeep(open)} data-testid="refused-keep-blocked"><Ban />Keep blocked</Button>
     </div>

@@ -7,6 +7,7 @@
   import { api } from "../lib/api";
   import type { ModelAccess } from "../lib/access";
   import type { AccountInfo, ProviderInfo } from "../lib/contracts.gen";
+  import { loginProblem } from "../lib/accounts";
   import { allows } from "../lib/areas.svelte";
   import { href } from "../lib/router.svelte";
   import AreaTag from "./AreaTag.svelte";
@@ -16,6 +17,7 @@
 
   // area: its project's (D.19): the accounts and providers not made for it cannot be picked
   let { value = $bindable(), area = null, alone = false }: { value: ModelAccess; area?: string | null; alone?: boolean } = $props();
+  const uid = $props.id(); // its own ids: a page may show one picker per agent
 
   let accounts = $state<AccountInfo[]>([]);
   let providers = $state<ProviderInfo[]>([]);
@@ -71,9 +73,9 @@
       {@const allowed = allows(area, a.areas)}
       <button type="button" role="radio" aria-checked={value.account === a.name} disabled={!allowed} class="{card} {value.account === a.name ? selected : ''} {allowed ? '' : 'cursor-not-allowed opacity-50'}" onclick={() => pickAccount(a)} data-testid="access-account">
         <span class="flex items-center gap-1.5 font-medium">{a.name}{#each a.areas ?? [] as c (c)}<AreaTag name={c} />{/each}</span>
-        <span class="text-xs text-muted-foreground">account · {productName(a.harness ?? "?")}{a.plan ? ` · ${a.plan}` : ""}</span>
+        <span class="text-xs text-muted-foreground">account · {productName(a.harness ?? "?")}{a.subscription ? ` · ${a.subscription}` : ""}</span>
         {#if !allowed}<span class="text-xs text-muted-foreground">not for {area} projects</span>
-        {:else if a.status !== "ready"}<span class="text-xs text-warn">{(a.problems ?? []).join("; ") || "not logged in"}</span>{/if}
+        {:else if a.status !== "ready"}<span class="text-xs text-warn">{loginProblem(a)?.text ?? "Can't be used"}</span>{/if}
       </button>
     {/each}
     {#each providers as p (p.name)}
@@ -100,22 +102,22 @@
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
     {#if provider && !alone}
       <div class="flex items-center gap-2">
-        <Label for="access-harness" class="text-xs">Agent program</Label>
-        <NativeSelect.Root id="access-harness" class="w-40" bind:value={value.harness} data-testid="access-harness">
+        <Label for="{uid}-harness" class="text-xs">Agent program</Label>
+        <NativeSelect.Root id="{uid}-harness" class="w-40" bind:value={value.harness} data-testid="access-harness">
           {#each provider.harnesses ?? [] as h (h)}<NativeSelect.Option value={h}>{productName(h)}</NativeSelect.Option>{/each}
         </NativeSelect.Root>
       </div>
     {/if}
     <div class="flex items-center gap-2">
-      <Label for="access-model" class="text-xs">Model</Label>
+      <Label for="{uid}-model" class="text-xs">Model</Label>
       {#if provider}
-        <NativeSelect.Root id="access-model" class="w-56" value={value.model ?? ""} onchange={(e) => (value.model = e.currentTarget.value || null)} data-testid="access-model">
+        <NativeSelect.Root id="{uid}-model" class="w-56" value={value.model ?? ""} onchange={(e) => (value.model = e.currentTarget.value || null)} data-testid="access-model">
           <NativeSelect.Option value="">{chatModels[0]?.id ?? "its first model"} (its default)</NativeSelect.Option>
           {#each chatModels.slice(1) as m (m.id)}<NativeSelect.Option value={m.id}>{m.name ?? m.id}</NativeSelect.Option>{/each}
         </NativeSelect.Root>
       {:else}
         <Input
-          id="access-model"
+          id="{uid}-model"
           class="h-8 w-56 font-mono text-xs placeholder:font-sans"
           placeholder="its default model"
           value={value.model ?? ""}

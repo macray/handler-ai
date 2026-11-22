@@ -1,10 +1,11 @@
 apiVersion = "handler.system-package/v1"
 name = "podman"
-version = 1
+version = 4
 description = "Podman, for agents that run containers in their sandbox"
 provides = ["podman"]
 
 [[caches]]
 target = "~/.local/share/containers/storage"
 about = "Container images: images and build layers, for agents that run containers"
+kind = "images"
 general = true

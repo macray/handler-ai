@@ -24,3 +24,31 @@ it("a list asked for with no change made since is taken as it is", async () => {
 
   expect(projects.list.map((p) => p.id)).toEqual(["p1", "p2"]);
 });
+
+it("an answer to a list asked for before the last one is dropped", async () => {
+  // If this fails: a slow answer to a page's first read undoes the newer one of the next page:
+  // the menu shows the projects as they were (the Set up Handler card gone, or back).
+  let older: (list: Project[]) => void = () => {};
+  answers.projects = () => new Promise<Project[]>((resolve) => (older = resolve));
+  const first = projects.refresh();
+  answers.projects = async () => [];
+  await projects.refresh();
+  older([project(), { ...project(), id: "p2", name: "blog" }]);
+  await first;
+
+  expect(projects.list).toEqual([]);
+});
+
+it("who asked for a list answered after a newer one gets the newer one", async () => {
+  // If this fails: a page that waits for the projects after a change reads them before the
+  // last list asked for is in (an agent just made missing from its project).
+  let newer: (list: Project[]) => void = () => {};
+  answers.projects = async () => [];
+  const first = projects.refresh();
+  answers.projects = () => new Promise<Project[]>((resolve) => (newer = resolve));
+  void projects.refresh();
+  setTimeout(() => newer([project()]), 10);
+  await first;
+
+  expect(projects.list.map((p) => p.id)).toEqual(["p1"]);
+});

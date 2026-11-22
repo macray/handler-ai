@@ -1,5 +1,6 @@
 """The gateway's API: authentication, mailboxes, fetched status, limits, cursors."""
 
+import gzip
 import hashlib
 import secrets
 import threading
@@ -113,7 +114,7 @@ def test_devices_belong_to_their_host(g: Setup) -> None:
     assert g.device("GET", "/v1/device/poll").status_code == 401
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_invalid_input(g: Setup) -> None:
     g.register()
     for bad in [{"id": "short", "nonce": "x" * 16, "ct": "AA"}, envelope(ct="not base64!"), [1]]:
@@ -124,7 +125,7 @@ def test_invalid_input(g: Setup) -> None:
     assert r.status_code == 400
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_full_down_mailbox_refuses_but_up_drops_oldest(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(down_count=2, up_count=2, rate=1000))
     g.register()
@@ -137,7 +138,7 @@ def test_full_down_mailbox_refuses_but_up_drops_oldest(tmp_path: Path) -> None:
     assert [e["id"] for e in got] == [ups[1]["id"], ups[2]["id"]]
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_envelopes_expire(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(ttl=0.2, rate=1000))
     g.register()
@@ -168,7 +169,7 @@ def test_long_poll_wakes_on_put(g: Setup) -> None:
     assert time.monotonic() - started < 5
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_rate_limit(tmp_path: Path) -> None:
     g = Setup(tmp_path, Limits(rate=2))
     codes = [g.host("GET", "/v1/host/devices").status_code for _ in range(10)]
@@ -279,7 +280,7 @@ def test_queue_survives_a_restart_until_the_host_takes_it(tmp_path: Path) -> Non
     assert g.device("GET", "/v1/device/poll", params={"wait": 0}).json()["queued"] == []
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_queueing_writes_that_envelope_only(tmp_path: Path) -> None:
     """A put costs its own envelope, not every queue again (a device could otherwise make the
     gateway rewrite megabytes on each call); a removal never names a file from the host's word."""
@@ -294,7 +295,7 @@ def test_queueing_writes_that_envelope_only(tmp_path: Path) -> None:
     assert (tmp_path / "outside.json").exists()
 
 
-@pytest.mark.rule("gateway.bounded")
+@pytest.mark.rule("gateway.keeps-little-and-briefly")
 def test_queue_is_bounded_and_expires(tmp_path: Path) -> None:
     q = Queue(None, max_count=2, ttl=0.2)
     q.put("h", "d", "a" * 16, "n" * 16, "AAAA")
@@ -333,3 +334,36 @@ def test_queueing_wakes_the_host(g: Setup) -> None:
     waiting.join(timeout=10)
     assert time.monotonic() - started < 5
     assert result["queued"] == 1 and result["envelopes"] == []
+
+
+@pytest.mark.rule("gateway.a-new-client-is-used-at-once")
+def test_client_files_compressed_and_checked_on_each_use(tmp_path: Path) -> None:
+    client_dir = tmp_path / "client"
+    (client_dir / "assets").mkdir(parents=True)
+    (client_dir / "index.html").write_text("<html>client</html>")
+    js = "console.log('client');" * 50
+    (client_dir / "assets" / "index-abc.js").write_text(js)
+    (client_dir / "assets" / "index-abc.js.gz").write_bytes(gzip.compress(js.encode()))
+    g = Setup(tmp_path, client_dir=client_dir)
+
+    # the precompressed file when accepted, with the original's type
+    r = g.client.get("/assets/index-abc.js", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.text == js  # httpx decodes it
+    assert r.headers["content-encoding"] == "gzip"
+    assert r.headers["content-type"].startswith("text/javascript")
+    assert r.headers["vary"] == "Accept-Encoding"
+    # kept by the browser, checked again on every use: unchanged is a 304
+    assert r.headers["cache-control"] == "no-cache"
+    again = g.client.get(
+        "/assets/index-abc.js",
+        headers={"Accept-Encoding": "gzip", "If-None-Match": r.headers["etag"]},
+    )
+    assert again.status_code == 304
+    # a new client is used at once: its index is never taken from the cache unchecked
+    assert g.client.get("/").headers["cache-control"] == "no-cache"
+    # not accepted: the file itself; a missing one (an old client's chunk): 404, never the index
+    plain = g.client.get("/assets/index-abc.js", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers and plain.text == js
+    assert g.client.get("/assets/index-old.js").status_code == 404
+    # the API is never cached
+    assert g.client.get("/v1/health").headers["cache-control"] == "no-store"

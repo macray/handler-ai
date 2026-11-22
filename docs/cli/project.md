@@ -28,9 +28,9 @@ handler project import-agents NAME --from SOURCE
 | Subcommand | |
 |---|---|
 | `list` | projects, most recently used first: name, area (Work, Personal…), agents, folder |
-| `show NAME` | the project's agents: name (`*`: the default agent), id, what it runs on (harness · account or provider · model), its settings, live sandboxes |
+| `show NAME` | the project's agents: name (`*`: the default agent), id, who works (the program, the account or provider, and the model), its settings, live sandboxes |
 | `export-agents NAME` | the project's agents (all, or those named with `--agent`) as one file, `NAME-agents.zip` (`-o`: another name): their names, instructions, form, settings, skills and checks. Never in it: the accounts or providers they run on, the folder, connections, notes folders, conversations. Says what of yours it left out |
-| `import-agents FILE` (or `NAME --from SOURCE`: agents a [source](source.md) offers) | reads the file and prints the address of the web UI's page where its agents are set up: where (a project), each one's model, what each will be allowed to do. The agents made are yours: nothing follows the file afterwards |
+| `import-agents FILE` (or `NAME --from SOURCE`: agents a [source](source.md) offers; SOURCE: its id or its URL) | reads the file and prints the address of the web UI's page where its agents are set up: where (a project), each one's model, what each will be allowed to do. The agents made are yours: nothing follows the file afterwards |
 
 ## Example
 

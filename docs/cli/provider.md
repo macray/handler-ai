@@ -31,7 +31,7 @@ talks to it. Its key goes to Handler's secret store and is never shown again.
 | `list` | the providers: status (ready, or what is missing), protocols, models, where the key is, areas, agents using it |
 | `templates` | what a provider can start from, whether it needs a key, its endpoints |
 | `add NAME --from TEMPLATE` | a provider from that template, named NAME (what agents and commands use) |
-| `test NAME` | ask its server for its models from where a sandbox would: `ready`, with what it serves (its context when the server says it) and whether NAME lists it, or `not reached` and why (exit 1) |
+| `test NAME` | ask its server for its models from where a sandbox would: `ready`, with what it serves (its context when the server says it) and whether NAME lists it, or `not reached` and why (exit 1). An endpoint whose server redirects (`http://` to `https://`) is not reached: agents are not redirected, so it says where it leads and which endpoint to use instead |
 | `rm NAME` | the provider and its key. Agents using it cannot start until given another |
 
 ## Options of `add`

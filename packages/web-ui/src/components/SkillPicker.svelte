@@ -15,11 +15,9 @@
   let {
     projectId,
     value = $bindable([]),
-    pending = [],
   }: {
     projectId?: string; // none: an ad-hoc agent
     value?: string[];
-    pending?: string[]; // the skills of the definition it is set up from, added to the library when it is saved (D.18)
   } = $props();
 
   let skills = $state<SkillInfo[]>([]);
@@ -45,13 +43,11 @@
   // drop what is no longer selectable (deleted by hand, invalid), once listed
   $effect(() => {
     if (!loaded) return;
-    const keep = value.filter((name) => selectable.some((s) => s.name === name) || pending.includes(name));
+    const keep = value.filter((name) => selectable.some((s) => s.name === name));
     if (keep.length !== value.length) value = keep;
   });
 
-  // the definition's skills not in the library yet
-  const newOnes = $derived(loaded ? pending.filter((name) => !skills.some((s) => s.name === name)) : []);
-  const rows = $derived(given.length + selectable.length + newOnes.length);
+  const rows = $derived(given.length + selectable.length);
   const FILTER_FROM = 8; // rows from which a filter is offered
   let query = $state("");
   function shown(s: { name: string; description?: string | null }): boolean {
@@ -78,16 +74,7 @@
       testid="skill-option"
     />
   {/each}
-  {#each newOnes.filter((name) => shown({ name })) as name (name)}
-    <PickRow
-      {name}
-      description="Comes with what you set up: added to your library when you save."
-      badge="new"
-      checked={value.includes(name)}
-      onchange={(checked) => toggle(name, checked)}
-    />
-  {/each}
-  {#if ![...given, ...selectable, ...newOnes.map((name) => ({ name }))].some(shown)}
+  {#if ![...given, ...selectable].some(shown)}
     <p class="px-3 py-2 text-xs text-muted-foreground">No skill matches.</p>
   {/if}
 {/snippet}
@@ -107,7 +94,7 @@
     {/if}
     <div class="divide-y">
       {@render options()}
-      {#if !rows && loaded}<p class="px-3 py-2 text-xs text-muted-foreground">No skill in the <a class="text-link hover:underline" href={href({ view: "skills" })}>library</a> yet.</p>{/if}
+      {#if !rows && loaded}<p class="px-3 py-2 text-xs text-muted-foreground">No skill in the <a class="text-link hover:underline" href={href({ view: "library", shelf: "skills" })}>library</a> yet.</p>{/if}
     </div>
   {/snippet}
 </PickerChips>

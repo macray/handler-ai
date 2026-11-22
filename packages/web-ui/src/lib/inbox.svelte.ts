@@ -1,21 +1,23 @@
 // The inbox's messages for the bell: its unread ones that failed or want an answer (a run, a plan
-// stopped, hosts refused) wait for you. Polled like the sessions, and set by the inbox page from
-// the list it shows, so the two never disagree.
+// stopped, hosts refused) or an app's open nudge (H.17: unread again at each of its reminders)
+// wait for you. Read again on each change of the inbox (the event stream), for the bell and the
+// inbox page alike.
 import { api } from "./api";
+import { onChange } from "./events.svelte";
 import type { InboxMessage } from "./contracts.gen";
-
-const POLL_MS = 5000;
+import { waitsForYou } from "./nudges";
 
 class InboxCount {
   unread = $state(0);
   messages = $state<InboxMessage[]>([]);
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private following = false;
 
-  /** Counted now and every few seconds (once, whoever asks). */
+  /** Counted now and on each change (once, whoever asks). */
   start(): void {
-    if (this.timer) return;
+    if (this.following) return;
+    this.following = true;
+    onChange(["inbox"], () => void this.refresh());
     void this.refresh();
-    this.timer = setInterval(() => void this.refresh(), POLL_MS);
   }
 
   async refresh(): Promise<void> {
@@ -31,9 +33,9 @@ class InboxCount {
     this.unread = messages.filter((m) => !m.read).length;
   }
 
-  /** What waits for you here: unread, failed or wanting an answer, newest first. */
+  /** What waits for you here (`waitsForYou`), newest first. */
   get waiting(): InboxMessage[] {
-    return this.messages.filter((m) => !m.read && (m.status === "failed" || m.status === "attention")).sort((a, b) => b.at.localeCompare(a.at));
+    return this.messages.filter(waitsForYou).sort((a, b) => b.at.localeCompare(a.at));
   }
 }
 

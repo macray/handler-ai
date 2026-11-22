@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -238,7 +239,7 @@ def test_vibe_custom_config_toml(scope: Path) -> None:
 
 
 @pytest.mark.parametrize("name", HARNESSES)
-@pytest.mark.rule("provider.every-field-reaches-the-harness")
+@pytest.mark.rule("provider-config.every-field-reaches-the-harness")
 def test_provider_config_is_accepted_by_the_harness(name: str, scope: Path) -> None:
     """The real harness accepts the provider as written: the session starts, and it offers the
     provider's model."""
@@ -254,3 +255,43 @@ def test_provider_config_is_accepted_by_the_harness(name: str, scope: Path) -> N
     options = {o["id"]: o for o in session.get("configOptions") or []}
     if name != "claude-code":  # its model comes from the environment, not from the ACP options
         assert "handler-probe-model" in json.dumps(options["model"]), options["model"]
+
+
+def _new_session(client: AcpClient, folder: Path) -> str:
+    client.initialize()
+    return client.new_session(str(folder))["sessionId"]
+
+
+@pytest.mark.parametrize("name", HARNESSES)
+def test_two_runs_share_one_harness_state_at_once(name: str, scope: Path) -> None:
+    """Two runs of one app's jobs at once share the app's harness state (agent-state/app-<name>/,
+    one per app): each starts its session while the other runs, and a third starts after them on
+    what they left. Here on a provider whose key is checked at the first prompt (no model is
+    called); with a harness's credentials (its own tests'), a turn each would prove more.
+
+    If this fails: an app's jobs cannot run at once on that harness, or one run's state breaks
+    the next: that harness needs its state per job."""
+    _require_image(name)
+    state = scope.parent / f"{scope.name}-state"  # the app's, beside the folder its jobs work in
+    on_provider = {"account": None, "provider": "probe", "providerSpec": PROVIDER}
+    agent = make_agent(name, scope, **on_provider)
+
+    def started() -> AcpClient:
+        return start_agent(agent, scope, provider_key="dummy-key", state_root=state)[0]
+
+    try:
+        clients = [started(), started()]
+        try:
+            with ThreadPoolExecutor(2) as pool:
+                ids = list(pool.map(lambda c: _new_session(c, scope), clients))
+            assert len(set(ids)) == 2
+        finally:
+            for client in clients:
+                client.close()
+        client = started()
+        try:
+            assert _new_session(client, scope)
+        finally:
+            client.close()
+    finally:
+        dev_env.remove_scope(state)

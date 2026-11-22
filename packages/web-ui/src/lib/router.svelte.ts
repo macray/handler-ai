@@ -1,13 +1,14 @@
+import { ask } from "./ask.svelte";
 // Hash router:
 //   #/                   where you left off (the last page, kept in this browser), else Projects
 //   #/projects           the projects (where Handler opens the first time, and the logo)
 //   #/library[/:shelf][/more][?install=:source][?project=:id]   the Library: what you get and
-//                        manage, a shelf each (apps, agents, tools, skills, notes, automations; apps
+//                        manage, a shelf each (apps, agents, tools, skills, notes, schemas, automations; apps
 //                        by default), yours or what you can get more of (more: the sources' items,
 //                        examples; install: a tool's preview open, G.5; project: the agents got are
 //                        set up there, D.23)
 //   #/library/tools/:name[?connect=1]   a tool: what it is, then your connections to it (G, D.15;
-//                        connect: just installed, its first connection's form open)
+//                        connect: a new connection's form open: just installed, or Connect on the shelf)
 //   #/projects/new[?folder=:path]   a new project,
 //                                                   or on a folder (an app's data: H.2)
 //   #/projects/:id[?agent=:agent]   a project's Sessions tab: its agents, the chosen one's box and sessions
@@ -16,23 +17,24 @@
 //                        of a project (a new one: a copy of `from`, made a job with `job` and then
 //                        run by a new automation; or a plan runner for the review page `plan`,
 //                        back to it once saved)
-//   #/sessions/:key      a chat session of the sidebar
-//   #/terminals/:agent/:connection   a terminal (`handler terminal`, D.16) of an agent: its network
+//   #/running[?terminal=:connection]   Running: every running session, across projects (the
+//                        layout this browser keeps); terminal: that terminal's network open
+//   #/sessions/:key      Running in One, with that session shown (the one session view)
 //   #/agents[?agent=:agent]   outside projects: the agents of no project, the chosen one's start and sessions
 //   #/agents/:id         an agent, wherever it is: its place (its project's page, or outside projects) with it chosen
-//   #/agents/new[?app=:app&need=:need] · #/agents/:id/edit   an ad-hoc agent's settings (a new one;
-//                                                     or an app's need set up from its definition)
+//   #/agents/new · #/agents/:id/edit   an ad-hoc agent's settings (a new one)
 //   #/runs/:id           a run of an agent with an interface (D.18): its input and result
 //   #/settings[/:section]  settings, one page per section (lib/settings.ts): model access by default
 //   #/settings/helpers/:need   one of Handler's helpers (D.18): who works, what it can do, its
 //                        instructions; its set-up card when none is given yet
 //   #/tools              the Library's Tools shelf (its tools and your connections, G, D.15)
 //   #/discover/:source/:kind/:name   an item a source offers (D.26), its page (kind: apps, agents,
-//                        addons); what they offer is each shelf's Get more
+//                        addons); what they offer is each shelf's Community
 //   #/skills · #/skills/:name[?imported=new|replaced] · #/skills/new   the skill library (D.17); a
 //                        skill, its editor (just imported: what to do next; a new one)
 //   #/apps               apps: yours, Handler's to install, making one (apps design)
-//   #/apps/:name         an app's page: open, what it needs and may touch, deploy, roll back
+//   #/apps/:name[/(activity|settings)]   an app's page: its Activity (what it did) or its Settings
+//                        (what you chose); without a tab, Settings while it lacks something
 //   #/apps/:name/install   installing one, on one page
 //   #/automations · #/automations/:name   automations (I): the list; one's permissions, files, runs
 //   #/automations/new[?agent=:id] · #/automations/:name/edit   the automation form (I.1): a new one
@@ -61,9 +63,13 @@ export const LIBRARY_SHELVES = [
   { id: "tools", label: "Tools", for: "agents" },
   { id: "skills", label: "Skills", for: "agents" },
   { id: "notes", label: "Notes", for: "agents" },
+  { id: "schemas", label: "Schemas", for: "agents" },
   { id: "automations", label: "Automations", for: "agents" },
 ] as const;
 export type LibraryShelf = (typeof LIBRARY_SHELVES)[number]["id"];
+
+/** An app's page's two tabs (apps design): what it did, what you chose. */
+export type AppTab = "activity" | "settings";
 
 /** A project's tabs but the first (Sessions, its own address). */
 export const PROJECT_TABS = ["plans", "automations", "settings"] as const;
@@ -71,27 +77,24 @@ export type ProjectTab = (typeof PROJECT_TABS)[number];
 
 export type Route =
   | { view: "projects" }
-  | { view: "library"; shelf: LibraryShelf; more?: boolean; install?: string; project?: string } // more: Get more; install: a tool's preview open; project: the agents got go there
-  | { view: "tool"; name: string; connect?: boolean } // a tool and your connections to it; connect: its first one's form open (just installed)
+  | { view: "library"; shelf: LibraryShelf; more?: boolean; install?: string; project?: string } // more: Community; install: a tool's preview open; project: the agents got go there
+  | { view: "tool"; name: string; connect?: boolean } // a tool and your connections to it; connect: a new connection's form open
   | { view: "chat"; agent?: string; say?: string; new?: boolean } // Chat's Talk tab. agent: who you talk to; say: the first message, typed (Ask's "Start a chat about it"); new: someone new
   | { view: "ask" } // Chat's Ask tab (#/chat/ask): say what you want, Handler picks the app's action that does it (D.24)
   | { view: "project"; id: string; agent?: string; tab?: ProjectTab } // agent: the one chosen (else its default); tab: another than Sessions
   | { view: "edit-project"; folder?: string } // a new project
   | { view: "edit-agent"; project: string; id?: string; from?: string; job?: boolean; plan?: ReviewRoute } // no id: a new one, a copy of `from` (job: made a job, then a new automation runs it), or a plan runner for that review
-  | { view: "session"; key: string }
-  | { view: "terminal"; agent: string; connection: string }
+  | { view: "running"; terminal?: string } // terminal: that `handler terminal`'s network open (D.16)
+  | { view: "session"; key: string; panel?: "files" | "network" } // Running in One, that session shown (with that panel)
   | { view: "agents"; agent?: string } // outside projects; agent: the one chosen
   | { view: "agent"; id: string }
-  | { view: "edit-ad-hoc"; id?: string; app?: string; need?: string } // no id: a new one; an app's `need`: setting it up (H.2)
+  | { view: "edit-ad-hoc"; id?: string } // no id: a new one
   | { view: "run"; id: string }
   | { view: "settings"; section: SettingsSection; helper?: string }
-  | { view: "skills" }
-  | { view: "addons" }
   | { view: "discover-item"; source: string; kind: "apps" | "agents" | "addons"; name: string }
   | { view: "skill"; name: string | null; imported?: Imported } // null: a new one
-  | { view: "apps"; app?: string } // `app`: that app's page
+  | { view: "apps"; app?: string; tab?: AppTab } // `app`: that app's page, on `tab` (else as it needs)
   | { view: "install-app"; name: string }
-  | { view: "automations" }
   | { view: "automation"; name: string }
   | { view: "edit-automation"; name?: string; agent?: string } // no name: a new one
   | { view: "inbox" }
@@ -109,7 +112,14 @@ export function parse(hash: string): Route {
   const [first = "", second, third] = path.split("/");
   const id = second ? decodeURIComponent(second) : "";
   const params = new URLSearchParams(query);
-  if (first === "sessions" && id) return { view: "session", key: id };
+  if (first === "sessions" && id) {
+    const panel = params.get("panel");
+    return panel === "files" || panel === "network" ? { view: "session", key: id, panel } : { view: "session", key: id };
+  }
+  if (first === "running") {
+    const terminal = params.get("terminal");
+    return terminal ? { view: "running", terminal } : { view: "running" };
+  }
   if (first === "projects" && !id) return { view: "projects" };
   if (first === "library" && id === "tools" && third && third !== "more") {
     return params.get("connect") ? { view: "tool", name: decodeURIComponent(third), connect: true } : { view: "tool", name: decodeURIComponent(third) };
@@ -122,12 +132,7 @@ export function parse(hash: string): Route {
     return { view: "library", shelf, more: true, ...(install ? { install } : {}), ...(project ? { project } : {}) };
   }
   if (first === "runs" && id) return { view: "run", id };
-  if (first === "terminals" && id && third) return { view: "terminal", agent: id, connection: decodeURIComponent(third) };
-  if (first === "agents" && id === "new") {
-    const app = params.get("app");
-    const need = params.get("need");
-    return app && need ? { view: "edit-ad-hoc", app, need } : { view: "edit-ad-hoc" };
-  }
+  if (first === "agents" && id === "new") return { view: "edit-ad-hoc" };
   if (first === "agents" && id && third === "edit") return { view: "edit-ad-hoc", id };
   if (first === "agents" && id) return { view: "agent", id };
   if (first === "agents") {
@@ -139,8 +144,6 @@ export function parse(hash: string): Route {
     const imported = params.get("imported");
     return imported === "new" || imported === "replaced" ? { view: "skill", name: id, imported } : { view: "skill", name: id };
   }
-  if (first === "skills") return { view: "skills" };
-  if (first === "tools") return { view: "addons" };
   if (first === "discover") {
     const [, , kind, name] = path.split("/");
     if (id && (kind === "apps" || kind === "agents" || kind === "addons") && name) return { view: "discover-item", source: id, kind, name: decodeURIComponent(name) };
@@ -169,6 +172,7 @@ export function parse(hash: string): Route {
     return agent ? { view: "project", id, agent } : { view: "project", id };
   }
   if (first === "apps" && id && third === "install") return { view: "install-app", name: id };
+  if (first === "apps" && id && (third === "activity" || third === "settings")) return { view: "apps", app: decodeURIComponent(id), tab: third };
   if (first === "apps") return id ? { view: "apps", app: decodeURIComponent(id) } : { view: "apps" };
   if (first === "automations" && id === "new") {
     const agent = params.get("agent");
@@ -176,7 +180,6 @@ export function parse(hash: string): Route {
   }
   if (first === "automations" && id && third === "edit") return { view: "edit-automation", name: id };
   if (first === "automations" && id) return { view: "automation", name: id };
-  if (first === "automations") return { view: "automations" };
   if (first === "inbox") return { view: "inbox" };
   if (first === "plans" && id === "review") {
     const session = params.get("session");
@@ -253,8 +256,15 @@ export function startRouter(): void {
   }
   keep(start);
   window.addEventListener("hashchange", () => {
-    if (leaving.unsaved && !confirm("Leave without saving your changes?")) {
+    if (leaving.unsaved) {
+      // the page stays while it asks; a yes goes on to where the link led (unsaved: off)
+      const target = window.location.hash;
       history.replaceState(null, "", shown || "#/projects");
+      void ask({ title: "Leave without saving your changes?", yes: "Leave", danger: true }).then((yes) => {
+        if (!yes) return;
+        leaving.unsaved = false;
+        window.location.hash = target;
+      });
       return;
     }
     leaving.unsaved = false;
@@ -285,36 +295,29 @@ export function href(route: Route): string {
       if (route.plan) return `#/projects/${encodeURIComponent(route.project)}/agents/new?plan=${encodeURIComponent(href(route.plan))}`;
       return `#/projects/${encodeURIComponent(route.project)}/agents/new${route.from ? `?from=${encodeURIComponent(route.from)}${route.job ? "&job=1" : ""}` : ""}`;
     case "session":
-      return `#/sessions/${encodeURIComponent(route.key)}`;
-    case "terminal":
-      return `#/terminals/${encodeURIComponent(route.agent)}/${encodeURIComponent(route.connection)}`;
+      return `#/sessions/${encodeURIComponent(route.key)}${route.panel ? `?panel=${route.panel}` : ""}`;
+    case "running":
+      return route.terminal ? `#/running?terminal=${encodeURIComponent(route.terminal)}` : "#/running";
     case "agents":
       return route.agent ? `#/agents?agent=${encodeURIComponent(route.agent)}` : "#/agents";
     case "agent":
       return `#/agents/${encodeURIComponent(route.id)}`;
     case "edit-ad-hoc":
       if (route.id) return `#/agents/${encodeURIComponent(route.id)}/edit`;
-      if (route.app && route.need) return `#/agents/new?app=${encodeURIComponent(route.app)}&need=${encodeURIComponent(route.need)}`;
       return "#/agents/new";
     case "run":
       return `#/runs/${encodeURIComponent(route.id)}`;
     case "settings":
       return `#/settings/${route.section}${route.helper ? `/${encodeURIComponent(route.helper)}` : ""}`;
-    case "skills":
-      return "#/skills";
-    case "addons":
-      return "#/tools";
     case "discover-item":
       return `#/discover/${encodeURIComponent(route.source)}/${route.kind}/${encodeURIComponent(route.name)}`;
     case "skill":
       if (route.name === null) return "#/skills/new";
       return `#/skills/${encodeURIComponent(route.name)}${route.imported ? `?imported=${route.imported}` : ""}`;
     case "apps":
-      return route.app ? `#/apps/${encodeURIComponent(route.app)}` : "#/apps";
+      return route.app ? `#/apps/${encodeURIComponent(route.app)}${route.tab ? `/${route.tab}` : ""}` : "#/apps";
     case "install-app":
       return `#/apps/${encodeURIComponent(route.name)}/install`;
-    case "automations":
-      return "#/automations";
     case "automation":
       return `#/automations/${encodeURIComponent(route.name)}`;
     case "edit-automation":

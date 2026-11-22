@@ -8,7 +8,7 @@
   import Lock from "@lucide/svelte/icons/lock";
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
-  import { accessOf, sameModel } from "../lib/access";
+  import { accessOf } from "../lib/access";
   import { api } from "../lib/api";
   import type { AddonInfo, Agent, HandlerNeed, ModelAccess } from "../lib/contracts.gen";
   import { factsOf, featureOf, settingsOf, usesOf } from "../lib/helpers";
@@ -17,7 +17,7 @@
   import { sessions } from "../lib/sessions.svelte";
   import HelperCard from "./HelperCard.svelte";
   import HelperIcon from "./HelperIcon.svelte";
-  import ModelChoice from "./ModelChoice.svelte";
+  import WhoWorksChoice from "./WhoWorksChoice.svelte";
   import NetworkMeter from "./NetworkMeter.svelte";
 
   let { need: name }: { need: string } = $props();
@@ -56,10 +56,9 @@
   $effect(() => void load());
 
   /** Save a change to its agent: its model, or its instructions. A model save leaves the
-   *  instructions being written as they are, and one that changes nothing is not sent (its chips
-   *  give the agent's own model when they open). */
+   *  instructions being written as they are. */
   async function save(change: { model?: ModelAccess; instructions?: string }): Promise<void> {
-    if (!agent || (change.model && sameModel(change.model, agent.model))) return;
+    if (!agent) return;
     busy = true;
     error = null;
     try {
@@ -101,7 +100,7 @@
     <div class="space-y-2">
       <h2 class="text-sm font-medium text-muted-foreground">Who works</h2>
       <div class="rounded-[10px] border bg-card px-4 py-3 shadow-panel" data-testid="helper-who-works">
-        <ModelChoice agent={{ id: a.id, name: a.name, model: a.model, area: null, modelAlone: a.modelAlone ?? false }} own onchange={(m) => save({ model: m })} />
+        {#key a.id}<WhoWorksChoice agent={{ id: a.id, name: a.name, model: a.model, area: null, modelAlone: a.modelAlone ?? false }} own onchange={(m) => save({ model: m })} />{/key}
       </div>
     </div>
 

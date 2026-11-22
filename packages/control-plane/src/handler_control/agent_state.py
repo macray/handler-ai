@@ -1,6 +1,9 @@
 """The state handler keeps for an agent: the harness's own history and settings (contract E).
 
     <data>/agent-state/<agent id>/<harness>@<account|provider>/<slot>
+    <data>/agent-state/app-<name>/<harness>@<account|provider>/<slot>
+                                        an app's jobs' runs' (H.11): one per app, shared by its
+                                        runs at once
                                         one folder per state slot of the harness: the slot
                                         itself, or, for a file, the folder holding only it
                                         (`<slot>/<slot>`, contract A.1)
@@ -17,6 +20,13 @@ from pathlib import Path
 from handler_contracts import HarnessDescriptor
 
 from .agents import AgentRecord, RunsAs
+
+APP = "app-"  # + an app's name: the state its jobs' runs share (H.11); agent ids are hex
+
+
+def app_folder(data_dir: Path, app: str) -> Path:
+    """The harness state of an app's jobs' runs, one per app (their stand-in's id, app_jobs)."""
+    return data_dir / "agent-state" / (APP + app)
 
 
 def root(data_dir: Path, agent: AgentRecord, runs: RunsAs) -> Path:

@@ -101,6 +101,7 @@ class Device:
         raw = fragment[len("pair=") :]
         pairing = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
         self.gateway, self.host_id, self.id = pairing["g"], pairing["h"], pairing["d"]
+        self.computer = pairing["c"]  # what the phone calls the computer
         self.key = rc.unb64(pairing["k"])
         token = rc.gateway_token(self.key)
         self.http = httpx.Client(

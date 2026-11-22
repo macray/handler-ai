@@ -9,10 +9,11 @@ from typing import Any, cast
 
 import pytest
 
-from handler_contracts import ActionOption, ActionRun, AskTurn
+from handler_contracts import ActionOption, ActionRun, AppAction, AskTurn
 from handler_control import assistant as assistant_module
 from handler_control import handler_needs
 from handler_control.apps import AppError
+from handler_control.ask_history import AskHistoryStore
 from handler_control.assistant import ROUTER, Assistant, AssistantError
 
 FORM = {"type": "object", "required": ["what", "day"], "properties": {
@@ -29,15 +30,20 @@ class Apps:
 
     def __init__(self) -> None:
         self.ran: list[tuple[str, str, dict[str, Any]]] = []
+        self.told: list[dict[str, Any]] = []
+        self.inbox = SimpleNamespace(add=lambda **m: self.told.append(m))
 
-    async def act(self, name: str, action: str, fields: dict[str, Any]) -> ActionRun:
+    async def act(
+        self, name: str, action: str, fields: dict[str, Any], *, asked: bool
+    ) -> ActionRun:
+        assert asked  # an Ask pick: its run says it was started via Ask
         self.ran.append((name, action, fields))
         return ActionRun(app=name, action=action, state="succeeded")
 
 
 def routed(value: dict[str, Any]) -> tuple[Any, Apps]:
     apps = Apps()
-    assistant = Assistant(cast(Any, None), cast(Any, apps), cast(Any, None))
+    assistant = Assistant(cast(Any, None), cast(Any, apps), cast(Any, None), cast(Any, None))
     return asyncio.run(assistant.act(value, OFFERED, LISTED, "s-router")), apps
 
 
@@ -78,13 +84,17 @@ def test_a_pick_that_fits_runs_with_its_fields() -> None:
 
 
 class FailingApps(Apps):
-    async def act(self, name: str, action: str, fields: dict[str, Any]) -> ActionRun:
+    async def act(
+        self, name: str, action: str, fields: dict[str, Any], *, asked: bool
+    ) -> ActionRun:
         raise AppError("its backend did not start")
 
 
 @pytest.mark.rule("ask.a-pick-runs-at-once-as-the-owner")
 def test_a_pick_that_cannot_run_is_said() -> None:
-    assistant = Assistant(cast(Any, None), cast(Any, FailingApps()), cast(Any, None))
+    assistant = Assistant(
+        cast(Any, None), cast(Any, FailingApps()), cast(Any, None), cast(Any, None)
+    )
     pick = {"kind": "pick", "app": "planner", "action": "planned", "fields": {}}
     with pytest.raises(AssistantError) as failed:
         asyncio.run(assistant.act(pick, OFFERED, LISTED, "s-router"))
@@ -107,7 +117,7 @@ class Sessions:
         return None, "the result does not match its schema"
 
 
-@pytest.mark.rule("router.one-run-per-ask")
+@pytest.mark.rule("ask.each-ask-is-one-router-run", "ask.each-ask-is-kept", "ask.a-failure-is-told")
 def test_a_router_with_no_valid_result_runs_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -115,12 +125,38 @@ def test_a_router_with_no_valid_result_runs_nothing(
     monkeypatch.setattr(assistant_module.save_rules, "session_model", lambda *_: "runs")
     sessions, apps = Sessions(), Apps()
     settings = SimpleNamespace(state_dir=tmp_path)
-    assistant = Assistant(cast(Any, settings), cast(Any, apps), cast(Any, sessions))
+    history = AskHistoryStore(cast(Any, settings))
+    assistant = Assistant(cast(Any, settings), cast(Any, apps), cast(Any, sessions), history)
     monkeypatch.setattr(assistant, "options", lambda: OFFERED)
     turns = [AskTurn(who="you", text="Tomorrow I call the bank")]
     with pytest.raises(AssistantError) as failed:
-        asyncio.run(assistant.answer(turns, "Europe/Paris"))
+        asyncio.run(assistant.answer(turns, "Europe/Paris", "key", True))
     assert failed.value.status == 502 and "does not match its schema" in str(failed.value)
     (run,) = sessions.created
     assert run["origin"] == "ask" and set(run["run"].fields) == {"said", "now", "actions"}
     assert apps.ran == []
+    (kept,) = history.view().asks  # a failure is kept, and told
+    assert (kept.via, kept.outcome, kept.turns) == ("key", "failed", turns)
+    (told,) = apps.told
+    assert told["source"] == "ask" and told["title"] == "Ask could not answer"
+    assert told["summary"].startswith("“Tomorrow I call the bank”: the Ask router gave no answer")
+
+
+@pytest.mark.rule("ask.only-the-actions-offered")
+def test_an_action_taken_out_of_ask_is_not_offered() -> None:
+    """If this fails: an action you took out of Ask is run from it, or one you kept is not."""
+
+    def action(name: str, in_ask: bool) -> AppAction:
+        return AppAction(name=name, description=name, by="code", in_ask=in_ask)
+
+    app = SimpleNamespace(
+        name="cv", current=object(), description="CV", actions=[action("add", True)]
+    )
+    app.actions.append(action("import", False))
+    draft = SimpleNamespace(name="draft", current=None, description="", actions=[action("x", True)])
+    apps = SimpleNamespace(views=lambda: [app, draft])
+    options = Assistant(
+        cast(Any, None), cast(Any, apps), cast(Any, None), cast(Any, None)
+    ).options()
+    assert [(a, k) for a, k, _ in options] == [("cv", "add")]
+    assert "inAsk" not in options[0][2]  # the router reads the action, not your setting

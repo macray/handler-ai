@@ -2,6 +2,7 @@
   // The user's own lines of the toolbox (custom.containerfile, contract B.7), appended last to
   // the recipe Handler generates: edited here, used by the next toolbox build, which checks every
   // harness and addon image on top of it before any switches (D.4).
+  import { ask } from "../lib/ask.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
   import { api } from "../lib/api";
@@ -41,8 +42,8 @@
     }
   }
 
-  function close(): void {
-    if (!dirty || confirm("Close without saving your changes?")) onclose();
+  async function close(): Promise<void> {
+    if (!dirty || (await ask({ title: "Close without saving your changes?", yes: "Close", danger: true }))) onclose();
   }
 </script>
 

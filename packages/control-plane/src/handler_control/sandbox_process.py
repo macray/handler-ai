@@ -6,6 +6,8 @@ handler-sandbox-<impl> launch           with the SandboxSpec JSON on fd 3; its s
                                         events
 handler-sandbox-<impl> set-allow|set-blocked|set-egress|set-watched on a running sandbox (A.4)
 handler-sandbox-<impl> attach NAME      run by `handler terminal` (D.16), never by handlerd
+handler-sandbox-<impl> start-engine     the engine started where it does not start by itself
+                                        (daemon.py, at handlerd's start)
 handler-sandbox-<impl> sweep            what launchers that died left behind (daemon.py)
 """
 
@@ -35,6 +37,7 @@ _runtime = [DEFAULT_RUNTIME]  # the one in use (runtime.toml, read at start: run
 TEST_SANDBOX_ENV = "HANDLER_TEST_SANDBOX"
 SPEC_FD = 3
 EGRESS_PREFIX = "handler-egress "
+LOGGED_CHARS = 1000  # of a sandbox's stderr line in handlerd's log: an error fits, a payload not
 STOP_TIMEOUT = 20.0
 FOLLOW_INTERVAL = 0.2  # seconds between two reads of a detached launcher's output
 
@@ -257,6 +260,8 @@ def log_line(line: str, label: str, on_egress: Callable[[dict[str, str]], None])
         with contextlib.suppress(ValueError):
             on_egress(json.loads(line[len(EGRESS_PREFIX) :]))
             return
+    if len(line) > LOGGED_CHARS:  # a harness logging whole ACP messages: kilobytes a line
+        line = f"{line[:LOGGED_CHARS]}… ({len(line)} characters)"
     log.info("[%s] %s", label, line)
 
 

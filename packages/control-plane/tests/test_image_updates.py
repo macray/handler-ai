@@ -105,6 +105,7 @@ def test_a_run_rebuilds_every_built_image_and_records_failures(
     assert view.last_failed == ["addon:shopify"] and not view.running
 
 
+@pytest.mark.rule("image.the-network-filter-is-built-when-missing")
 def test_handlerd_builds_a_missing_network_filter_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -139,7 +140,7 @@ def test_updates_start_with_the_network_filter(monkeypatch: pytest.MonkeyPatch) 
     ]
 
 
-@pytest.mark.rule("tool.built-once-it-can-be")
+@pytest.mark.rule("tool.built-as-soon-as-its-needs-are-there")
 def test_an_addon_an_agent_uses_is_built_when_it_is_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -181,7 +182,7 @@ def test_an_addon_an_agent_uses_is_built_when_it_is_not(
     assert image_updates.missing_addons(updater.settings, updater.registry) == []
 
 
-@pytest.mark.rule("tool.built-once-it-can-be")
+@pytest.mark.rule("tool.built-as-soon-as-its-needs-are-there")
 def test_an_addon_waits_for_the_toolbox_to_give_what_it_needs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -217,6 +218,7 @@ def test_an_addon_waits_for_the_toolbox_to_give_what_it_needs(
     asyncio.run(run())
 
 
+@pytest.mark.rule("image.the-network-filter-is-built-when-missing")
 def test_another_runtime_chosen_builds_its_missing_network_filter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

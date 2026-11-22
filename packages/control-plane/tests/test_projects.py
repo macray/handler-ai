@@ -63,6 +63,7 @@ def test_agents_follow_their_project(tmp_path: Path) -> None:
     assert not ProjectRegistry(tmp_path, registry).projects
 
 
+@pytest.mark.rule("project.its-branch-is-read-never-by-running-git")
 def test_the_branch_is_read_from_its_git_head(tmp_path: Path) -> None:
     folder = tmp_path / "repo"
     (folder / ".git").mkdir(parents=True)

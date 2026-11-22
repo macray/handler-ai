@@ -8,6 +8,12 @@ export interface PairingInfo {
   hostId: string;
   deviceId: string;
   name: string; // this device's name on the host
+  computer?: string; // the computer's name (what this phone calls it); absent if paired before it had one
+}
+
+/** What this phone calls the computer: its name, or its host id if paired before it had one. */
+export function computerName(info: PairingInfo): string {
+  return info.computer ?? info.hostId;
 }
 
 /** What the app keeps: who it is, and its keys (usable, not readable). */
@@ -24,6 +30,7 @@ interface Payload {
   d: string;
   k: string;
   n: string;
+  c: string;
 }
 
 /** The pairing in a URL fragment (`#pair=…`), if any. Throws on a malformed one. */
@@ -38,9 +45,11 @@ export function readFragment(hash: string): (PairingInfo & { key: Uint8Array<Arr
     /^d_[0-9a-f]{16}$/.test(p.d) &&
     /^https?:\/\//.test(p.g) &&
     key.length === 32 &&
-    typeof p.n === "string";
+    typeof p.n === "string" &&
+    typeof p.c === "string" &&
+    p.c.length > 0;
   if (!valid) throw new Error("this pairing code is not valid");
-  return { gateway: p.g, hostId: p.h, deviceId: p.d, name: p.n, key };
+  return { gateway: p.g, hostId: p.h, deviceId: p.d, name: p.n, computer: p.c, key };
 }
 
 export async function deviceFrom(info: PairingInfo & { key: Uint8Array<ArrayBuffer> }): Promise<Device> {
@@ -81,6 +90,14 @@ async function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => I
     conn.close();
   }
 }
+
+/** This device's IndexedDB store, by key: the device itself, and what `snapshot.ts` keeps. */
+export const deviceStore = {
+  get: (key: string): Promise<unknown> => tx("readonly", (s) => s.get(key)),
+  put: async (key: string, value: unknown): Promise<void> => void (await tx("readwrite", (s) => s.put(value, key))),
+  delete: async (key: string): Promise<void> => void (await tx("readwrite", (s) => s.delete(key))),
+};
+export type Store = typeof deviceStore;
 
 export async function loadDevice(): Promise<Device | null> {
   return ((await tx("readonly", (s) => s.get("device"))) as Device | undefined) ?? null;

@@ -40,7 +40,7 @@ CONFINEMENT = "grep -E '^(CapBnd|NoNewPrivs)' /proc/self/status | tr -s '\\t' ' 
 
 
 @pytest.mark.rule(
-    "confinement.only-the-container-loosens", "confinement.nested-gives-only-the-host-s-part"
+    "confinement.only-the-container-loosens", "confinement.nested-gets-only-host-devices-and-ids"
 )
 def test_nested_confinement_keeps_what_inner_podman_needs(scope: Path) -> None:
     script = CONFINEMENT + "; touch /x 2>/dev/null || echo rootfs-ro"
@@ -52,7 +52,7 @@ def test_nested_confinement_keeps_what_inner_podman_needs(scope: Path) -> None:
     assert "rootfs-ro" in out
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 @pytest.mark.parametrize("confinement", ["strict", "nested", "privileged"])
 def test_a_sandbox_running_containers_gets_more_processes(scope: Path, confinement: str) -> None:
     skip_unless_usable(PODMAN, confinement)
@@ -67,7 +67,7 @@ def test_a_sandbox_running_containers_gets_more_processes(scope: Path, confineme
         assert limit == str(CONTAINERS_PIDS_LIMIT)
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 @pytest.mark.parametrize("confinement", ["nested", "privileged"])
 def test_nested_confinement_gives_the_agent_subordinate_ids(scope: Path, confinement: str) -> None:
     skip_unless_usable(PODMAN, confinement)
@@ -79,7 +79,7 @@ def test_nested_confinement_gives_the_agent_subordinate_ids(scope: Path, confine
     ]  # fmt: skip
 
 
-@pytest.mark.rule("confinement.nested-gives-only-the-host-s-part")
+@pytest.mark.rule("confinement.nested-gets-only-host-devices-and-ids")
 @pytest.mark.parametrize("confinement", ["nested", "privileged"])
 def test_the_engine_inside_is_configured_by_the_image_not_the_sandbox(
     scope: Path, confinement: str

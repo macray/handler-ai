@@ -139,8 +139,16 @@
       "type": "string"
     },
     "agentId": {
-      "title": "Agentid",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agentid"
     },
     "projectId": {
       "anyOf": [
@@ -340,6 +348,18 @@
       "default": null,
       "title": "App"
     },
+    "job": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Job"
+    },
     "waitingFor": {
       "anyOf": [
         {
@@ -464,7 +484,6 @@
   },
   "required": [
     "id",
-    "agentId",
     "harness",
     "scope",
     "state",

@@ -90,6 +90,10 @@
       "default": null,
       "title": "Hostid"
     },
+    "computerName": {
+      "title": "Computername",
+      "type": "string"
+    },
     "light": {
       "enum": [
         "off",
@@ -144,6 +148,7 @@
     }
   },
   "required": [
+    "computerName",
     "light"
   ],
   "title": "RemoteStatus",

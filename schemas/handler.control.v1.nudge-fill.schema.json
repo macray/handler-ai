@@ -1,0 +1,41 @@
+{
+  "$id": "urn:handler.control/v1/nudge-fill",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The nudge's form as what was said fills it (Ask's router, its action alone offered):\nnever sent; `question` when it could not be filled.",
+  "properties": {
+    "said": {
+      "title": "Said",
+      "type": "string"
+    },
+    "fields": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fields"
+    },
+    "question": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Question"
+    }
+  },
+  "required": [
+    "said"
+  ],
+  "title": "NudgeFill",
+  "type": "object"
+}

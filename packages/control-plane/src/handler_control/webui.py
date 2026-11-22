@@ -31,13 +31,14 @@ class DirectoryExistsError(ValueError):
 
 
 def list_directories(roots: list[str], path: str | None) -> DirectoryListing:
-    """`roots`: the work folders (folders.roots), resolved."""
+    """`roots`: the work folders (folders.roots), resolved; an app's folder's picker adds the
+    notes root."""
     if path is None:
         entries = [DirectoryEntry(name=r, path=r) for r in roots if Path(r).is_dir()]
         return DirectoryListing(path=None, parent=None, entries=entries)
     resolved = os.path.realpath(path)
     if not any(is_within(resolved, r) for r in roots) or not Path(resolved).is_dir():
-        raise OutsideRootsError(f"{resolved} is not a directory inside the work folders")
+        raise OutsideRootsError(f"{resolved} is not a directory inside {', '.join(roots)}")
     children = sorted(
         (
             e

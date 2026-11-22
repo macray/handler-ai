@@ -32,7 +32,8 @@ def daemon() -> Iterator[Daemon]:
 
 
 def lines_of(client: Any) -> list[dict[str, Any]]:
-    return [m["params"] for m in client.updates if m["method"] == "_handler/line"]
+    lines = [m["params"] for m in client.updates if m["method"] == "_handler/line"]
+    return [line for line in lines if line["event"] != "instructed"]  # the network's words
 
 
 @pytest.mark.rule("session.an-unreachable-model-is-said")

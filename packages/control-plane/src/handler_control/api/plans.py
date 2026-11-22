@@ -37,7 +37,10 @@ def source(ctx: Context, body: ReadPlanRequest) -> Source:
         return ctx.drafts.source(body.draft_id)
     assert body.path is not None  # with an agent or a session
     if body.session_id is not None:
-        return file_of(ctx.get_agent(ctx.get_session(body.session_id).agent_id), body.path)
+        agent_id = ctx.get_session(body.session_id).agent_id
+        if agent_id is None:  # a job's run (H.11)
+            raise ProblemError(404, "agent not found", "a job's run has no agent")
+        return file_of(ctx.get_agent(agent_id), body.path)
     assert body.agent_id is not None  # one of the three
     return file_of(ctx.get_agent(body.agent_id), body.path)
 

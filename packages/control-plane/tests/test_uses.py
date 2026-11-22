@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from handler_contracts import UseKind
+from handler_contracts import UseKind, WhoWorks
 from handler_control import handler_needs
 from handler_control.settings import Settings
 from handler_control.uses import UseGraph
@@ -18,7 +18,8 @@ from handler_control.uses import UseGraph
 def an_agent(ident: str, name: str, **more: Any) -> SimpleNamespace:
     fields: dict[str, Any] = {
         "id": ident, "name": name, "scope": None, "project_id": None, "model_alone": False,
-        "skills": [], "project_skills": [], "knowledge": [], "addons": [], "project_addons": [],
+        "skills": [], "project_skills": [], "knowledge": [], "schemas": [], "addons": [],
+        "project_addons": [],
         "model": SimpleNamespace(account="fake", provider=None),
     }  # fmt: skip
     return SimpleNamespace(**(fields | more))
@@ -35,8 +36,12 @@ def graph(tmp_path: Path) -> UseGraph:
         "a1": an_agent("a1", "sorter"),
         "a2": an_agent("a2", "local", model=SimpleNamespace(account=None, provider="llamacpp")),
         "a3": an_agent("a3", "dev", project_id="p1", project_addons=[SimpleNamespace(addon="db")]),
-        "a4": an_agent("a4", "keeper"),
-        "a5": an_agent("a5", "writer"),
+        "a5": an_agent(
+            "a5",
+            "writer",
+            schemas=[SimpleNamespace(schema_id="contacts@1", access="write")],
+            knowledge=[SimpleNamespace(folder="people", access="write")],
+        ),
     }
     registry = SimpleNamespace(agents=agents, get=agents.get)
     projects = SimpleNamespace(registry=registry, projects={"p1": project}, get={"p1": project}.get)
@@ -47,8 +52,15 @@ def graph(tmp_path: Path) -> UseGraph:
         definition=SimpleNamespace(append=[SimpleNamespace(to="acme/log/notes.md")]),
     )
     automations = SimpleNamespace(views=lambda: [morning])
-    need = SimpleNamespace(agent_id="a4", description="Sorts your things", name="keeper")
-    apps = SimpleNamespace(views=lambda: [SimpleNamespace(name="keeper", agents=[need])])
+    app_runs = WhoWorks(program="claude-code", account="team")  # its jobs' (H.2)
+    job_runs = WhoWorks(provider="llamacpp")  # one job's own: the model alone
+    keeper = SimpleNamespace(
+        name="keeper",
+        title="Keeper",
+        who_works=app_runs,
+        jobs=[SimpleNamespace(who_works=job_runs)],
+    )
+    apps = SimpleNamespace(views=lambda: [keeper])
     settings.state_dir.mkdir(parents=True)
     handler_needs.give(settings.state_dir, "prompt-writer", "a5")
     return UseGraph(settings, cast(Any, projects), cast(Any, automations), cast(Any, apps))
@@ -78,7 +90,10 @@ def links(graph: UseGraph, kind: UseKind, ident: str, side: str) -> set[tuple[st
             id="automation-notes",
         ),
         pytest.param(
-            ("app", "keeper"), ("agent", "a4"), "needs it: Sorts your things", id="app-s-agent"
+            ("app", "keeper"), ("account", "team"), "runs its jobs on it", id="app-s-who-works"
+        ),
+        pytest.param(
+            ("app", "keeper"), ("provider", "llamacpp"), "runs its jobs on it", id="a-job-s-own"
         ),
         pytest.param(
             ("handler", "prompt-writer"),
@@ -87,6 +102,8 @@ def links(graph: UseGraph, kind: UseKind, ident: str, side: str) -> set[tuple[st
             id="handler-s-helper",
         ),
         pytest.param(("agent", "a2"), ("provider", "llamacpp"), "runs on it", id="provider"),
+        pytest.param(("agent", "a5"), ("schema", "contacts@1"), "writes it", id="schema"),
+        pytest.param(("agent", "a5"), ("knowledge", "people"), "writes it", id="notes-written"),
         pytest.param(
             ("project", "p1"), ("addon", "db"), "gives it to all its agents", id="project-s-addon"
         ),

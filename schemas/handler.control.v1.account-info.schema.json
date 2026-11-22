@@ -31,7 +31,7 @@
       "default": null,
       "title": "Description"
     },
-    "plan": {
+    "subscription": {
       "anyOf": [
         {
           "type": "string"
@@ -41,7 +41,7 @@
         }
       ],
       "default": null,
-      "title": "Plan"
+      "title": "Subscription"
     },
     "login": {
       "anyOf": [

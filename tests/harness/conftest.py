@@ -11,6 +11,7 @@ Credentials for real prompt turns are opt-in (tests are skipped without them):
     HANDLER_TEST_MISTRAL_API_KEY    a Mistral API key
 """
 
+import functools
 import subprocess
 import uuid
 from collections.abc import Iterator
@@ -20,7 +21,7 @@ from typing import Any
 import pytest
 
 from handler_contracts import AgentSpec, McpServer, NetworkMode
-from handler_control import compose
+from handler_control import agent_state, compose
 from handler_harness import catalog, render
 
 from ..sandbox.conftest import popen
@@ -29,6 +30,7 @@ from ..support.acp_client import AcpClient
 from ..support.runtimes import default_runtime
 
 
+@functools.cache  # asked by every file importing it, on every worker: podman is slow under load
 def image_present(image: str) -> bool:
     runtime = default_runtime()
     if runtime is None:
@@ -60,9 +62,11 @@ def start_agent(
     mcp_servers: list[McpServer] | None = None,
     network: NetworkMode = "none",
     allow: list[str] | None = None,
+    state_root: Path | None = None,
 ) -> tuple[AcpClient, Any]:
     """Run the real pipeline and return an ACP client connected to the agent + the launch
-    (`mcp_servers`: as an addon gives them), in bypass mode, with this network."""
+    (`mcp_servers`: as an addon gives them), in bypass mode, with this network; `state_root`:
+    the harness state it keeps (agent_state.py), made as handlerd makes it."""
     harness = catalog.get(agent.harness)
     checked = compose.check_scope([str(scope.parent)], str(scope))
     launch = render(
@@ -73,7 +77,10 @@ def start_agent(
         provider_key=provider_key,
         mcp_servers=mcp_servers,
         permission_mode="bypass",
+        state_root=str(state_root) if state_root is not None else None,
     )
+    if state_root is not None:
+        agent_state.ensure(harness.descriptor, state_root)
     spec = compose.sandbox_spec(
         name=f"handler-test-{uuid.uuid4().hex[:10]}",
         launch=launch,
