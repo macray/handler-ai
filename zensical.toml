@@ -30,6 +30,14 @@ nav = [
     "docs/ask.md",
     "docs/phone.md",
   ] },
+  { "Compared" = [
+    "docs/compare/index.md",
+    "docs/compare/sbx.md",
+    "docs/compare/claude-code-sandbox.md",
+    "docs/compare/bubblewrap.md",
+    "docs/compare/meta-muse.md",
+    "docs/compare/openclaw.md",
+  ] },
   { "Command line" = [
     "docs/cli/index.md",
     { "Working with an agent" = ["docs/cli/run.md", "docs/cli/attach.md", "docs/cli/terminal.md", "docs/cli/acp.md", "docs/cli/agent-options.md"] },

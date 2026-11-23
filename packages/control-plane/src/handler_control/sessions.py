@@ -1361,17 +1361,21 @@ def title_of(prompt: str) -> str:
 
 
 MARKER = re.compile(r"^(?:#+|>|[-*+]|\d+[.)])(?:\s+|$)")  # Markdown's, before a line's words
+# Markdown's strong emphasis (`**`) and code spans, their words kept; a single `*` may be a
+# glob's and `__` a Python name's (`__init__`), they stay
+INLINE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|`([^`]+)`")
 
 
 def one_line(text: str, limit: int, folder: str = "") -> str | None:
     """`text` in one line of at most `limit` characters (code points): paths relative to
-    `folder`, whitespace runs one space, Markdown's markers at its start dropped, cut with `…`;
-    None when nothing is left."""
+    `folder`, whitespace runs one space, Markdown's markers at its start, its strong emphasis and
+    code spans dropped (their words kept), cut with `…`; None when nothing is left."""
     if folder and folder != "/":
         text = text.replace(f"{folder}/", "")
     line = " ".join(text.split())
     while (marker := MARKER.match(line)) is not None:
         line = line[marker.end() :]
+    line = INLINE.sub(lambda m: m[1] or m[2], line)
     if len(line) > limit:
         line = line[: limit - 1].rstrip() + "…"
     return line or None

@@ -4,7 +4,7 @@ relay exported next to it (`build-proxy`).
 `container build` has no `--iidfile`: a build is tagged `localhost/handler-ai-build:<id>`,
 its id read from `image inspect`, and the tag kept: `container` refers to an image by a name only,
 and deletes one left without a name at once (1.7.1). Images only such a tag names are pruned at
-a later build (`prune_builds`).
+a later build (`prune_builds`), aged by the time written in their tag.
 """
 
 import hashlib
@@ -89,7 +89,7 @@ def build(
     no_cache: bool,
     no_intermediate: bool,  # BuildKit keeps no intermediate images anyway
 ) -> int:
-    tag = f"{BUILD_REPO}:{uuid.uuid4().hex[:12]}"
+    tag = build_tag(datetime.now(UTC))
     argv = ["--tag", tag, "--file", str(context / "Containerfile")]
     argv += [a for arg in build_args for a in ("--build-arg", arg)]
     argv += ["--pull"] if pull else []
@@ -107,30 +107,46 @@ def build(
 
 BUILD_REPO = "localhost/handler-ai-build"
 STALE = timedelta(days=1)  # far more than a build and its check: another builder's is never one
+# A build's age is the time in its tag, never its image's creation date: an image whose steps are
+# all cached, or only add labels, has its base image's, years old, and a build running beside it
+# would prune it before its builder tags it with its name.
+_TAGGED = "%Y%m%dT%H%M%SZ"
+
+
+def build_tag(now: datetime) -> str:
+    return f"{BUILD_REPO}:{now.strftime(_TAGGED)}-{uuid.uuid4().hex[:8]}"
+
+
+def _tagged_at(name: str) -> datetime | None:
+    """When a build tag was made; None for a name that is not one."""
+    repo, _, tag = name.partition(":")
+    if repo != BUILD_REPO:
+        return None
+    try:
+        return datetime.strptime(tag.split("-")[0], _TAGGED).replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def prune_builds(keep: str, now: datetime | None = None) -> None:
-    """The images only a build tag names (an image without a name is gone, so a build is
+    """The images only build tags name (an image without a name is gone, so a build is
     tagged until it is switched): a replaced one kept while a sandbox ran from it, a build whose
-    builder was killed. Removed once a day old and unused, except `keep` (a cached build gives
-    an old image back)."""
+    builder was killed. Removed once their newest tag is a day old and unused, except `keep` (a
+    cached build gives an older image back)."""
     try:
         listed = json.loads(container("image", "list", "--format", "json", check=False) or "[]")
     except ValueError:
         return
     named: dict[str, list[str]] = {}
-    created: dict[str, datetime] = {}
     for entry in listed:
         config = entry.get("configuration") if isinstance(entry, dict) else None
         if not isinstance(config, dict) or not isinstance(entry.get("id"), str):
             continue
         named.setdefault(entry["id"], []).append(str(config.get("name")))
-        if isinstance(config.get("creationDate"), str):
-            created[entry["id"]] = datetime.fromisoformat(config["creationDate"])
     old = (now or datetime.now(UTC)) - STALE
     for image, all_names in named.items():
-        builds_only = all(n.startswith(f"{BUILD_REPO}:") for n in all_names)
-        if image == keep or not builds_only or created.get(image, datetime.now(UTC)) > old:
+        tagged = [_tagged_at(n) for n in all_names]
+        if image == keep or None in tagged or max(t for t in tagged if t) > old:
             continue
         if not running_from(image):
             quiet("image", "delete", *all_names)

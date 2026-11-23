@@ -530,9 +530,11 @@ def _run(runtime: Runtime, instance: Instance) -> int:
     return runtime.wait(instance)  # gone already: ended between two looks, its code still told
 
 
-def attached_exit(instance: Instance) -> int:
+def attached_exit(instance: Instance, otherwise: int = 0) -> int:
     """A `tty` sandbox that ended: the code its `attach` got (`Runtime.attached`), written right
-    after the end, hence the wait; 0 when it never comes (an `attach` killed)."""
+    after the end, hence the wait (also that its launcher's cleanup never removes the folder
+    while `attach` writes in it); `otherwise` when it never comes (an `attach` killed): the
+    engine's, when it keeps one."""
     path = instance.dir / _ATTACH_EXIT
     deadline = time.monotonic() + ATTACH_EXIT_TIMEOUT
     while not path.exists() and time.monotonic() < deadline:
@@ -540,7 +542,7 @@ def attached_exit(instance: Instance) -> int:
     try:
         return int(path.read_text())
     except (OSError, ValueError):
-        return 0
+        return otherwise
 
 
 def _start_failed(runtime: Runtime, instance: Instance) -> int:

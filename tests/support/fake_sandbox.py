@@ -36,6 +36,7 @@ container on a Mac, runtimes.default_runtime); the real sandboxes need the real 
 (dev_env.ensure_network_filter).
 """
 
+import contextlib
 import json
 import os
 import signal
@@ -148,8 +149,22 @@ def run_watched(ran: Path, spec: dict) -> int:
 def run_automation(ran: Path, spec: dict) -> int:
     """An automation's run: its processes in a group of their own, all killed on SIGTERM."""
     env = env_of(spec, write_commands(ran, spec))
+    # its handler before its processes start: a SIGTERM between the two (a run deleted as soon
+    # as it starts) would end the fake alone, its processes keeping the log's pipe open
+    stopped, group = False, []
+
+    def stop(*_: object) -> None:
+        nonlocal stopped
+        stopped = True
+        for pid in group:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
+
+    signal.signal(signal.SIGTERM, stop)
     proc = subprocess.Popen(spec["argv"], env=env, start_new_session=True)
-    signal.signal(signal.SIGTERM, lambda *_: os.killpg(proc.pid, signal.SIGKILL))
+    group.append(proc.pid)
+    if stopped:  # while it was starting
+        stop()
     return proc.wait()
 
 

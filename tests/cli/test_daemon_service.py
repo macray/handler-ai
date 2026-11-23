@@ -11,6 +11,7 @@ import pytest
 from handler_cli import daemon_commands
 
 
+@pytest.mark.rule("service.starts-with-your-session")
 def test_a_systemd_unit_on_linux(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -36,6 +37,11 @@ def _fake_systemctl(folder: Path) -> Path:
     return calls
 
 
+@pytest.mark.rule(
+    "service.starts-with-your-session",
+    "service.is-the-handlerd-this-shell-talks-to",
+    "service.installed-again-replaces-it",
+)
 def test_the_unit_goes_where_systemds_user_manager_looks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -69,6 +75,7 @@ def test_the_unit_goes_where_systemds_user_manager_looks(
     assert daemon_commands.unit_path() == tmp_path / ".config/systemd/user/handler-ai.service"
 
 
+@pytest.mark.rule("service.starts-with-your-session")
 def test_a_launch_agent_on_macos(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -107,6 +114,7 @@ def _fake_launchctl(folder: Path) -> Path:
     return calls
 
 
+@pytest.mark.rule("service.installed-again-replaces-it")
 def test_setup_run_again_on_macos_leaves_the_launch_agent_loaded(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -140,6 +148,9 @@ def test_without_systemd_a_sentence_not_a_traceback(
     assert daemon_commands.NO_SYSTEMD in capsys.readouterr().out
 
 
+@pytest.mark.rule(
+    "service.is-the-handlerd-this-shell-talks-to", "service.never-gets-test-credentials"
+)
 def test_the_service_gets_the_environment_of_the_shell_that_installs_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -170,6 +181,7 @@ def test_the_service_gets_the_environment_of_the_shell_that_installs_it(
     assert 'Environment="HOME=' not in unit  # the account's own: the service has it
 
 
+@pytest.mark.rule("service.is-the-handlerd-this-shell-talks-to")
 def test_the_service_finds_the_engine_this_shell_finds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

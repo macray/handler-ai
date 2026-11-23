@@ -39,7 +39,7 @@ def built(image: Image, tmp_path: Path) -> Iterator[str]:
     (context / "version").write_text("Test 1.0\nsecond line\n")
     (context / "Containerfile").write_text(
         "ARG GREETING\nFROM scratch\nARG GREETING\nCOPY version /version\n"
-        'LABEL greeting="${GREETING}"\n'
+        'LABEL greeting="${GREETING}"\n' + own_image()
     )
     id_file = tmp_path / "iid"
     result = image(
@@ -137,7 +137,7 @@ def test_an_image_built_on_another_outlives_it(image: Image, built: str, tmp_pat
     assert image("tag", built, ref).returncode == 0
     context = tmp_path / "child"
     context.mkdir()
-    (context / "Containerfile").write_text(f"FROM {ref}\nLABEL child=yes\n")
+    (context / "Containerfile").write_text(f"FROM {ref}\nLABEL child=yes\n" + own_image())
     id_file = tmp_path / "child-iid"
     assert image("build", str(context), "--id-file", str(id_file)).returncode == 0
     child = id_file.read_text().strip()

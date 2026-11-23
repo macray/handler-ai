@@ -295,8 +295,11 @@ def test_writers_of_a_folder_take_turns_and_then_is_called(
     assert api(daemon, "POST", f"/v1/sessions/{first['sessionId']}/cancel").status_code == 200
 
     def calls() -> list[dict[str, Any]] | None:
+        """Both runs' calls, in the runs' order, once both came: each run's `then` is called
+        as it ends, the second's maybe before the first's."""
         ours = {c["body"]["runId"]: c for c in app("GET", "/api/ended")["ended"]}
-        return [ours[r["id"]] for r in (first, second)] if second["id"] in ours else None
+        runs = (first, second)
+        return [ours[r["id"]] for r in runs] if all(r["id"] in ours for r in runs) else None
 
     ended = until(calls)
     assert [(c["person"], c["start"]) for c in ended] == [("owner", None)] * 2

@@ -95,8 +95,7 @@ def start_agent(
     if network != "none":
         dev_env.ensure_network_filter(runtime.binary)
     doc = spec.model_dump(mode="json", by_alias=True, exclude_none=True)
-    proc = popen(
-        runtime.binary, doc, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )  # fmt: skip
+    # its stderr the test's (pytest's capture, shown when it fails): the launcher's reason, or the
+    # harness's, when the agent closes its stdio before an answer
+    proc = popen(runtime.binary, doc, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     return AcpClient.over_process(proc, on_permission="deny"), launch

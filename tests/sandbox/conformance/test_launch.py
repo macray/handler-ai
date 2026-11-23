@@ -158,6 +158,7 @@ def _exit_code(pid: int, timeout: float = 30) -> int:
     raise AssertionError(f"attach still running after {timeout}s")
 
 
+@pytest.mark.rule("sandbox.a-terminal-follows-resizes")
 def test_tty_is_a_terminal_attached_to_that_follows_resizes(runtime: Runtime, scope: Path) -> None:
     """D.16: with `tty`, launch's stdio is not the process's: it says it is ready, then `attach`
     runs the process on the caller's terminal, its size, resized with it, nothing else drawn

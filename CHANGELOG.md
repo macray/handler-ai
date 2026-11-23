@@ -3,6 +3,17 @@
 What each release lets you do, grouped by what you do. One release is one commit in the public
 repository ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+## 0.4.1
+
+### Fixed
+
+- On a Mac with Apple's `container`: a session no longer fails while its image is rebuilt, a
+  terminal resized at start gets its size, caches keep what a sandbox added, and parallel builds
+  keep their images.
+- A sandbox's end leaves nothing behind (Podman: its image; Docker: a terminal's folder).
+- The phone's session list shows an agent's last line without Markdown.
+- The README's demo and screenshots show today's web UI.
+
 ## 0.4.0
 
 An alpha: formats may still change from one release to the next. **Your files of 0.3 are not

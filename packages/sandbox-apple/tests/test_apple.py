@@ -606,27 +606,32 @@ def test_a_failed_build_says_apple_s_innermost_reason() -> None:
     assert other.text == "no space left on device"
 
 
-@pytest.mark.rule("runtime.removes-only-an-unused-image")
+@pytest.mark.rule("runtime.removes-only-an-unused-image", "runtime.on-apple-old-builds-are-removed")
 def test_a_later_build_prunes_old_unused_images_only_a_build_tag_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """On 1.7.1 an image without a name is deleted, so each build keeps its tag; one
     left with only that tag (replaced while a sandbox ran from it, its builder killed) goes at a
-    later build, once a day old, never while used, nor another builder's recent one."""
+    later build, once its tag is a day old, never while used, nor another builder's recent one,
+    whatever its image's creation date (a cached build's, or one only adding labels, is its
+    base image's)."""
     now = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    years_ago = (now - timedelta(days=700)).isoformat()
 
-    def image(id_: str, name: str, created: datetime) -> dict[str, Any]:
-        return {"id": id_, "configuration": {"name": name, "creationDate": created.isoformat()}}
+    def image(id_: str, name: str) -> dict[str, Any]:
+        return {"id": id_, "configuration": {"name": name, "creationDate": years_ago}}
 
-    old, recent = now - timedelta(days=2), now - timedelta(hours=1)
+    old = images.build_tag(now - timedelta(days=2))
+    recent = images.build_tag(now - timedelta(hours=1))
     listed = [
-        image("a" * 64, "localhost/handler-ai-build:1", old),  # pruned
-        image("b" * 64, "localhost/handler-ai-build:2", old),  # a sandbox runs from it
-        image("c" * 64, "localhost/handler-ai-build:3", recent),  # another builder's, unswitched
-        image("d" * 64, "localhost/handler-ai-build:4", old),  # the current one
-        image("d" * 64, "localhost/handler-ai-pi:latest", old),
-        image("e" * 64, "localhost/handler-ai-build:5", old),  # just built (cached: old)
-        image("f" * 64, "quay.io/curl/curl:8.11.1", old),
+        image("a" * 64, old),  # pruned
+        image("b" * 64, images.build_tag(now - timedelta(days=3))),  # a sandbox runs from it
+        image("c" * 64, recent),  # another builder's, unswitched: its image as old as its base
+        image("c" * 64, images.build_tag(now - timedelta(days=5))),  # also an older build's
+        image("d" * 64, images.build_tag(now - timedelta(days=4))),  # the current one
+        image("d" * 64, "localhost/handler-ai-pi:latest"),
+        image("e" * 64, images.build_tag(now - timedelta(days=6))),  # just built (cached)
+        image("f" * 64, "quay.io/curl/curl:8.11.1"),
     ]
     deleted: list[tuple[str, ...]] = []
 
@@ -637,7 +642,7 @@ def test_a_later_build_prunes_old_unused_images_only_a_build_tag_names(
     monkeypatch.setattr(images, "quiet", lambda *args: deleted.append(args))
     monkeypatch.setattr(images, "running_from", lambda image_id: image_id == "b" * 64)
     images.prune_builds(keep="e" * 64, now=now)
-    assert deleted == [("image", "delete", "localhost/handler-ai-build:1")]
+    assert deleted == [("image", "delete", old)]
 
 
 @pytest.mark.rule("runtime.a-start-the-engine-refused-says-what-to-do")
@@ -940,6 +945,42 @@ def test_a_file_that_cannot_be_given_alone_is_refused(
         launch.Apple().refuse(spec(tmp_path, folders=folders))
 
 
+@pytest.mark.rule("image.latest-is-the-last-that-passed")
+def test_a_start_as_its_image_s_name_is_switched_gets_the_new_image(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`container create` reads the image's name twice: a rebuild switching it in between fails
+    the create ("descriptor mismatch"), tried again on the name's new image. If this fails: a
+    session started as its harness image is rebuilt fails to start, on Apple container only."""
+    mismatch = "container create failed: Error: descriptor mismatch: expected Descriptor(…)"
+    answers = [launch.ContainerError(mismatch), ""]
+    calls: list[tuple[str, ...]] = []
+    read: list[str] = []
+
+    def run(*args: str, **_kwargs: Any) -> str:
+        calls.append(args)
+        answer = answers.pop(0) if args[0] == "create" else ""
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(launch, "container", run)
+    monkeypatch.setattr(launch, "quiet", lambda *args: calls.append(args))
+    monkeypatch.setattr(launch, "protected", lambda spec: [])
+    monkeypatch.setattr(launch.Apple, "sweep", lambda self: [])
+    monkeypatch.setattr(launch, "image_info", lambda ref: read.append(ref) or {"config": {}})
+    sandbox.apple.host_user(sandbox.instance)
+    sandbox.apple.create(sandbox.instance, [])
+    assert [c[0] for c in calls] == ["create", "delete", "create"]
+    assert len(read) == 2  # its entrypoint read again, from the new image
+
+    calls.clear()  # another failure: said at once
+    answers[:] = [launch.ContainerError("container create failed: Error: notFound")]
+    with pytest.raises(launch.ContainerError, match="notFound"):
+        sandbox.apple.create(sandbox.instance, [])
+    assert [c[0] for c in calls] == ["create"]
+
+
 @pytest.mark.rule("app-need.a-file-given-is-that-file")
 def test_a_file_in_a_folder_holding_another_mount_gets_its_mount_point_parents_first(
     sandbox: Sandbox, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -993,3 +1034,37 @@ def test_a_disk_is_merged_by_one_launcher_at_a_time(
     present.append(("d-disk", {}))
     launch.merge_and_remove("d-disk", ["/c"])
     assert merged == ["d-disk"]
+
+
+@pytest.mark.rule("sandbox.on-apple-its-cache-disk-at-most-20-gb")
+def test_a_disk_still_held_by_the_ended_sandbox_is_merged_and_removed_once_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """For a while after its sandbox's VM is deleted (longer under load), a disk is still held:
+    a merge VM on it fails to start, `volume delete` refuses it. Both are tried again until it
+    is released. If this fails: the disk stays on the Mac until a later sweep, and what the
+    sandbox added to its caches waits for it."""
+    monkeypatch.setattr(launch, "relay_dir", lambda: tmp_path)
+    monkeypatch.setattr(launch.time, "sleep", lambda _s: None)
+    attachment = (
+        'Error: failed to bootstrap container (cause: "The storage device attachment is invalid.")'
+    )
+    in_use = (
+        "Error: volume 'd-disk' is currently in use and cannot be accessed by another container"
+    )
+    answers = {"run": [(1, attachment), (1, attachment), (0, "")], "volume": [(1, in_use), (0, "")]}
+    calls: list[str] = []
+
+    def run(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv[1])
+        code, err = answers[argv[1]].pop(0)
+        return subprocess.CompletedProcess(argv, code, "", err)
+
+    monkeypatch.setattr(launch.subprocess, "run", run)
+    launch._merge_and_remove("d-disk", [str(tmp_path)])
+    assert calls == ["run", "run", "run", "volume", "volume"]
+
+    calls.clear()  # another failure: not tried again, the disk kept for the sweep
+    answers["run"] = [(1, "Error: the service is not running")]
+    launch._merge_and_remove("d-disk", [str(tmp_path)])
+    assert calls == ["run"]

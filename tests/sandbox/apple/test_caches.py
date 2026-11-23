@@ -2,11 +2,13 @@
 Mac folder read-only under the sandbox's own disk), served by a program with no capability; its
 new files are merged into the cache once it ends, by a VM of their own, crashed or not."""
 
+import fcntl
 import json
 import os
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -126,19 +128,27 @@ def test_sweep_merges_what_a_dead_launcher_s_sandbox_added(cache: Path) -> None:
         CACHES_LABEL,
         Apple,
     )
+    from handler_sandbox_kit.launch import runtimes_dir  # noqa: PLC0415
 
-    disk = "handler-test-swept-disk"
+    sandbox = unique("handler-test-swept")
+    disk = f"{sandbox}-disk"
     labels = {
-        "handler.managed": "1", "handler.sandbox": "handler-test-swept",
+        "handler.managed": "1", "handler.sandbox": sandbox,
         "handler.launcher": "1:1", CACHES_LABEL: json.dumps([str(cache)]),
     }  # fmt: skip
-    created = volume(
-        "create", "-s", "1G", *(a for k, v in labels.items() for a in ("--label", f"{k}={v}")),
-        disk,
-    )  # fmt: skip
-    assert created.returncode == 0, created.stderr
-    write_on(disk, "mkdir -p /d/0/u && echo crashed > /d/0/u/added")
-    assert "handler-test-swept" in Apple().sweep()
+    # its merge lock held until its files are written: a dead launcher's from its creation, the
+    # disk would be merged by another test's sweep while `write_on` writes on it
+    locks = runtimes_dir() / "disks"
+    locks.mkdir(parents=True, exist_ok=True)
+    with (locks / f"{disk}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        created = volume(
+            "create", "-s", "1G",
+            *(a for k, v in labels.items() for a in ("--label", f"{k}={v}")), disk,
+        )  # fmt: skip
+        assert created.returncode == 0, created.stderr
+        write_on(disk, "mkdir -p /d/0/u && echo crashed > /d/0/u/added")
+    assert sandbox in Apple().sweep()
     # merged by this sweep, or by another launcher's at the same time (another test's)
     deadline = time.monotonic() + 120
     while disk in volume("list", "--format", "json").stdout:
@@ -157,11 +167,12 @@ def test_the_merge_writes_through_no_link(cache: Path) -> None:
     try:
         (cache / "escape").symlink_to(f"{DISK}")  # a link an earlier sandbox added
         (cache / "out").symlink_to(str(outside))
-        disk = "handler-test-merge-disk"
+        sandbox = unique("handler-test-merge")
+        disk = f"{sandbox}-disk"
         from handler_sandbox_kit.launcher import launcher_label  # noqa: PLC0415
 
         # a sandbox's disk, its launcher this test (alive: another test's sweep leaves it)
-        labels = {"handler.managed": "1", "handler.sandbox": "handler-test-merge",
+        labels = {"handler.managed": "1", "handler.sandbox": sandbox,
                   "handler.launcher": launcher_label()}  # fmt: skip
         created = volume(
             "create", "-s", "1G", *(a for k, v in labels.items() for a in ("--label", f"{k}={v}")),
@@ -188,11 +199,12 @@ def test_a_cache_is_not_emptied_while_additions_to_it_are_to_merge(cache: Path) 
     """If this fails: emptying a cache races a merge, which puts back half of what was there."""
     from handler_sandbox_apple.launch import CACHES_LABEL  # noqa: PLC0415
 
-    disk = "handler-test-pending-disk"
+    sandbox = unique("handler-test-pending")
+    disk = f"{sandbox}-disk"
     from handler_sandbox_kit.launcher import launcher_label  # noqa: PLC0415
 
     # a live launcher's (this test's): another test's sweep leaves it
-    labels = {"handler.managed": "1", "handler.sandbox": "handler-test-pending",
+    labels = {"handler.managed": "1", "handler.sandbox": sandbox,
               "handler.launcher": launcher_label(),
               CACHES_LABEL: json.dumps([str(cache / "inner")])}  # fmt: skip
     created = volume(
@@ -205,10 +217,15 @@ def test_a_cache_is_not_emptied_while_additions_to_it_are_to_merge(cache: Path) 
             [APPLE.binary, "cache", "clear", str(cache)],
             capture_output=True, text=True, check=False,
         )  # fmt: skip
-        assert r.returncode == 1 and "handler-test-pending" in r.stderr
+        assert r.returncode == 1 and sandbox in r.stderr
         assert (cache / "kept").exists()
     finally:
         volume("delete", disk)
+
+
+def unique(name: str) -> str:
+    """A sandbox's name no other run uses: ci.sh runs each test on two Pythons at once."""
+    return f"{name}-{uuid.uuid4().hex[:8]}"
 
 
 def write_on(disk: str, script: str) -> None:

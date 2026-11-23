@@ -223,7 +223,19 @@ class Apple:
     def local_server(self) -> Iterator[str]:
         name = f"handler-test-http-{os.urandom(3).hex()}"
         argv = ["container", "run", "--detach", "--rm", "--name", name, "--entrypoint", "python3"]
-        subprocess.run([*argv, self.server_image, "-c", ECHO_SERVER], check=True)
+        # the test's own server, not what it tests: a VM's start that failed under load (both
+        # Pythons' runs at once) tried again, Apple's reason kept for the last
+        for _ in range(3):
+            started = subprocess.run(
+                [*argv, self.server_image, "-c", ECHO_SERVER],
+                capture_output=True, text=True, check=False,
+            )  # fmt: skip
+            if started.returncode == 0:
+                break
+            subprocess.run(
+                ["container", "delete", "--force", name], capture_output=True, check=False
+            )
+        assert started.returncode == 0, f"the test's server did not start: {started.stderr}"
         try:
             from handler_sandbox_apple.container import find  # noqa: PLC0415 — on a Mac only
 

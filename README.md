@@ -47,7 +47,7 @@ Handler runs **Claude Code, Codex, Mistral Vibe, or pi** locally—using your ow
 ## Core Features
 
 ### 1. Isolated Containers & Network Proxies
-Each session runs inside a secure container rootless Podman/Docker on Linux/WSL 2, or a dedicated lightweight VM via Apple's `container` on macOS. Caches like `~/.npm` and `~/.cargo` persist between runs, but the core system and your other files remain safely read-only.
+Each session runs in a container of its own: rootless Podman on Linux and WSL 2 (or Docker, which runs as root), or a dedicated lightweight VM via Apple's `container` on macOS. The system is read-only, and nothing else of your computer is in the box: no home folder, no other projects. Caches like `~/.npm` and `~/.cargo` persist between runs.
 
 The network filter acts as a per-agent allowlist. When an unknown host is hit, it waits up to 8 seconds for your decision, notifying the agent once cleared (*"pypi.org:443 is now allowed. Go on."*).
 
@@ -80,8 +80,8 @@ Connect via API keys (Anthropic, OpenAI, Mistral, OpenRouter, or any OpenAI-comp
 Monitor, prompt, or launch sessions from your phone using an end-to-end encrypted self-hosted gateway (`handler-gateway` behind HTTPS via Tailscale or a reverse proxy). No exposed ports required.
 
 <p align="center">
-  <a href="docs/screenshots/phone-home.jpg"><img src="docs/screenshots/phone-home.jpg" alt="Mobile home page: the sessions shared with the phone" width="260"></a>
-  <a href="docs/screenshots/phone-session.jpg"><img src="docs/screenshots/phone-session.jpg" alt="A session on the phone: a blocked host allowed, the agent goes on and the tests pass" width="260"></a>
+  <a href="docs/screenshots/phone-home.jpg"><img src="docs/screenshots/phone-home.jpg" alt="The phone's home page: the computer seen, the session shared with the phone, done" width="260"></a>
+  <a href="docs/screenshots/phone-session.jpg"><img src="docs/screenshots/phone-session.jpg" alt="A session on the phone: pypi.org blocked, to allow or keep blocked on the computer" width="260"></a>
 </p>
 
 ---
@@ -98,8 +98,8 @@ Monitor, prompt, or launch sessions from your phone using an end-to-end encrypte
 |---|---|
 | **Claude Code** | Well-tested, used daily |
 | **Mistral Vibe** | Well-tested, used daily |
-| **Codex** | Tested |
-| **[pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)** | Tested |
+| **Codex** | Tested once|
+| **[pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)** | Tested once|
 
 ---
 

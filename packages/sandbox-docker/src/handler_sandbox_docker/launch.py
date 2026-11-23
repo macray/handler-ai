@@ -406,12 +406,14 @@ class Docker(Runtime):
         return running == "true"
 
     def wait(self, instance: Instance) -> int:
+        """Until it ends; the code its `attach` got, as on the other engines: `attach` writes it
+        in the instance folder as `docker wait` returns, before the cleanup removes the folder.
+        `docker wait`'s own when `attach` never says (removed by `--rm` before it looked: 0)."""
         waited = subprocess.run(
             ["docker", "wait", instance.spec.name], capture_output=True, text=True, check=False
         )
-        if waited.stdout.strip().isdigit():
-            return int(waited.stdout.strip())
-        return attached_exit(instance)  # removed (`--rm`) before `docker wait` looked
+        code = waited.stdout.strip()
+        return attached_exit(instance, otherwise=int(code) if code.isdigit() else 0)
 
     def stop(self, name: str) -> None:
         quiet("stop", "--time", "5", name)

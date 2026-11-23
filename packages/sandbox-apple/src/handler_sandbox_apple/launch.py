@@ -23,6 +23,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -233,6 +234,22 @@ def disks() -> list[tuple[str, dict[str, str]]]:
 
 
 MERGE_TIMEOUT = 1800  # a merge VM's run, at most: a large cache's additions copied to the Mac
+# A disk is held a while after the VM using it was deleted, longer under load: a VM started on
+# it fails ("The storage device attachment is invalid"), and `volume delete` refuses it ("is
+# currently in use"). Tried again for HELD_TIMEOUT seconds, the merge then the delete.
+HELD = ("The storage device attachment is invalid", "is currently in use")
+HELD_TIMEOUT = 30.0
+
+
+def _until_released(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """Run `argv`, again while it failed on a disk still held (HELD), for HELD_TIMEOUT."""
+    deadline = time.monotonic() + HELD_TIMEOUT
+    while True:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        held = proc.returncode != 0 and any(h in proc.stdout + proc.stderr for h in HELD)
+        if not held or time.monotonic() > deadline:
+            return proc
+        time.sleep(0.5)
 
 
 def merge_and_remove(disk: str, sources: list[str]) -> None:
@@ -268,9 +285,7 @@ def _merge_and_remove(disk: str, sources: list[str]) -> None:
             *(a for i, _ in pairs for a in (f"{DISK}/{i}/u", f"{CACHES}/{i}")),
         ]  # fmt: skip
         try:
-            proc = subprocess.run(
-                argv, capture_output=True, text=True, timeout=MERGE_TIMEOUT, check=False
-            )
+            proc = _until_released(argv, MERGE_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as e:
             print(f"{PROG}: {disk} kept for later: its merge did not run: {e}", file=sys.stderr)
             return
@@ -280,7 +295,33 @@ def _merge_and_remove(disk: str, sources: list[str]) -> None:
             return
         if said:
             print(f"{PROG}: {said}", file=sys.stderr)
-    quiet("volume", "delete", disk)
+    with contextlib.suppress(OSError, subprocess.SubprocessError):  # best effort: sweep's then
+        _until_released(["container", "volume", "delete", disk], 60)
+
+
+# `container start --attach` (1.7.1) passes the process's output on before it watches the terminal
+# for resizes: one in between (a window resized as the session starts, longer under load) is
+# lost, the process left at the old size until the next. A resize signal sent to it at these
+# times since its start makes it read the terminal's size again and pass it on; before it
+# watches, the signal is ignored (SIGWINCH's default).
+RESYNC_AT = (0.5, 1.0, 2.0, 4.0, 8.0)
+
+
+def _resync_size(proc: subprocess.Popen[bytes]) -> None:
+    started = time.monotonic()
+    for at in RESYNC_AT:
+        time.sleep(max(0.0, started + at - time.monotonic()))
+        if proc.poll() is not None:
+            return
+        with contextlib.suppress(OSError):
+            proc.send_signal(signal.SIGWINCH)
+
+
+# `container create` reads an image's name twice: a name switched to another image in between (a
+# rebuild's switch, D.4, as the sandbox starts) fails it ("descriptor mismatch"). Tried again,
+# its image and entrypoint read again: the name's new image, the one a launch now gets.
+SWITCHED = "descriptor mismatch"
+SWITCHED_TRIES = 3
 
 
 def handler_folder(target: str) -> str | None:
@@ -669,10 +710,17 @@ class Apple(Runtime):
                 "--label", f"{CACHES_LABEL}={sources}", disk_name(spec.name),
             )  # fmt: skip
             self.disk_made = True
-        container(
-            "create", "--interactive", *(["--tty"] if spec.tty else []),
-            "--name", spec.name, *labels(spec), "--init", *args, *self.command(spec),
-        )  # fmt: skip
+        for attempt in range(SWITCHED_TRIES):
+            try:
+                container(
+                    "create", "--interactive", *(["--tty"] if spec.tty else []),
+                    "--name", spec.name, *labels(spec), "--init", *args, *self.command(spec),
+                )  # fmt: skip
+                break
+            except ContainerError as e:
+                if SWITCHED not in str(e) or attempt == SWITCHED_TRIES - 1:
+                    raise
+                quiet("delete", "--force", spec.name)
         for folder, place in protected(spec):  # the start may wait for the person's answer
             print(
                 f"{PROG}: {folder} is in {place}, which macOS protects: if macOS asks whether "
@@ -706,6 +754,7 @@ class Apple(Runtime):
         )
         assert proc.stderr is not None
         threading.Thread(target=_copy_out, args=(proc.stderr,)).start()  # to its end
+        threading.Thread(target=_resync_size, args=(proc,), daemon=True).start()
         return proc
 
     def _state(self, name: str) -> tuple[str | None, bool]:
